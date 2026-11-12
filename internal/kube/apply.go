@@ -161,14 +161,18 @@ func (c *cluster) createObject(ctx context.Context, obj *unstructured.Unstructur
 	if err != nil {
 		return fmt.Errorf("create %s: %w", describe(obj), err)
 	}
-	switch _, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{}); {
-	case err == nil:
+	// A plain create is atomic: an object that already exists, even one created a moment ago by another
+	// client, is left untouched instead of being overwritten.
+	_, err = resource.Create(ctx, obj, metav1.CreateOptions{FieldManager: fieldManager})
+	switch {
+	case apierrors.IsAlreadyExists(err):
 		slog.Debug("exists, left untouched", "kind", obj.GetKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())
 		return nil
-	case !apierrors.IsNotFound(err):
+	case err != nil:
 		return fmt.Errorf("create %s: %w", describe(obj), err)
 	}
-	return patch(ctx, resource, obj)
+	slog.Debug("created", "kind", obj.GetKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())
+	return nil
 }
 
 func patch(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
