@@ -38,7 +38,7 @@ jobs:
           path: coverage.out
           if-no-files-found: error
       - name: Prepare PR context artifact
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -50,16 +50,19 @@ jobs:
           jq -n '{pr_number: env.PR_NUMBER, head_sha: env.HEAD_SHA, head_repo: env.HEAD_REPO,
             head_branch: env.HEAD_BRANCH, base_ref: env.BASE_REF, run_id: env.RUN_ID}' > pr-context.json
       - name: Upload PR context
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pr-context
           path: pr-context.json
           retention-days: 1
           if-no-files-found: error
-      # Pushes to main have access to secrets, so they scan directly.
-      - name: SonarCloud Scan (push to main)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Pushes to main and pull requests from branches of this repository have the secrets and trusted code,
+      # so they scan here; fork pull requests are scanned by the Dispatch Sonar workflow.
+      - name: SonarCloud Scan
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
