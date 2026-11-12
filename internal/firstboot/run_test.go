@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
@@ -875,14 +876,14 @@ func TestRunDoesNotResetWithoutTheRecord(t *testing.T) {
 	}
 }
 
-func TestRunReportsAFailedReset(t *testing.T) {
+func TestRunReportsARejectedReset(t *testing.T) {
 	node := &fakeNode{stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
-		broken: []string{etcdImage}, resetErrs: []error{errors.New("reset refused")}}
+		broken: []string{etcdImage}, resetErrs: []error{status.Error(codes.FailedPrecondition, "reset refused")}}
 	h := newHarness(node, nil, nil, nil)
 	h.deps.Retry = 10 * time.Millisecond
 	h.start(t)
 
-	want := "could not reset node storage: " + codes.Unknown.String()
+	want := "could not reset node storage: " + codes.FailedPrecondition.String()
 	eventually(t, "reset error in the status", func() bool { return h.store.Get().Message == want })
 	eventually(t, "reset on the next pass", func() bool { return node.snapshot().resets == 1 })
 	if s := node.snapshot(); !s.recorded || s.clears != 1 || !h.running() {
@@ -891,6 +892,31 @@ func TestRunReportsAFailedReset(t *testing.T) {
 	}
 	if !strings.Contains(h.log.String(), "reset refused") {
 		t.Errorf("log does not record the reset error:\n%s", h.log.String())
+	}
+}
+
+func TestRunTreatsAnUnconfirmedResetAsRequested(t *testing.T) {
+	old := resetTimeout
+	resetTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { resetTimeout = old })
+	for _, code := range []codes.Code{codes.DeadlineExceeded, codes.Unavailable, codes.Canceled, codes.Unknown} {
+		t.Run(code.String(), func(t *testing.T) {
+			node := &fakeNode{stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
+				broken: []string{etcdImage}, resetErrs: []error{status.Error(code, "connection lost")}}
+			h := newHarness(node, nil, nil, nil)
+			h.start(t)
+
+			want := "requested node storage reset did not happen, system image " + etcdImage + " fails to execute"
+			eventually(t, "message", func() bool { return h.store.Get().Message == want })
+			time.Sleep(20 * time.Millisecond)
+			if s := node.snapshot(); s.resets != 0 || !s.recorded || s.clears != 0 || s.bootstrapCalls != 0 {
+				t.Fatalf("%d resets, recorded %v, %d clears, %d bootstrap calls: want the record kept and no second reset",
+					s.resets, s.recorded, s.clears, s.bootstrapCalls)
+			}
+			if !strings.Contains(h.log.String(), "connection lost") {
+				t.Errorf("log does not record the reset error:\n%s", h.log.String())
+			}
+		})
 	}
 }
 

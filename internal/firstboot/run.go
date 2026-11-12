@@ -13,6 +13,7 @@ import (
 	"slices"
 	"time"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
@@ -264,7 +265,8 @@ func (r *runner) recoverImages(ctx context.Context) (bool, error) {
 	cur := r.s.Get()
 	r.d.Log.Warn("system images fail to execute", "images", broken)
 	r.set(cur.State, cur.Step, "resetting node storage to recover broken system images")
-	if err := r.d.Node.ResetEphemeral(ctx); err != nil {
+	err = r.d.Node.ResetEphemeral(ctx)
+	if err != nil && resetRejected(err) {
 		// No reset happened, so it is not used up: the next pass may try again.
 		r.d.Log.Warn("could not reset node storage", "error", err)
 		if err := r.d.Node.ClearResetRecord(ctx); err != nil {
@@ -272,8 +274,25 @@ func (r *runner) recoverImages(ctx context.Context) (bool, error) {
 		}
 		return true, fmt.Errorf("could not reset node storage: %s", status.Code(err))
 	}
+	if err != nil {
+		// machined may have scheduled the reset before the answer was lost, so wait for it as for an accepted one.
+		r.d.Log.Warn("node storage reset not confirmed, waiting for it", "error", err)
+	}
 	r.resetting, r.resetAt = true, time.Now()
 	return true, nil
+}
+
+// resetRejected reports whether err proves that machined refused the reset before scheduling it: machined answers
+// those cases with a status of its own, while a lost connection, a timeout or an internal error leave it open
+// whether the reset runs.
+func resetRejected(err error) bool {
+	switch status.Code(err) {
+	case codes.InvalidArgument, codes.PermissionDenied, codes.FailedPrecondition, codes.Unimplemented,
+		codes.Unauthenticated, codes.AlreadyExists:
+		return true
+	default:
+		return false
+	}
 }
 
 // nodePass looks at the node once and moves it one stage forward. It reports done once etcd is bootstrapped.
