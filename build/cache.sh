@@ -54,7 +54,7 @@ verify_cache() {
     host="${name%%/*}"
     if [[ "$name" != */* ]]; then
       host=docker.io path="library/$name"
-    elif [[ "$host" != *.* && "$host" != *:* && "$host" != localhost ]]; then
+    elif ! [[ "$host" =~ [.:] || "$host" == localhost ]]; then
       host=docker.io path="$name"
     else
       path="${name#*/}"

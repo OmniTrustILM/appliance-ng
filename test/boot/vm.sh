@@ -59,10 +59,12 @@ firmware() {
   [[ -f "$VARS" ]] || die "UEFI variables template $VARS not found"
 }
 
-running() { # running <dir>
-  local pid
-  pid="$(cat "$1/qemu.pid" 2>/dev/null)" || return 1
-  kill -0 "$pid" 2>/dev/null
+running() { # running <dir>: true only if the pid file names a live QEMU started for <dir>
+  local dir="$1" pid
+  pid="$(cat "$dir/qemu.pid" 2>/dev/null)" || return 1
+  # A stale pid file may name an unrelated process that reused the pid; only our QEMU has this pid file
+  # on its command line.
+  ps -p "$pid" -o command= 2>/dev/null | grep -qF -- "$dir/qemu.pid"
 }
 
 start() {
