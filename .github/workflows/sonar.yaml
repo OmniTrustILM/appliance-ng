@@ -80,14 +80,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Fetch base branch
+      - name: Fetch base branch and trusted scanner settings
         env:
           CLONE_URL: ${{ github.event.repository.clone_url }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git remote add upstream "$CLONE_URL"
-          git fetch upstream "+refs/heads/$BASE_BRANCH:refs/remotes/upstream/$BASE_BRANCH"
+          git fetch upstream "+refs/heads/$BASE_BRANCH:refs/remotes/upstream/$BASE_BRANCH" \
+            "+refs/heads/$DEFAULT_BRANCH:refs/remotes/upstream/$DEFAULT_BRANCH"
           git branch -f "$BASE_BRANCH" "refs/remotes/upstream/$BASE_BRANCH"
           git clean -ffdx && git reset --hard "$HEAD_SHA"
+          # A fork's scanner settings are not trusted: they come from the default branch, and the fork's own
+          # copies are removed so they cannot change how the token-bearing scan behaves.
+          if [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" ]]; then
+            cp sonar-project.properties "$RUNNER_TEMP/sonar-project.properties"
+          else
+            git show "refs/remotes/upstream/$DEFAULT_BRANCH:sonar-project.properties" > "$RUNNER_TEMP/sonar-project.properties"
+          fi
+          rm -f sonar-project.properties .sonarcloud.properties
 
       - name: Download coverage report artifact from upstream run
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
@@ -100,11 +110,11 @@ jobs:
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
-          # The trusted properties come first so a fork's sonar-project.properties cannot redirect the token.
+          # The scan reads settings only from the default branch's file and these trusted values; it runs no PR code.
           args: >
+            -Dproject.settings=${{ runner.temp }}/sonar-project.properties
             -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.organization=ilm
             -Dsonar.projectKey=OmniTrustILM_appliance-ng
