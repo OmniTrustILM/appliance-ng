@@ -20,7 +20,7 @@ addons:
   - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "e6abf0691d5bde2a7b70ccb72cd99b603403d95164b6d28f4fb32e75e140bfd6" }
   - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
   - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "7609fa98d045bb10ebbf856c5a1decb250f818b447a3420e78734a4c9651e88c" }
-  - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "24ddbbc913f7b6f202bb4fda00dddd98a96a0ed29cdf81c9ed7c83f638603512" }
+  - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "c85bb9f48bb14f757bbe0666bd98d0b203e718dc4965ff3065c28a63b2d16231" }
 images:
   - { ref: "ghcr.io/siderolabs/installer-base:v1.14.5", digest: "sha256:1644fe7ddfe3deb4b81487c3c7e49fce830eca862b608b32f577b866c8d36b48" }
   - { ref: "registry.k8s.io/coredns/coredns:v1.14.7", digest: "sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286" }

@@ -11,12 +11,12 @@ spec:
     clientCertHeader: X-Forwarded-Tls-Client-Cert
   database:
     mode: managed
-    managed: { instances: 1, version: "18", storage: { size: 10Gi } }
+    managed: { instances: 1, version: "18", storage: { size: 8Gi } }
     pgBouncer: { managed: true }
   messaging:
     mode: managed
     brokerType: rabbitmq
-    managed: { replicas: 1, version: "4.3.1", storage: { size: 5Gi } }
+    managed: { replicas: 1, version: "4.3.1", storage: { size: 2Gi } }
   keycloak:
     mode: managed
     realm: ilm

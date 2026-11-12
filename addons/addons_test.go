@@ -6,7 +6,11 @@ import (
 	"testing"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
+	"github.com/siderolabs/talos/pkg/machinery/config/types/block"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 )
 
@@ -117,4 +121,47 @@ func TestOnlyPlatformStepIsCreateOnly(t *testing.T) {
 			t.Errorf("step %s: createOnly = %v, want %v", step.Name, step.CreateOnly, want)
 		}
 	}
+}
+
+func TestPlatformStorageFitsDataVolume(t *testing.T) {
+	data, err := fs.ReadFile(FS, "platform.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var platform struct {
+		Spec struct {
+			Database struct {
+				Managed struct {
+					Storage struct{ Size resource.Quantity } `json:"storage"`
+				} `json:"managed"`
+			} `json:"database"`
+			Messaging struct {
+				Managed struct {
+					Storage struct{ Size resource.Quantity } `json:"storage"`
+				} `json:"managed"`
+			} `json:"messaging"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(data, &platform); err != nil {
+		t.Fatal(err)
+	}
+	requested := platform.Spec.Database.Managed.Storage.Size.Value() + platform.Spec.Messaging.Managed.Storage.Size.Value()
+
+	generated, err := machineconfig.Generate(machineconfig.Input{ClusterName: "ilm", NodeIP: "10.0.2.15", InstallerImage: "registry.example/installer:v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := configloader.NewFromBytes(generated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range cfg.Documents() {
+		if vol, ok := doc.(*block.UserVolumeConfigV1Alpha1); ok && vol.MetaName == "data" {
+			if capacity := vol.ProvisioningSpec.ProvisioningMaxSize.Value(); requested > int64(capacity) {
+				t.Errorf("Platform requests %d bytes of storage, the data volume holds at most %d", requested, capacity)
+			}
+			return
+		}
+	}
+	t.Fatal("data volume missing from the machine configuration")
 }
