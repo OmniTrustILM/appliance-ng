@@ -12,7 +12,8 @@ log() { echo "[$(basename "$0" .sh)] $*" >&2; }
 die() { log "error: $*"; exit 1; }
 # sha256 <file> prints the file's SHA-256 (sha256sum on Linux, shasum on macOS).
 sha256() {
-  if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+  local file="$1"
+  if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi | cut -d' ' -f1
 }
 
 yq() {
@@ -50,7 +51,7 @@ imager() {
   shift
   # A registry that is not local may be private: give the imager (root in its container) the host's credentials.
   local docker_config="${DOCKER_CONFIG:-$HOME/.docker}/config.json" auth=()
-  if ! local_registry && [ -f "$docker_config" ]; then auth=(-v "$docker_config:/root/.docker/config.json:ro"); fi
+  if ! local_registry && [[ -f "$docker_config" ]]; then auth=(-v "$docker_config:/root/.docker/config.json:ro"); fi
   log "imager $cmd (log: $logfile)"
   # shellcheck disable=SC2046 # insecure_flag prints zero or one word
   docker run --rm --add-host=host.docker.internal:host-gateway -v "$PWD/$OUT:/out" ${auth[@]+"${auth[@]}"} "$IMAGER" "$cmd" --arch "$ARCH" $(insecure_flag) \

@@ -26,7 +26,7 @@ usage() { sed -n '2,6p' "$0" >&2; exit 2; }
 first_file() { # first_file <path>...: prints the first path that exists
   local f
   for f in "$@"; do
-    if [ -f "$f" ]; then echo "$f"; return 0; fi
+    if [[ -f "$f" ]]; then echo "$f"; return 0; fi
   done
   return 1
 }
@@ -56,7 +56,7 @@ firmware() {
       VARS=/usr/share/AAVMF/AAVMF_VARS.fd ;;
     *) die "cannot run a $arch VM with hardware acceleration on $host" ;;
   esac
-  [ -f "$VARS" ] || die "UEFI variables template $VARS not found"
+  [[ -f "$VARS" ]] || die "UEFI variables template $VARS not found"
 }
 
 running() { # running <dir>
@@ -79,20 +79,20 @@ start() {
   case "$mode" in
     iso)
       local iso="$REPO/out/$arch/$name.iso"
-      [ -f "$iso" ] || die "$iso not found, run make images ARCH=$arch"
-      [ -f "$dir/disk.qcow2" ] || qemu-img create -q -f qcow2 "$dir/disk.qcow2" "${DISK:-50G}"
+      [[ -f "$iso" ]] || die "$iso not found, run make images ARCH=$arch"
+      [[ -f "$dir/disk.qcow2" ]] || qemu-img create -q -f qcow2 "$dir/disk.qcow2" "${DISK:-50G}"
       drives+=(-drive "if=none,id=cd0,file=$iso,media=cdrom,readonly=on"
                -device "virtio-scsi-pci,id=scsi0" -device "scsi-cd,drive=cd0,bootindex=1") ;;
     disk)
       local image="$REPO/out/$arch/$name.qcow2"
-      [ -f "$image" ] || die "$image not found, run make images ARCH=$arch"
-      if [ ! -f "$dir/disk.qcow2" ]; then
+      [[ -f "$image" ]] || die "$image not found, run make images ARCH=$arch"
+      if [[ ! -f "$dir/disk.qcow2" ]]; then
         cp "$image" "$dir/disk.qcow2"
-        if [ -n "${DISK:-}" ]; then qemu-img resize -q "$dir/disk.qcow2" "$DISK"; fi
+        if [[ -n "${DISK:-}" ]]; then qemu-img resize -q "$dir/disk.qcow2" "$DISK"; fi
       fi ;;
     *) usage ;;
   esac
-  [ -f "$dir/vars.fd" ] || cp "$VARS" "$dir/vars.fd"
+  [[ -f "$dir/vars.fd" ]] || cp "$VARS" "$dir/vars.fd"
 
   local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
   : >"$dir/serial.log"
@@ -122,8 +122,8 @@ stop() {
 }
 
 case "${1:-}" in
-  start) [ $# -eq 4 ] || usage; start "$2" "$3" "$4" ;;
-  stop) [ $# -eq 2 ] || usage; stop "$2" ;;
-  status) [ $# -eq 2 ] || usage; if running "$2"; then echo running; else echo stopped; fi ;;
+  start) [[ $# -eq 4 ]] || usage; start "$2" "$3" "$4" ;;
+  stop) [[ $# -eq 2 ]] || usage; stop "$2" ;;
+  status) [[ $# -eq 2 ]] || usage; if running "$2"; then echo running; else echo stopped; fi ;;
   *) usage ;;
 esac

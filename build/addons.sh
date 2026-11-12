@@ -16,36 +16,39 @@ die() { echo "addons: $*" >&2; exit 1; }
 
 # field <file> <key> prints the value of <key> in the release.yaml add-on entry of <file>.
 field() {
-  awk -v file="$1" -v key="$2" '
+  local file="$1" key="$2"
+  awk -v file="$file" -v key="$key" '
     index($0, "file: " file ",") && match($0, key ": \"[^\"]*\"") {
       value = substr($0, RSTART + length(key) + 3, RLENGTH - length(key) - 4)
       found = 1
       print value
       exit
     }
-    END { if (!found) exit 1 }' "$release" || die "$release has no $2 for $1"
+    END { if (!found) exit 1 }' "$release" || die "$release has no $key for $file"
 }
 
 check_source() {
-  [ "$(field "$1" source)" = "$2" ] || die "$release: source of $1 must be $2"
+  local file="$1" want="$2"
+  [[ "$(field "$file" source)" == "$want" ]] || die "$release: source of $file must be $want"
 }
 
 sha256() {
-  if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+  local file="$1"
+  if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi | cut -d' ' -f1
 }
 
 # helm_template <file> <repo> <chart> <namespace> <values> renders a chart into addons/<file>.
 helm_template() {
-  local version
-  version="$(field "$1" version)"
-  check_source "$1" "helm:$2/$3@$version"
-  echo "rendering $1 from $3 $version"
-  helm template "$3" "$3" --repo "$2" --version "$version" --namespace "$4" \
-    --kube-version "$kube_version" -f "$5" >"$work/$1"
+  local file="$1" repo="$2" chart="$3" namespace="$4" values="$5" version
+  version="$(field "$file" version)"
+  check_source "$file" "helm:$repo/$chart@$version"
+  echo "rendering $file from $chart $version"
+  helm template "$chart" "$chart" --repo "$repo" --version "$version" --namespace "$namespace" \
+    --kube-version "$kube_version" -f "$values" >"$work/$file"
 }
 
 kube_version="$(awk '$1 == "kubernetes:" { print $2; exit }' "$release")"
-[ -n "$kube_version" ] || die "$release has no talos.kubernetes"
+[[ -n "$kube_version" ]] || die "$release has no talos.kubernetes"
 
 helm_template cilium.yaml "$cilium_repo" cilium kube-system "$src/cilium-values.yaml"
 mv "$work/cilium.yaml" "$addons/cilium.yaml"
@@ -60,10 +63,10 @@ helm pull traefik --repo "$traefik_repo" --version "$version" --untar --untardir
 awk 'FNR == 1 && !/^---$/ { print "---" } { print }' "$work"/chart/traefik/crds/traefik.io_*.yaml >"$addons/traefik-crds.yaml"
 
 while read -r file url namespace; do
-  case "$file" in '' | '#'*) continue ;; esac
+  case "$file" in '' | '#'*) continue ;; *) ;; esac
   check_source "$file" "$url"
   echo "downloading $file"
-  if [ -n "$namespace" ]; then
+  if [[ -n "$namespace" ]]; then
     mkdir -p "$work/$file"
     printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' "$namespace" >"$work/$file/namespace.yaml"
     printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - namespace.yaml\n  - %s\n' \
@@ -87,7 +90,7 @@ mv "$work/local-path-storage.yaml" "$addons/local-path-storage.yaml"
 
 awk 'match($0, /file: [^,]+,/) { print substr($0, RSTART + 6, RLENGTH - 7) }' "$release" >"$work/files"
 while read -r file; do
-  [ -f "$addons/$file" ] || die "$release lists $file, which is not in $addons"
+  [[ -f "$addons/$file" ]] || die "$release lists $file, which is not in $addons"
   awk -v file="$file" -v sum="$(sha256 "$addons/$file")" '
     index($0, "file: " file ",") { sub(/sha256: "[^"]*"/, "sha256: \"" sum "\"") }
     { print }' "$release" >"$work/release.yaml"

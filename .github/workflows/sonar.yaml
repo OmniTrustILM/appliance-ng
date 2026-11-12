@@ -38,8 +38,9 @@ jobs:
       - name: Validate inputs
         run: |
           check() { # check <name> <value> <regex>
-            if ! [[ "$2" =~ $3 ]] || [[ "$2" == *..* || "$2" == -* ]]; then
-              echo "::error::invalid input $1"
+            local name="$1" value="$2" regex="$3"
+            if ! [[ "$value" =~ $regex ]] || [[ "$value" == *..* || "$value" == -* ]]; then
+              echo "::error::invalid input $name"
               exit 1
             fi
           }

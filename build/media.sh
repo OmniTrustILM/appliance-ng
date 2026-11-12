@@ -5,7 +5,7 @@
 source "$(dirname "$0")/lib.sh"
 
 name="ilm-appliance-$VERSION-$ARCH"
-[ -d "$OUT/image-cache.oci" ] || die "$OUT/image-cache.oci is missing, run cache.sh first"
+[[ -d "$OUT/image-cache.oci" ]] || die "$OUT/image-cache.oci is missing, run cache.sh first"
 rm -f "$OUT/metal-$ARCH.iso" "$OUT/metal-$ARCH.raw" "$OUT/metal-$ARCH.raw.zst" \
   "$OUT/$name.iso" "$OUT/$name.qcow2" "$OUT/SHA256SUMS"
 

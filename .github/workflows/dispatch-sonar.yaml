@@ -35,10 +35,11 @@ jobs:
           TRUSTED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           ctx=pr_context/pr-context.json
-          get() { jq -er --arg key "$1" '.[$key] | strings' "$ctx"; }
+          get() { local key="$1"; jq -er --arg key "$key" '.[$key] | strings' "$ctx"; }
           check() { # check <name> <value> <regex>
-            if ! [[ "$2" =~ $3 ]] || [[ "$2" == *..* || "$2" == -* ]]; then
-              echo "::error::invalid $1 in pr-context.json"
+            local name="$1" value="$2" regex="$3"
+            if ! [[ "$value" =~ $regex ]] || [[ "$value" == *..* || "$value" == -* ]]; then
+              echo "::error::invalid $name in pr-context.json"
               exit 1
             fi
           }

@@ -18,7 +18,7 @@ READY_TIMEOUT=1500
 LEAK_PATTERNS=(-e 'BEGIN ' -e 'PRIVATE KEY' -e 'client-key-data')
 
 usage() { sed -n '4p' "$0" >&2; exit 2; }
-[ $# -eq 2 ] || usage
+[[ $# -eq 2 ]] || usage
 media="$1" arch="$2"
 case "$media" in iso) mode=iso ;; qcow2) mode=disk ;; *) usage ;; esac
 
@@ -47,7 +47,8 @@ fail() {
 }
 
 field() { # field <name>: prints a string field of $status
-  sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" <<<"$status"
+  local name="$1"
+  sed -n "s/.*\"$name\":\"\([^\"]*\)\".*/\1/p" <<<"$status"
 }
 
 "$VM" stop "$dir" >/dev/null 2>&1 || true
@@ -62,12 +63,12 @@ while :; do
   if current="$(curl -sf --max-time 5 "$STATUS_URL")"; then
     status="$current" reached=true
     state="$(field state)/$(field step)"
-    if [ "$state" != "$last" ]; then log "${elapsed}s $state $(field message)"; last="$state"; fi
-    [ "$(field state)" != ready ] || break
-  elif ! $reached && [ "$elapsed" -ge "$STATUS_TIMEOUT" ]; then
+    if [[ "$state" != "$last" ]]; then log "${elapsed}s $state $(field message)"; last="$state"; fi
+    [[ "$(field state)" != ready ]] || break
+  elif ! $reached && [[ "$elapsed" -ge "$STATUS_TIMEOUT" ]]; then
     fail "status not reachable within ${STATUS_TIMEOUT}s"
   fi
-  [ "$elapsed" -lt "$READY_TIMEOUT" ] || fail "not ready within ${READY_TIMEOUT}s"
+  [[ "$elapsed" -lt "$READY_TIMEOUT" ]] || fail "not ready within ${READY_TIMEOUT}s"
   sleep 5
 done
 ready=$((SECONDS - start))
@@ -76,10 +77,10 @@ code=""
 for _ in $(seq 12); do
   code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
     --resolve "$UI_HOST:10443:127.0.0.1" "$UI_URL" || true)"
-  [ "$code" != 200 ] || break
+  [[ "$code" != 200 ]] || break
   sleep 5
 done
-[ "$code" = 200 ] || fail "UI answered ${code:-nothing}, expected 200"
+[[ "$code" == 200 ]] || fail "UI answered ${code:-nothing}, expected 200"
 
 if leaked; then
   fail "serial log contains key material"
