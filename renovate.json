@@ -6,7 +6,7 @@
     {
       "customType": "regex",
       "description": "Container images pinned by tag and digest in release.yaml",
-      "managerFilePatterns": ["^release\\.yaml$"],
+      "managerFilePatterns": ["/^release\\.yaml$/"],
       "matchStrings": [
         "ref:\\s*\"(?<depName>[^\"@]+?):(?<currentValue>[^\"@:/]+)@(?<currentDigest>sha256:[a-f0-9]+)\"\\s*,\\s*digest:\\s*\"sha256:[a-f0-9]+\""
       ],
@@ -16,7 +16,7 @@
     {
       "customType": "regex",
       "description": "Container images pinned by tag in release.yaml, their digest in the digest field",
-      "managerFilePatterns": ["^release\\.yaml$"],
+      "managerFilePatterns": ["/^release\\.yaml$/"],
       "matchStrings": [
         "ref:\\s*\"(?<depName>[^\"@]+?):(?<currentValue>[^\"@:/]+)\"\\s*,\\s*digest:\\s*\"(?<currentDigest>sha256:[a-f0-9]+)\""
       ],
@@ -26,7 +26,7 @@
     {
       "customType": "regex",
       "description": "Talos imager pinned by tag and digest in release.yaml",
-      "managerFilePatterns": ["^release\\.yaml$"],
+      "managerFilePatterns": ["/^release\\.yaml$/"],
       "matchStrings": [
         "imager:\\s*(?<depName>[^\\s@:]+/[^\\s@:]+/[^\\s@:]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ],
@@ -36,7 +36,7 @@
     {
       "customType": "regex",
       "description": "Talos release pinned in release.yaml",
-      "managerFilePatterns": ["^release\\.yaml$"],
+      "managerFilePatterns": ["/^release\\.yaml$/"],
       "matchStrings": ["version:\\s*(?<currentValue>v[0-9][^\\s,]*)"],
       "depNameTemplate": "siderolabs/talos",
       "datasourceTemplate": "github-releases"
