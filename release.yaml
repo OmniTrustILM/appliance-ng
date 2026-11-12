@@ -17,7 +17,7 @@ addons:
   - { name: rabbitmq-topology-operator, file: rabbitmq-topology-operator.yaml, version: "v1.19.2", source: "https://github.com/rabbitmq/messaging-topology-operator/releases/download/v1.19.2/messaging-topology-operator-with-certmanager.yaml", sha256: "fe7d2c0de03d742dbb583b3885fa422fb9290513b7239fe373d9a798d8fcec0e" }
   - { name: keycloak-operator, file: keycloak-operator.yaml, version: "26.8.1", source: "https://github.com/keycloak/keycloak-k8s-resources/kubernetes/cluster-wide?ref=26.8.1", sha256: "5fe38cf41cb497881af5e6e7d6eb53745bf52877ca210146ef82f8f66df12650" }
   - { name: traefik, file: traefik-crds.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "386400a9cb00fc2c4cd226ac45d32e2cbc96b731fffcfbc2884778970e91c476" }
-  - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "1cc72b722485f3708392d72233d78f4e550824f398ac13326cd7eed7dff0deae" }
+  - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "e6abf0691d5bde2a7b70ccb72cd99b603403d95164b6d28f4fb32e75e140bfd6" }
   - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
   - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "7609fa98d045bb10ebbf856c5a1decb250f818b447a3420e78734a4c9651e88c" }
   - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "24ddbbc913f7b6f202bb4fda00dddd98a96a0ed29cdf81c9ed7c83f638603512" }

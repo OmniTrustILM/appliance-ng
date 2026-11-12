@@ -22,3 +22,9 @@ ingressClass:
   enabled: true
   isDefaultClass: false
   name: traefik
+# hostPorts 80/443 allow one pod per node: replace the pod in place instead of surging a second one
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
