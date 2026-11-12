@@ -37,8 +37,9 @@ fail() {
     rm -f "$dir/serial.log"
     echo "--- serial log contains key material; log removed ---" >&2
   else
-    echo "--- last 100 serial lines ---" >&2
-    tail -n 100 "$dir/serial.log" >&2 || true
+    # Long base64 runs (certificates, tokens) are masked so the public CI log never carries them.
+    echo "--- last 100 serial lines (base64 runs masked) ---" >&2
+    tail -n 100 "$dir/serial.log" | sed -E 's#[A-Za-z0-9+/=]{40,}#<masked>#g' >&2 || true
   fi
   echo "--- last status: ${status:-none} ---" >&2
   echo "FAIL $*"
