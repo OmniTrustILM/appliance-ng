@@ -124,7 +124,9 @@ func withRoleStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientC
 // bounded gives ctx the call timeout unless it already has a deadline.
 func bounded(ctx context.Context) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); ok {
-		return ctx, func() {}
+		return ctx, func() {
+			// ctx keeps the caller's deadline, so there is no timeout of our own to release.
+		}
 	}
 	return context.WithTimeout(ctx, callTimeout)
 }
