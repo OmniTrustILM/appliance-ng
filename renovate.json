@@ -128,6 +128,13 @@
         "rancher/local-path-provisioner"
       ],
       "enabled": false
+    },
+    {
+      "description": "Image tags follow the add-on, operator and Talos releases that request them; Renovate only refreshes digests",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "enabled": false
     }
   ]
 }
