@@ -1,0 +1,24 @@
+# Traefik is the appliance edge: HTTPS on the node's port 443, HTTP on port 80 redirected to it.
+ports:
+  web:
+    hostPort: 80
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    hostPort: 443
+    http:
+      # recommended hardening from the ILM client-certificate documentation (Traefik >= 3.7.12)
+      aliasHeadersStrategy: delete
+service:
+  enabled: false
+providers:
+  kubernetesCRD: { enabled: true }
+  kubernetesIngress: { enabled: true }
+ingressClass:
+  enabled: true
+  isDefaultClass: false
+  name: traefik

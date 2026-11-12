@@ -1,0 +1,5 @@
+# Without a reachable NTP server Talos never reports time as synced and refuses to bootstrap etcd;
+# stop waiting for NTP after 30 s and trust the hardware clock.
+apiVersion: v1alpha1
+kind: TimeSyncConfig
+bootTimeout: 30s

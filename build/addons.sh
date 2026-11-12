@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Renders and downloads the add-on manifests into addons/ and pins their sha256 in release.yaml.
+# Helm charts are rendered at the versions release.yaml gives; the other files come from the
+# URLs in addons/src/downloads.txt. The output carries no timestamps, so a second run changes nothing.
+set -euo pipefail
+export LC_ALL=C
+
+cd "$(dirname "$0")/.."
+readonly release=release.yaml addons=addons src=addons/src
+readonly cilium_repo=https://helm.cilium.io traefik_repo=https://traefik.github.io/charts
+
+work="$(mktemp -d)"
+trap 'rm -rf -- "$work"' EXIT
+
+die() { echo "addons: $*" >&2; exit 1; }
+
+# field <file> <key> prints the value of <key> in the release.yaml add-on entry of <file>.
+field() {
+  awk -v file="$1" -v key="$2" '
+    index($0, "file: " file ",") && match($0, key ": \"[^\"]*\"") {
+      value = substr($0, RSTART + length(key) + 3, RLENGTH - length(key) - 4)
+      found = 1
+      print value
+      exit
+    }
+    END { if (!found) exit 1 }' "$release" || die "$release has no $2 for $1"
+}
+
+check_source() {
+  [ "$(field "$1" source)" = "$2" ] || die "$release: source of $1 must be $2"
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
+
+# helm_template <file> <repo> <chart> <namespace> <values> renders a chart into addons/<file>.
+helm_template() {
+  local version
+  version="$(field "$1" version)"
+  check_source "$1" "helm:$2/$3@$version"
+  echo "rendering $1 from $3 $version"
+  helm template "$3" "$3" --repo "$2" --version "$version" --namespace "$4" \
+    --kube-version "$kube_version" -f "$5" >"$work/$1"
+}
+
+kube_version="$(awk '$1 == "kubernetes:" { print $2; exit }' "$release")"
+[ -n "$kube_version" ] || die "$release has no talos.kubernetes"
+
+helm_template cilium.yaml "$cilium_repo" cilium kube-system "$src/cilium-values.yaml"
+mv "$work/cilium.yaml" "$addons/cilium.yaml"
+
+# helm template creates no namespace, so traefik.yaml carries its own.
+helm_template traefik.yaml "$traefik_repo" traefik traefik "$src/traefik-values.yaml"
+printf -- '---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: traefik\n' | cat - "$work/traefik.yaml" >"$addons/traefik.yaml"
+
+version="$(field traefik-crds.yaml version)"
+check_source traefik-crds.yaml "helm:$traefik_repo/traefik@$version"
+helm pull traefik --repo "$traefik_repo" --version "$version" --untar --untardir "$work/chart"
+awk 'FNR == 1 && !/^---$/ { print "---" } { print }' "$work"/chart/traefik/crds/traefik.io_*.yaml >"$addons/traefik-crds.yaml"
+
+while read -r file url namespace; do
+  case "$file" in '' | '#'*) continue ;; esac
+  check_source "$file" "$url"
+  echo "downloading $file"
+  if [ -n "$namespace" ]; then
+    mkdir -p "$work/$file"
+    printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' "$namespace" >"$work/$file/namespace.yaml"
+    printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: %s\nresources:\n  - namespace.yaml\n  - %s\n' \
+      "$namespace" "$url" >"$work/$file/kustomization.yaml"
+    kubectl kustomize "$work/$file" >"$addons/$file"
+  else
+    curl -fsSL --retry 3 "$url" -o "$addons/$file"
+  fi
+done <"$src/downloads.txt"
+
+# local-path-provisioner stores volumes on the Talos user volume and is the default StorageClass.
+awk '
+  { gsub("/opt/local-path-provisioner", "/var/mnt/data/local-path"); print }
+  /^kind: StorageClass$/ { storageClass = 1 }
+  storageClass && /^  name: local-path$/ {
+    print "  annotations:"
+    print "    storageclass.kubernetes.io/is-default-class: \"true\""
+    storageClass = 0
+  }' "$addons/local-path-storage.yaml" >"$work/local-path-storage.yaml"
+mv "$work/local-path-storage.yaml" "$addons/local-path-storage.yaml"
+
+awk 'match($0, /file: [^,]+,/) { print substr($0, RSTART + 6, RLENGTH - 7) }' "$release" >"$work/files"
+while read -r file; do
+  [ -f "$addons/$file" ] || die "$release lists $file, which is not in $addons"
+  awk -v file="$file" -v sum="$(sha256 "$addons/$file")" '
+    index($0, "file: " file ",") { sub(/sha256: "[^"]*"/, "sha256: \"" sum "\"") }
+    { print }' "$release" >"$work/release.yaml"
+  cat "$work/release.yaml" >"$release"
+done <"$work/files"
+echo "add-ons written to $addons, sha256 pinned in $release"
