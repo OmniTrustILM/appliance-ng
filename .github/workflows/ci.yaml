@@ -101,5 +101,5 @@ jobs:
             kubectl apply --server-side -f - >/dev/null
           kubectl wait --for condition=Established crd --all --timeout 2m
           for file in $files; do
-            kubectl apply --server-side --dry-run=server -f "$file" >/dev/null
+            kubectl apply --server-side --force-conflicts --dry-run=server -f "$file" >/dev/null
           done
