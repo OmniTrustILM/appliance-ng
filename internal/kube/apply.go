@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -30,6 +31,10 @@ const (
 	// mappingTimeout bounds the wait for a kind that a CRD in the same call has not yet made available.
 	mappingTimeout  = 30 * time.Second
 	mappingInterval = 500 * time.Millisecond
+
+	// KubePrismEndpoint is the node-local Kubernetes API endpoint Talos serves on every node; it is
+	// independent of the node's DHCP address and presents the API server's own certificate.
+	KubePrismEndpoint = "https://127.0.0.1:7445"
 )
 
 // Cluster applies manifests to a Kubernetes cluster and reports readiness.
@@ -53,6 +58,29 @@ func NewCluster(kubeconfig []byte) (Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
+	return newCluster(cfg)
+}
+
+// NewLocalCluster connects with the credentials of the given kubeconfig but always through KubePrism,
+// so the connection survives a change of the node's address.
+func NewLocalCluster(kubeconfig []byte) (Cluster, error) {
+	cfg, err := localRESTConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return newCluster(cfg)
+}
+
+func localRESTConfig(kubeconfig []byte) (*rest.Config, error) {
+	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("load kubeconfig: %w", err)
+	}
+	cfg.Host = KubePrismEndpoint
+	return cfg, nil
+}
+
+func newCluster(cfg *rest.Config) (Cluster, error) {
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create dynamic client: %w", err)

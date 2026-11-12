@@ -79,7 +79,7 @@ func run(log *slog.Logger, socket, listen, clusterName string) error {
 
 	err = firstboot.Run(ctx, firstboot.Deps{
 		Node:           node,
-		NewCluster:     kube.NewCluster,
+		NewCluster:     kube.NewLocalCluster,
 		Steps:          steps,
 		Addons:         addons.FS,
 		Generate:       machineconfig.Generate,
