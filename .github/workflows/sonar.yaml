@@ -78,6 +78,7 @@ jobs:
           repository: ${{ env.HEAD_REPO }}
           ref: ${{ env.HEAD_SHA }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch base branch
         env:

@@ -28,6 +28,8 @@ jobs:
           # Trusted values from the workflow_run event; the artifact is uploaded by the PR author and is not.
           TRUSTED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           TRUSTED_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRUSTED_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          TRUSTED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           ctx=pr_context/pr-context.json
           get() { jq -er --arg key "$1" '.[$key] | strings' "$ctx"; }
@@ -38,8 +40,8 @@ jobs:
             fi
           }
           pr_number="$(get pr_number)"
-          head_repo="$(get head_repo)"
-          head_branch="$(get head_branch)"
+          head_repo="$TRUSTED_HEAD_REPO"
+          head_branch="$TRUSTED_HEAD_BRANCH"
           base_ref="$(get base_ref)"
           check pr_number "$pr_number" '^[0-9]+$'
           check head_repo "$head_repo" '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
