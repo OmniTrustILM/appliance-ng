@@ -35,10 +35,12 @@ VM by hand, use `test/boot/vm.sh start|stop|status`.
 ## CI
 
 `.github/workflows/build.yaml` builds the images on every pull request and every push to `main`, for amd64
-(`ubuntu-latest`) and arm64 (`ubuntu-24.04-arm`), and boot-tests the amd64 ISO with KVM. The arm64 runner has no KVM, so arm64 is boot-tested locally on macOS. Pull requests build against a
-`registry:2` container inside the job and never log in to GHCR. Pushes to `main` and manual runs push the intermediate
-images to `ghcr.io/omnitrustilm/appliance-ng`, and `main` keeps the ISO, qcow2 and `SHA256SUMS` as artifacts for three
-days. The build needs at least 40 GB of free disk after the runner clean-up and fails with a clear message otherwise.
+(`ubuntu-latest`) and arm64 (`ubuntu-24.04-arm`), and boot-tests the amd64 ISO with KVM. The arm64 runner has no KVM, so
+arm64 is boot-tested locally on macOS. The build itself is the reusable workflow `.github/workflows/images.yaml`, called
+by two jobs: `pr` runs with a read-only token against a `registry:2` container inside the job and never logs in to GHCR,
+and `publish` (pushes to `main` and manual runs on `main`) has `packages: write`, pushes the intermediate images to
+`ghcr.io/omnitrustilm/appliance-ng` and keeps the ISO, qcow2 and `SHA256SUMS` as artifacts for three days. The build
+needs at least 40 GB of free disk after the runner clean-up and fails with a clear message otherwise.
 
 ## License
 

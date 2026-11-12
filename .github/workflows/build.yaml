@@ -13,121 +13,21 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-defaults:
-  run:
-    shell: bash
-
 jobs:
-  images:
-    name: images (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    # Only the main branch (push or manual run) publishes to GHCR. Fork pull requests get a read-only token;
-    # same-repository pull requests and other branches never log in to GHCR.
+  # Pull request code never runs with a token that can write packages.
+  pr:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/images.yaml
+    with:
+      publish: false
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     permissions:
       contents: read
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    env:
-      ARCH: ${{ matrix.arch }}
-      PUBLISH: ${{ github.ref == 'refs/heads/main' }}
-      REGISTRY: ${{ github.ref == 'refs/heads/main' && 'ghcr.io/omnitrustilm/appliance-ng' || 'localhost:5005' }}
-    services:
-      registry:
-        image: registry:2
-        ports:
-          - 5005:5000
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          docker image prune --all --force >/dev/null || true
-          df -h / "$GITHUB_WORKSPACE"
-          for path in / "$GITHUB_WORKSPACE"; do
-            free_gb="$(df --block-size=1G --output=avail "$path" | tail -n 1 | tr -d ' ')"
-            if [ "$free_gb" -lt 40 ]; then
-              echo "::error::Only ${free_gb} GB free on the filesystem of $path after clean-up; the image build needs at least 40 GB."
-              exit 1
-            fi
-          done
-
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: go.mod
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-utils zstd
-          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          version="$(go run github.com/mikefarah/yq/v4@v4.54.1 '.talos.version' release.yaml)"
-          base="https://github.com/siderolabs/talos/releases/download/$version"
-          dir="$(mktemp -d)"
-          curl -fsSL -o "$dir/talosctl-linux-$ARCH" "$base/talosctl-linux-$ARCH"
-          curl -fsSL -o "$dir/sha256sum.txt" "$base/sha256sum.txt"
-          (cd "$dir" && grep " talosctl-linux-$ARCH\$" sha256sum.txt | sha256sum --check --strict)
-          sudo install -m 0755 "$dir/talosctl-linux-$ARCH" /usr/local/bin/talosctl
-          talosctl version --client --short
-
-      - name: Enable KVM
-        if: matrix.arch == 'amd64'
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          sudo udevadm settle
-          if [ ! -w /dev/kvm ]; then
-            echo "::error::/dev/kvm is missing or not writable on this runner."
-            ls -l /dev/kvm || true
-            exit 1
-          fi
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 ovmf
-
-      - name: Log in to GHCR
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build images
-        run: make images ARCH="$ARCH" REGISTRY="$REGISTRY"
-
-      - name: Boot test
-        if: matrix.arch == 'amd64'
-        run: make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
-
-      - name: Upload failure logs
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: failure-logs-${{ matrix.arch }}
-          path: |
-            out/boot-test.log
-            out/*/imager-*.log
-          if-no-files-found: ignore
-          retention-days: 3
-
-      - name: Upload images
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: images-${{ matrix.arch }}
-          path: |
-            out/${{ matrix.arch }}/*.iso
-            out/${{ matrix.arch }}/*.qcow2
-            out/${{ matrix.arch }}/SHA256SUMS
-          retention-days: 3
+    uses: ./.github/workflows/images.yaml
+    with:
+      publish: true
