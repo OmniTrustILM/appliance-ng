@@ -130,9 +130,10 @@
       "enabled": false
     },
     {
-      "description": "Image tags follow the add-on, operator and Talos releases that request them; Renovate only refreshes digests",
+      "description": "Image tags follow the add-on, operator and Talos releases that request them; Renovate only refreshes digests, except the imager, which moves with the Talos release in its group",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
+      "matchPackageNames": ["!ghcr.io/siderolabs/imager"],
       "matchUpdateTypes": ["major", "minor", "patch"],
       "enabled": false
     }
