@@ -77,7 +77,6 @@ func Run(ctx context.Context, d Deps, s *StatusStore) error {
 	r := &runner{d: d, s: s}
 	// run returns an error only when ctx is cancelled; once ready, keep serving status until then.
 	if r.run(ctx) == nil {
-		r.retryMarkReady(ctx)
 		<-ctx.Done()
 	}
 	return nil
@@ -97,8 +96,6 @@ type runner struct {
 	// wasReady is set once META shows, or cannot rule out, that the node has been ready; its storage then holds
 	// user data and is never reset.
 	wasReady bool
-	// unmarked is set while the ready marker could not be written.
-	unmarked bool
 }
 
 func (r *runner) run(ctx context.Context) error {
@@ -122,9 +119,8 @@ func (r *runner) run(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := r.markReady(ctx); err != nil {
-		r.d.Log.Warn("could not mark the node as ready, retrying", "error", err)
-		r.unmarked = true
+	if err := r.recordReady(ctx); err != nil {
+		return err
 	}
 	r.set(StateReady, "", "ILM Platform is ready")
 	return nil
@@ -142,20 +138,22 @@ func (r *runner) markReady(ctx context.Context) error {
 	return nil
 }
 
-// retryMarkReady writes the ready marker until it succeeds or ctx is done, waiting as retry does.
-func (r *runner) retryMarkReady(ctx context.Context) {
-	for failures := 0; r.unmarked; failures++ {
+// recordReady writes the ready marker, waiting as retry does between failures, until it succeeds or ctx is done.
+// It never checks the system images: the platform is up, so no reset may be requested while the marker is missing.
+func (r *runner) recordReady(ctx context.Context) error {
+	for failures := 0; ; failures++ {
+		err := r.markReady(ctx)
+		if err == nil {
+			r.d.Log.Info("node marked as ready")
+			return nil
+		}
+		cur := r.s.Get()
+		r.set(cur.State, cur.Step, "recording the ready marker: "+err.Error())
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-time.After(backoff(r.d.Retry, failures)):
 		}
-		if err := r.markReady(ctx); err != nil {
-			r.d.Log.Warn("could not mark the node as ready, retrying", "error", err)
-			continue
-		}
-		r.unmarked = false
-		r.d.Log.Info("node marked as ready")
 	}
 }
 

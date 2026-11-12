@@ -58,7 +58,7 @@ type fakeNode struct {
 	resetErrs    []error
 	marked       bool // the ready marker, which survives reboots and resets
 	markedErr    error
-	markErrs     []error
+	markFail     error // fails every MarkReady call while set
 
 	stageCalls, addrCalls, bootstrapCalls, kubeCalls, brokenCalls int
 	applied                                                       [][]byte
@@ -74,10 +74,8 @@ func (n *fakeNode) WasReady(context.Context) (bool, error) {
 func (n *fakeNode) MarkReady(context.Context) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if len(n.markErrs) > 0 {
-		err := n.markErrs[0]
-		n.markErrs = n.markErrs[1:]
-		return err
+	if n.markFail != nil {
+		return n.markFail
 	}
 	n.marks++
 	n.marked = true
@@ -131,6 +129,12 @@ func (n *fakeNode) ResetEphemeral(context.Context) error {
 	}
 	n.resets++
 	return nil
+}
+
+func (n *fakeNode) setMarkFail(err error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.markFail = err
 }
 
 func (n *fakeNode) setBroken(refs ...string) {
@@ -987,23 +991,36 @@ func TestRunMarksTheNodeReady(t *testing.T) {
 	}
 }
 
-func TestRunRetriesTheReadyMarker(t *testing.T) {
-	steps, fsys := testSteps("platform")
-	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
-		recorded: true, markErrs: []error{errors.New("META full"), errors.New("META full")}}
-	h := newHarness(node, newFakeCluster(steps), steps, fsys)
-	h.start(t)
+func TestRunIsNotReadyUntilTheMarkerIsWritten(t *testing.T) {
+	for _, recorded := range []bool{true, false} {
+		t.Run(fmt.Sprintf("reset recorded %v", recorded), func(t *testing.T) {
+			steps, fsys := testSteps("platform")
+			node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr},
+				kubeconfig: []byte("kubeconfig"), recorded: recorded, markFail: errors.New("META full")}
+			h := newHarness(node, newFakeCluster(steps), steps, fsys)
+			h.start(t)
 
-	h.waitState(t, StateReady)
-	eventually(t, "marker", func() bool { return node.snapshot().marked })
-	if s := node.snapshot(); s.marks != 1 || s.recorded || s.clears != 1 {
-		t.Fatalf("%d marks, recorded %v, %d clears: want the marker written and then the record cleared",
-			s.marks, s.recorded, s.clears)
-	}
-	if !strings.Contains(h.log.String(), "META full") {
-		t.Errorf("log does not record the failed marker:\n%s", h.log.String())
-	}
-	if st := h.store.Get().State; st != StateReady {
-		t.Errorf("state %s, want ready", st)
+			want := "recording the ready marker: META full"
+			eventually(t, "marker error in the status", func() bool { return h.store.Get().Message == want })
+			node.setBroken(etcdImage)
+			time.Sleep(20 * time.Millisecond)
+			if st := h.store.Get(); st.State != StatePlatform || st.Step != platformStep {
+				t.Fatalf("state %s step %q, want the platform step while the marker is missing", st.State, st.Step)
+			}
+			if s := node.snapshot(); s.resets != 0 || s.recorded != recorded || s.clears != 0 {
+				t.Fatalf("%d resets, recorded %v, %d clears: want no reset and the record untouched",
+					s.resets, s.recorded, s.clears)
+			}
+
+			node.setMarkFail(nil)
+			h.waitState(t, StateReady)
+			if s := node.snapshot(); s.marks != 1 || s.recorded || s.resets != 0 {
+				t.Fatalf("%d marks, recorded %v, %d resets: want the marker written, no record and no reset",
+					s.marks, s.recorded, s.resets)
+			}
+			if !strings.Contains(h.log.String(), "META full") {
+				t.Errorf("log does not record the failed marker:\n%s", h.log.String())
+			}
+		})
 	}
 }
