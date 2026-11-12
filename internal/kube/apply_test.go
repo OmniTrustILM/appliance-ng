@@ -368,7 +368,7 @@ spec: {}
 		t.Error("want a reason while no condition is reported")
 	}
 
-	setAvailable := func(status, reason string) {
+	setAvailable := func(status, reason string, observedGeneration int64) {
 		t.Helper()
 		dyn := dynamic.NewForConfigOrDie(restConfig)
 		gvr := schema.GroupVersionResource{Group: "otilm.com", Version: "v1alpha1", Resource: "platforms"}
@@ -376,7 +376,7 @@ spec: {}
 		if err != nil {
 			t.Fatal(err)
 		}
-		cond := map[string]any{"type": "Available", "status": status, "reason": reason}
+		cond := map[string]any{"type": "Available", "status": status, "reason": reason, "observedGeneration": observedGeneration}
 		if err := unstructured.SetNestedSlice(obj.Object, []any{cond}, "status", "conditions"); err != nil {
 			t.Fatal(err)
 		}
@@ -385,13 +385,19 @@ spec: {}
 		}
 	}
 
-	setAvailable("False", "WaitingForDatabase")
+	setAvailable("False", "WaitingForDatabase", 1)
 	ready, reason, err = c.Ready(ctx(t), w)
 	if err != nil || ready || reason != "WaitingForDatabase" {
 		t.Fatalf("ready = %v, reason = %q, err = %v", ready, reason, err)
 	}
 
-	setAvailable("True", "Reconciled")
+	setAvailable("True", "Reconciled", 0)
+	ready, reason, err = c.Ready(ctx(t), w)
+	if err != nil || ready || reason != "generation not observed" {
+		t.Fatalf("stale generation: ready = %v, reason = %q, err = %v", ready, reason, err)
+	}
+
+	setAvailable("True", "Reconciled", 1)
 	if ready, _, err = c.Ready(ctx(t), w); err != nil || !ready {
 		t.Fatalf("ready = %v, err = %v", ready, err)
 	}

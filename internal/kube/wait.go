@@ -38,7 +38,7 @@ var waitKinds = map[string]waitKind{
 	},
 	"Platform": {
 		resource: platformResource,
-		checks:   map[string]func(*unstructured.Unstructured) (bool, string){"Available": conditionTrue("Available")},
+		checks:   map[string]func(*unstructured.Unstructured) (bool, string){"Available": platformAvailable},
 	},
 }
 
@@ -109,6 +109,20 @@ func conditionTrue(condType string) func(*unstructured.Unstructured) (bool, stri
 		}
 		return false, "no " + condType + " condition"
 	}
+}
+
+// platformAvailable passes when the Available condition is True and was set for the current generation.
+func platformAvailable(obj *unstructured.Unstructured) (bool, string) {
+	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, item := range conditions {
+		cond, ok := item.(map[string]any)
+		if ok && cond["type"] == "Available" {
+			if observed, _ := cond["observedGeneration"].(int64); observed != obj.GetGeneration() {
+				return false, "generation not observed"
+			}
+		}
+	}
+	return conditionTrue("Available")(obj)
 }
 
 func daemonSetRolledOut(obj *unstructured.Unstructured) (bool, string) {
