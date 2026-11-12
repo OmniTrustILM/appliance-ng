@@ -143,6 +143,7 @@ type fakeCluster struct {
 
 	steps   []kube.Step
 	applied []string        // step names in apply order
+	created []string        // step names in create-only order
 	done    map[string]bool // steps whose objects exist
 	stuck   map[string]string
 	labels  map[string]map[string]string
@@ -160,12 +161,20 @@ func newFakeCluster(steps []kube.Step, alreadyApplied ...string) *fakeCluster {
 }
 
 func (c *fakeCluster) Apply(_ context.Context, docs []byte) error {
+	return c.record(&c.applied, docs)
+}
+
+func (c *fakeCluster) Create(_ context.Context, docs []byte) error {
+	return c.record(&c.created, docs)
+}
+
+func (c *fakeCluster) record(into *[]string, docs []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	step := strings.TrimSpace(string(docs))
 	step = step[:strings.IndexByte(step, '-')]
-	if len(c.applied) == 0 || c.applied[len(c.applied)-1] != step {
-		c.applied = append(c.applied, step)
+	if len(*into) == 0 || (*into)[len(*into)-1] != step {
+		*into = append(*into, step)
 	}
 	c.done[step] = true
 	return nil
@@ -195,6 +204,12 @@ func (c *fakeCluster) appliedSteps() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.applied)
+}
+
+func (c *fakeCluster) createdSteps() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.created)
 }
 
 func (c *fakeCluster) calls(name string) int {
@@ -637,5 +652,23 @@ func TestRunLogsAlreadyBootstrappedOnce(t *testing.T) {
 	logged := h.log.String()
 	if !strings.Contains(logged, `msg="etcd already bootstrapped"`) || strings.Contains(logged, `msg="etcd bootstrapped"`) {
 		t.Errorf("log should say etcd was already bootstrapped, and only that:\n%s", logged)
+	}
+}
+
+func TestRunCreatesCreateOnlyStepsInsteadOfApplying(t *testing.T) {
+	steps, fsys := testSteps("cilium", "platform")
+	steps[1].CreateOnly = true
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := newFakeCluster(steps)
+	h := newHarness(node, cluster, steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	h.stop(t)
+	if got := cluster.appliedSteps(); !slices.Equal(got, []string{"cilium"}) {
+		t.Errorf("applied %v, want [cilium]", got)
+	}
+	if got := cluster.createdSteps(); !slices.Equal(got, []string{"platform"}) {
+		t.Errorf("created %v, want [platform]", got)
 	}
 }

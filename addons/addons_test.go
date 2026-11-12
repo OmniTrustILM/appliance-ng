@@ -110,3 +110,11 @@ func TestPlatformMatchesRelease(t *testing.T) {
 		t.Errorf("platform.yaml hostName = %q, release.yaml platform.hostName = %q", platform.Spec.Common.HostName, m.Platform.HostName)
 	}
 }
+
+func TestOnlyPlatformStepIsCreateOnly(t *testing.T) {
+	for _, step := range loadSteps(t) {
+		if want := step.Name == "platform"; step.CreateOnly != want {
+			t.Errorf("step %s: createOnly = %v, want %v", step.Name, step.CreateOnly, want)
+		}
+	}
+}

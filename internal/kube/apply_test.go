@@ -418,3 +418,52 @@ func TestLoadStepsFromEmbeddedAddons(t *testing.T) {
 		t.Errorf("storage namespace label = %q", got)
 	}
 }
+
+func TestCreateAppliesMissingObject(t *testing.T) {
+	c := newCluster(t)
+	manifest := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: created\n  namespace: default\ndata:\n  key: value\n")
+	if err := c.Create(ctx(t), manifest); err != nil {
+		t.Fatal(err)
+	}
+	cm, err := kubernetes.NewForConfigOrDie(restConfig).CoreV1().ConfigMaps("default").Get(ctx(t), "created", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cm.Data["key"] != "value" {
+		t.Errorf("data = %v", cm.Data)
+	}
+}
+
+func TestCreateLeavesExistingObjectUntouched(t *testing.T) {
+	c := newCluster(t)
+	manifest := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: kept\n  namespace: default\ndata:\n  key: default\n")
+	if err := c.Create(ctx(t), manifest); err != nil {
+		t.Fatal(err)
+	}
+	cms := kubernetes.NewForConfigOrDie(restConfig).CoreV1().ConfigMaps("default")
+	cm, err := cms.Get(ctx(t), "kept", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm.Data["key"] = "changed"
+	if _, err := cms.Update(ctx(t), cm, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create(ctx(t), manifest); err != nil {
+		t.Fatal(err)
+	}
+	cm, err = cms.Get(ctx(t), "kept", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cm.Data["key"] != "changed" {
+		t.Errorf("key = %q, want the changed value", cm.Data["key"])
+	}
+}
+
+func TestCreateRejectsBadInput(t *testing.T) {
+	c := newCluster(t)
+	if err := c.Create(ctx(t), []byte("apiVersion: v1\nmetadata:\n  name: x\n")); err == nil {
+		t.Error("document without kind: want error")
+	}
+}

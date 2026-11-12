@@ -9,9 +9,11 @@ import (
 )
 
 // Step is one entry of order.yaml: files applied in order, then waits that must pass.
+// With CreateOnly the objects of the files are created when missing and never modified afterwards.
 type Step struct {
 	Name            string                       `json:"name"`
 	Files           []string                     `json:"files"`
+	CreateOnly      bool                         `json:"createOnly"`
 	NamespaceLabels map[string]map[string]string `json:"namespaceLabels"`
 	Wait            []WaitFor                    `json:"wait"`
 }

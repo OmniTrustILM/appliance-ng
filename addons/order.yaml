@@ -1,5 +1,6 @@
 # Apply order and readiness waits of the add-ons. Each step's files are applied in order,
-# then its waits must pass before the next step starts.
+# then its waits must pass before the next step starts. A createOnly step creates its objects when they are
+# missing and leaves existing ones alone, so changes made after setup survive a restart.
 steps:
   - name: cilium
     files: [cilium.yaml]
@@ -48,5 +49,6 @@ steps:
       - { kind: Deployment, namespace: ilm-operator-system, name: ilm-operator-controller-manager, for: Available }
   - name: platform
     files: [ilm-edge.yaml, platform.yaml]
+    createOnly: true
     wait:
       - { kind: Platform, namespace: ilm, name: ilm, for: Available }

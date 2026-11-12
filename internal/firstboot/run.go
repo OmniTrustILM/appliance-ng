@@ -312,7 +312,11 @@ func (r *runner) applyStep(ctx context.Context, cluster kube.Cluster, step kube.
 		if err != nil {
 			return false, fmt.Errorf("read %s: %w", file, err)
 		}
-		if err := cluster.Apply(ctx, docs); err != nil {
+		write := cluster.Apply
+		if step.CreateOnly {
+			write = cluster.Create
+		}
+		if err := write(ctx, docs); err != nil {
 			return false, fmt.Errorf("apply %s: %w", file, err)
 		}
 	}

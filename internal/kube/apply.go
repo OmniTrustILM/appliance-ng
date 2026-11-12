@@ -41,6 +41,8 @@ const (
 type Cluster interface {
 	// Apply server-side-applies every document of a multi-document YAML in order.
 	Apply(ctx context.Context, docs []byte) error
+	// Create server-side-applies every document that does not exist yet and leaves existing objects untouched.
+	Create(ctx context.Context, docs []byte) error
 	// LabelNamespace creates the namespace if missing and merges labels into it.
 	LabelNamespace(ctx context.Context, ns string, labels map[string]string) error
 	// Ready reports whether the object meets the condition, with a short reason when it does not.
@@ -93,6 +95,14 @@ func newCluster(cfg *rest.Config) (Cluster, error) {
 }
 
 func (c *cluster) Apply(ctx context.Context, docs []byte) error {
+	return c.forEachObject(ctx, docs, c.applyObject)
+}
+
+func (c *cluster) Create(ctx context.Context, docs []byte) error {
+	return c.forEachObject(ctx, docs, c.createObject)
+}
+
+func (c *cluster) forEachObject(ctx context.Context, docs []byte, fn func(context.Context, *unstructured.Unstructured) error) error {
 	defer c.mapper.Reset()
 
 	decoder := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(docs), 4096)
@@ -107,7 +117,7 @@ func (c *cluster) Apply(ctx context.Context, docs []byte) error {
 		if len(obj) == 0 {
 			continue
 		}
-		if err := c.applyObject(ctx, &unstructured.Unstructured{Object: obj}); err != nil {
+		if err := fn(ctx, &unstructured.Unstructured{Object: obj}); err != nil {
 			return err
 		}
 	}
@@ -120,20 +130,48 @@ func describe(obj *unstructured.Unstructured) string {
 	return fmt.Sprintf("%s %s", obj.GetKind(), obj.GetName())
 }
 
-func (c *cluster) applyObject(ctx context.Context, obj *unstructured.Unstructured) error {
+// resourceFor returns the client of the object's resource, waiting for its kind to be served.
+func (c *cluster) resourceFor(ctx context.Context, obj *unstructured.Unstructured) (dynamic.ResourceInterface, error) {
 	gvk := obj.GroupVersionKind()
 	if gvk.Kind == "" || obj.GetName() == "" {
-		return fmt.Errorf("apply: document without kind or name (%s)", describe(obj))
+		return nil, fmt.Errorf("document without kind or name (%s)", describe(obj))
 	}
 	mapping, err := c.mappingFor(ctx, gvk.GroupKind(), gvk.Version)
 	if err != nil {
+		return nil, err
+	}
+	resource := c.dyn.Resource(mapping.Resource)
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		return resource.Namespace(obj.GetNamespace()), nil
+	}
+	return resource, nil
+}
+
+func (c *cluster) applyObject(ctx context.Context, obj *unstructured.Unstructured) error {
+	resource, err := c.resourceFor(ctx, obj)
+	if err != nil {
 		return fmt.Errorf("apply %s: %w", describe(obj), err)
 	}
+	return patch(ctx, resource, obj)
+}
 
-	var resource dynamic.ResourceInterface = c.dyn.Resource(mapping.Resource)
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		resource = c.dyn.Resource(mapping.Resource).Namespace(obj.GetNamespace())
+// createObject applies the object only when it is not found, so later changes to it survive a restart.
+func (c *cluster) createObject(ctx context.Context, obj *unstructured.Unstructured) error {
+	resource, err := c.resourceFor(ctx, obj)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", describe(obj), err)
 	}
+	switch _, err := resource.Get(ctx, obj.GetName(), metav1.GetOptions{}); {
+	case err == nil:
+		slog.Debug("exists, left untouched", "kind", obj.GetKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())
+		return nil
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("create %s: %w", describe(obj), err)
+	}
+	return patch(ctx, resource, obj)
+}
+
+func patch(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
 	data, err := obj.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("apply %s: %w", describe(obj), err)
