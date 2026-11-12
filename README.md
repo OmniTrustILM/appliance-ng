@@ -5,7 +5,7 @@ builds and configures the appliance image.
 
 ## Build
 
-Prerequisites: Docker with buildx, Go, `qemu-img`, `zstd`, `crane` and `talosctl` v1.14.5, the Talos version in
+Prerequisites: Docker with buildx, Go, `qemu-img`, `zstd`, `jq`, `crane` and `talosctl` v1.14.5, the Talos version in
 `release.yaml`. A local registry holds the intermediate images:
 
 ```bash
