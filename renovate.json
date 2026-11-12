@@ -104,6 +104,30 @@
       "matchDatasources": ["docker"],
       "groupName": "ilm",
       "matchPackageNames": ["hub.omnitrustregistry.com/ilm/**"]
+    },
+    {
+      "description": "Leave images that the add-on files reference alone; they change with an add-on upgrade, which re-renders the files and release.yaml together",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": [
+        "docker.io/library/busybox",
+        "docker.io/traefik",
+        "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "ghcr.io/rabbitmq/cluster-operator",
+        "ghcr.io/rabbitmq/messaging-topology-operator",
+        "hub.omnitrustregistry.com/ilm/operator",
+        "quay.io/cilium/cilium",
+        "quay.io/cilium/cilium-envoy",
+        "quay.io/cilium/operator-generic",
+        "quay.io/jetstack/cert-manager-acmesolver",
+        "quay.io/jetstack/cert-manager-cainjector",
+        "quay.io/jetstack/cert-manager-controller",
+        "quay.io/jetstack/cert-manager-webhook",
+        "quay.io/keycloak/keycloak",
+        "quay.io/keycloak/keycloak-operator",
+        "rancher/local-path-provisioner"
+      ],
+      "enabled": false
     }
   ]
 }

@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -140,4 +141,45 @@ func isSeparator(r rune) bool {
 
 func bufioReader(data []byte) *bufio.Reader {
 	return bufio.NewReader(bytes.NewReader(data))
+}
+
+// AddonImageNames returns the sorted names, without tag and digest and as
+// written in the manifest, of the listed images that the add-on files use.
+func AddonImageNames(m *Manifest, addons fs.FS) ([]string, error) {
+	implicit := make(map[string]bool, len(m.ImplicitImages))
+	for _, name := range m.ImplicitImages {
+		implicit[name] = true
+	}
+	used := map[string]bool{}
+	for _, addon := range m.Addons {
+		data, err := readAddon(addons, addon)
+		if err != nil {
+			return nil, err
+		}
+		images, err := imagesIn(data, implicit)
+		if err != nil {
+			return nil, fmt.Errorf("addon %s (%s): %w", addon.Name, addon.File, err)
+		}
+		for _, img := range images {
+			used[normalize(img)] = true
+		}
+	}
+
+	var names []string
+	for _, img := range m.Images {
+		if used[normalize(img.Ref)] {
+			names = append(names, imageName(img.Ref))
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
+}
+
+// imageName strips the digest and the tag from ref.
+func imageName(ref string) string {
+	name, _, _ := strings.Cut(ref, "@")
+	if hasTag(name) {
+		name = name[:strings.LastIndex(name, ":")]
+	}
+	return name
 }

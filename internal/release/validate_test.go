@@ -105,3 +105,34 @@ func joinErrors(errs []error) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+func TestAddonImageNames(t *testing.T) {
+	m := &Manifest{
+		ImplicitImages: []string{"busybox"},
+		Addons:         []AddonFile{{Name: "app", File: "app.yaml", SHA256: hash(workload)}},
+		Images: []Image{
+			{Ref: "a/x:1", Digest: "sha256:1"},
+			{Ref: "b/y:2", Digest: "sha256:2"},
+			{Ref: "docker.io/library/busybox:latest", Digest: "sha256:3"},
+			{Ref: "c/unused:3", Digest: "sha256:4"},
+		},
+	}
+
+	got, err := AddonImageNames(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"a/x", "b/y", "docker.io/library/busybox"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("names = %v, want %v", got, want)
+	}
+}
+
+func TestAddonImageNamesReportsBadAddon(t *testing.T) {
+	m := &Manifest{Addons: []AddonFile{{Name: "app", File: "app.yaml", SHA256: "bad"}}}
+
+	if _, err := AddonImageNames(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}}); err == nil {
+		t.Error("want an error for a hash mismatch")
+	}
+}
