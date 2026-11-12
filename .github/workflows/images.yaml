@@ -59,13 +59,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-utils zstd
-          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          fetch() { curl -fsSL --proto '=https' --tlsv1.2 -o "$1" "$2"; }
+          dir="$(mktemp -d)"
+          crane_asset="go-containerregistry_Linux_$([ "$ARCH" = amd64 ] && echo x86_64 || echo arm64).tar.gz"
+          crane_base="https://github.com/google/go-containerregistry/releases/download/v0.20.6"
+          fetch "$dir/$crane_asset" "$crane_base/$crane_asset"
+          fetch "$dir/checksums.txt" "$crane_base/checksums.txt"
+          (cd "$dir" && grep " $crane_asset\$" checksums.txt | sha256sum --check --strict)
+          tar -xzf "$dir/$crane_asset" -C "$dir" crane
+          sudo install -m 0755 "$dir/crane" /usr/local/bin/crane
           version="$(go run github.com/mikefarah/yq/v4@v4.54.1 '.talos.version' release.yaml)"
           base="https://github.com/siderolabs/talos/releases/download/$version"
-          dir="$(mktemp -d)"
-          curl -fsSL -o "$dir/talosctl-linux-$ARCH" "$base/talosctl-linux-$ARCH"
-          curl -fsSL -o "$dir/sha256sum.txt" "$base/sha256sum.txt"
+          fetch "$dir/talosctl-linux-$ARCH" "$base/talosctl-linux-$ARCH"
+          fetch "$dir/sha256sum.txt" "$base/sha256sum.txt"
           (cd "$dir" && grep " talosctl-linux-$ARCH\$" sha256sum.txt | sha256sum --check --strict)
           sudo install -m 0755 "$dir/talosctl-linux-$ARCH" /usr/local/bin/talosctl
           talosctl version --client --short

@@ -70,7 +70,7 @@ while read -r file url namespace; do
       "$namespace" "$url" >"$work/$file/kustomization.yaml"
     kubectl kustomize "$work/$file" >"$addons/$file"
   else
-    curl -fsSL --retry 3 "$url" -o "$addons/$file"
+    curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$url" -o "$addons/$file"
   fi
 done <"$src/downloads.txt"
 
