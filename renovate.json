@@ -1,0 +1,141 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "pinDigests": true,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Container images pinned by tag and digest in release.yaml",
+      "managerFilePatterns": ["/^release\\.yaml$/"],
+      "matchStrings": [
+        "ref:\\s*\"(?<depName>[^\"@]+?):(?<currentValue>[^\"@:/]+)@(?<currentDigest>sha256:[a-f0-9]+)\"\\s*,\\s*digest:\\s*\"sha256:[a-f0-9]+\""
+      ],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "ref: \"{{depName}}:{{newValue}}@{{newDigest}}\", digest: \"{{newDigest}}\""
+    },
+    {
+      "customType": "regex",
+      "description": "Container images pinned by tag in release.yaml, their digest in the digest field",
+      "managerFilePatterns": ["/^release\\.yaml$/"],
+      "matchStrings": [
+        "ref:\\s*\"(?<depName>[^\"@]+?):(?<currentValue>[^\"@:/]+)\"\\s*,\\s*digest:\\s*\"(?<currentDigest>sha256:[a-f0-9]+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "ref: \"{{depName}}:{{newValue}}\", digest: \"{{newDigest}}\""
+    },
+    {
+      "customType": "regex",
+      "description": "Talos imager pinned by tag and digest in release.yaml",
+      "managerFilePatterns": ["/^release\\.yaml$/"],
+      "matchStrings": [
+        "imager:\\s*(?<depName>[^\\s@:]+/[^\\s@:]+/[^\\s@:]+):(?<currentValue>[^\\s@]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "autoReplaceStringTemplate": "imager: {{depName}}:{{newValue}}@{{newDigest}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Talos release pinned in release.yaml",
+      "managerFilePatterns": ["/^release\\.yaml$/"],
+      "matchStrings": ["version:\\s*(?<currentValue>v[0-9][^\\s,]*)"],
+      "depNameTemplate": "siderolabs/talos",
+      "datasourceTemplate": "github-releases"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Update the Talos release with the imager and the Kubernetes images",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-releases"],
+      "groupName": "talos and kubernetes",
+      "matchPackageNames": ["siderolabs/talos"]
+    },
+    {
+      "description": "Update the Talos imager and the Kubernetes images together",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "talos and kubernetes",
+      "matchPackageNames": ["ghcr.io/siderolabs/**", "registry.k8s.io/**"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "cilium",
+      "matchPackageNames": ["quay.io/cilium/**"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "local-path-provisioner",
+      "matchPackageNames": ["rancher/local-path-provisioner", "docker.io/library/busybox"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "cert-manager",
+      "matchPackageNames": ["quay.io/jetstack/cert-manager-*"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "cloudnative-pg",
+      "matchPackageNames": ["ghcr.io/cloudnative-pg/**"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "rabbitmq",
+      "matchPackageNames": ["ghcr.io/rabbitmq/**", "rabbitmq"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "keycloak",
+      "matchPackageNames": ["quay.io/keycloak/**"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "traefik",
+      "matchPackageNames": ["docker.io/traefik"]
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "groupName": "ilm",
+      "matchPackageNames": ["hub.omnitrustregistry.com/ilm/**"]
+    },
+    {
+      "description": "Leave images that the add-on files reference alone; they change with an add-on upgrade, which re-renders the files and release.yaml together",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": [
+        "docker.io/library/busybox",
+        "docker.io/traefik",
+        "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "ghcr.io/rabbitmq/cluster-operator",
+        "ghcr.io/rabbitmq/messaging-topology-operator",
+        "hub.omnitrustregistry.com/ilm/operator",
+        "quay.io/cilium/cilium",
+        "quay.io/cilium/cilium-envoy",
+        "quay.io/cilium/operator-generic",
+        "quay.io/jetstack/cert-manager-acmesolver",
+        "quay.io/jetstack/cert-manager-cainjector",
+        "quay.io/jetstack/cert-manager-controller",
+        "quay.io/jetstack/cert-manager-webhook",
+        "quay.io/keycloak/keycloak",
+        "quay.io/keycloak/keycloak-operator",
+        "rancher/local-path-provisioner"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Image tags follow the add-on, operator and Talos releases that request them; Renovate only refreshes digests, except the imager, which moves with the Talos release in its group",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["!ghcr.io/siderolabs/imager"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "enabled": false
+    }
+  ]
+}

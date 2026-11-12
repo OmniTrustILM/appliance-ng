@@ -1,0 +1,148 @@
+name: Sonar
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:   { description: "PR number", required: true }
+      head_sha:    { description: "Head commit SHA", required: true }
+      head_repo:   { description: "Fork repo full_name", required: true }
+      head_branch: { description: "Fork branch", required: true }
+      base_ref:    { description: "Base branch", required: true }
+      run_id:      { description: "Upstream run ID", required: true }
+
+run-name: >-
+  Sonar • PR #${{ inputs.pr_number }}
+  • ${{ inputs.head_repo }}@${{ inputs.head_branch }}
+  • ${{ inputs.head_sha }}
+
+permissions:
+  actions: read
+  contents: read
+  checks: write
+  pull-requests: read
+
+jobs:
+  sonar:
+    name: Sonar • PR #${{ inputs.pr_number }}
+    runs-on: ubuntu-latest
+
+    # Inputs are untrusted PR data: the first step validates them, and they reach scripts only through env,
+    # never through ${{ }} in a script body.
+    env:
+      PR_NUMBER: ${{ inputs.pr_number }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+      HEAD_REPO: ${{ inputs.head_repo }}
+      PR_BRANCH: ${{ inputs.head_branch }}
+      BASE_BRANCH: ${{ inputs.base_ref }}
+      UPSTREAM_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Validate inputs
+        run: |
+          check() { # check <name> <value> <regex>
+            local name="$1" value="$2" regex="$3"
+            if ! [[ "$value" =~ $regex ]] || [[ "$value" == *..* || "$value" == -* ]]; then
+              echo "::error::invalid input $name"
+              exit 1
+            fi
+          }
+          check pr_number "$PR_NUMBER" '^[0-9]+$'
+          check head_sha "$HEAD_SHA" '^[0-9a-f]{40}$'
+          check head_repo "$HEAD_REPO" '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          check head_branch "$PR_BRANCH" '^[A-Za-z0-9._/-]+$'
+          check base_ref "$BASE_BRANCH" '^[A-Za-z0-9._/-]+$'
+          check run_id "$UPSTREAM_RUN_ID" '^[0-9]+$'
+
+      - name: Generate token
+        id: app_token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ secrets.SONAR_GH_APP_ID }}
+          private-key: ${{ secrets.SONAR_GH_APP_PRIVATE_KEY }}
+
+      - name: Create GitHub Check (in_progress)
+        id: create_check
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const check = await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: `SonarQube Analysis`,
+              head_sha: process.env.HEAD_SHA,
+              status: "in_progress"
+            });
+            core.setOutput("check_id", check.data.id);
+
+      # Check out the PR head commit and fetch the base branch to compute the diff.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ env.HEAD_REPO }}
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch base branch and trusted scanner settings
+        env:
+          CLONE_URL: ${{ github.event.repository.clone_url }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git remote add upstream "$CLONE_URL"
+          git fetch upstream "+refs/heads/$BASE_BRANCH:refs/remotes/upstream/$BASE_BRANCH" \
+            "+refs/heads/$DEFAULT_BRANCH:refs/remotes/upstream/$DEFAULT_BRANCH"
+          git branch -f "$BASE_BRANCH" "refs/remotes/upstream/$BASE_BRANCH"
+          git clean -ffdx && git reset --hard "$HEAD_SHA"
+          # A fork's scanner settings are not trusted: they come from the default branch, and the fork's own
+          # copies are removed so they cannot change how the token-bearing scan behaves.
+          if [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" ]]; then
+            cp sonar-project.properties "$RUNNER_TEMP/sonar-project.properties"
+          else
+            git show "refs/remotes/upstream/$DEFAULT_BRANCH:sonar-project.properties" > "$RUNNER_TEMP/sonar-project.properties"
+          fi
+          rm -f sonar-project.properties .sonarcloud.properties
+
+      - name: Download coverage report artifact from upstream run
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8
+        with:
+          name: coverage-report
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.run_id }}
+          path: .
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          # The scan reads settings only from the default branch's file and these trusted values; it runs no PR code.
+          args: >
+            -Dproject.settings=${{ runner.temp }}/sonar-project.properties
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.organization=ilm
+            -Dsonar.projectKey=OmniTrustILM_appliance-ng
+            -Dsonar.scm.revision=${{ env.HEAD_SHA }}
+            -Dsonar.pullrequest.key=${{ env.PR_NUMBER }}
+            -Dsonar.pullrequest.branch=${{ env.PR_BRANCH }}
+            -Dsonar.pullrequest.base=${{ env.BASE_BRANCH }}
+
+      - name: Finalize GitHub Check
+        if: always()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ steps.app_token.outputs.token }}
+          script: |
+            const checkId = "${{ steps.create_check.outputs.check_id }}";
+            const status = "${{ job.status }}";
+            const conclusions = { success: "success", failure: "failure", cancelled: "cancelled" };
+            const conclusion = conclusions[status] || "failure";
+            await github.rest.checks.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              check_run_id: checkId,
+              completed_at: new Date().toISOString(),
+              status: "completed",
+              conclusion,
+              output: {
+                title: "SonarQube Analysis Result",
+                summary: `✅ SonarQube analysis concluded with status: **${conclusion}**`,
+              }
+            });

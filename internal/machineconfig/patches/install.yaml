@@ -1,0 +1,8 @@
+# Install disk selection; the rules are in diskSelector in generate.go.
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+installer:
+  image: {{ printf "%q" .InstallerImage }}
+provisioning:
+  diskSelector:
+    match: {{ printf "%q" .DiskSelector }}

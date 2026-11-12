@@ -1,0 +1,8 @@
+# Sync each image layer to disk while it is unpacked. Without it, a power cut shortly after a pull leaves a layer
+# with empty files that containerd already counts as pulled, and its containers fail with "exec format error".
+apiVersion: v1alpha1
+kind: CRICustomizationConfig
+name: sync-image-pulls
+content: |
+  [plugins."io.containerd.cri.v1.images"]
+    image_pull_with_sync_fs = true

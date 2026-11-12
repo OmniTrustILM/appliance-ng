@@ -1,0 +1,46 @@
+# Default ILM platform: everything managed, generated administrator certificate, Ingress edge
+# on Traefik with client-certificate login.
+apiVersion: otilm.com/v1alpha1
+kind: Platform
+metadata: { name: ilm, namespace: ilm }
+spec:
+  version: "2.20.0"
+  common:
+    hostName: ilm.appliance.internal
+  core:
+    clientCertHeader: X-Forwarded-Tls-Client-Cert
+  database:
+    mode: managed
+    managed: { instances: 1, version: "18", storage: { size: 8Gi } }
+    pgBouncer: { managed: true }
+  messaging:
+    mode: managed
+    brokerType: rabbitmq
+    managed: { replicas: 1, version: "4.3.1", storage: { size: 2Gi } }
+  keycloak:
+    mode: managed
+    realm: ilm
+    managed: { instances: 1 }
+  registerAdmin:
+    enabled: true
+    username: admin
+    name: Platform Administrator
+    lastName: Administrator
+    email: admin@ilm.appliance.internal
+    certificate:
+      source: generated
+  networkPolicy:
+    ingressNamespace: traefik
+  edge:
+    enabled: true
+    type: ingress
+    className: traefik
+    tls: { source: internal }
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+      traefik.ingress.kubernetes.io/router.tls.options: ilm-ilm-mtls@kubernetescrd
+      traefik.ingress.kubernetes.io/router.middlewares: ilm-clear-client-certificate@kubernetescrd,ilm-forward-client-certificate@kubernetescrd
+  gateway:
+    # Talos' default pod network; Traefik and the node (through cilium_host) reach Kong from it.
+    trustedIps: ["10.244.0.0/16"]

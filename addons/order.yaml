@@ -1,0 +1,54 @@
+# Apply order and readiness waits of the add-ons. Each step's files are applied in order,
+# then its waits must pass before the next step starts. A createOnly step creates its objects when they are
+# missing and leaves existing ones alone, so changes made after setup survive a restart.
+steps:
+  - name: cilium
+    files: [cilium.yaml]
+    wait:
+      - { kind: DaemonSet, namespace: kube-system, name: cilium, for: Rollout }
+      - { kind: DaemonSet, namespace: kube-system, name: cilium-envoy, for: Rollout }
+      - { kind: Deployment, namespace: kube-system, name: cilium-operator, for: Available }
+      - { kind: Node, for: Ready }
+  - name: storage
+    files: [local-path-storage.yaml]
+    namespaceLabels:
+      local-path-storage: { pod-security.kubernetes.io/enforce: privileged }
+    wait:
+      - { kind: Deployment, namespace: local-path-storage, name: local-path-provisioner, for: Available }
+  - name: cert-manager
+    files: [cert-manager.yaml]
+    wait:
+      - { kind: Deployment, namespace: cert-manager, name: cert-manager, for: Available }
+      - { kind: Deployment, namespace: cert-manager, name: cert-manager-cainjector, for: Available }
+      - { kind: Deployment, namespace: cert-manager, name: cert-manager-webhook, for: Available }
+  - name: cnpg
+    files: [cnpg.yaml]
+    wait:
+      - { kind: Deployment, namespace: cnpg-system, name: cnpg-controller-manager, for: Available }
+  - name: rabbitmq
+    files: [rabbitmq-cluster-operator.yaml, rabbitmq-topology-operator.yaml]
+    wait:
+      - { kind: Deployment, namespace: rabbitmq-system, name: rabbitmq-cluster-operator, for: Available }
+      - { kind: Deployment, namespace: rabbitmq-system, name: messaging-topology-operator, for: Available }
+  - name: keycloak
+    files: [keycloak-operator.yaml]
+    wait:
+      - { kind: Deployment, namespace: keycloak, name: keycloak-operator, for: Available }
+  - name: traefik
+    files: [traefik-crds.yaml, traefik.yaml]
+    namespaceLabels:
+      traefik: { pod-security.kubernetes.io/enforce: privileged }
+    wait:
+      - { kind: CustomResourceDefinition, name: middlewares.traefik.io, for: Established }
+      - { kind: CustomResourceDefinition, name: tlsoptions.traefik.io, for: Established }
+      - { kind: Deployment, namespace: traefik, name: traefik, for: Available }
+  - name: ilm-operator
+    files: [ilm-operator.yaml]
+    wait:
+      - { kind: CustomResourceDefinition, name: platforms.otilm.com, for: Established }
+      - { kind: Deployment, namespace: ilm-operator-system, name: ilm-operator-controller-manager, for: Available }
+  - name: platform
+    files: [ilm-edge.yaml, platform.yaml]
+    createOnly: true
+    wait:
+      - { kind: Platform, namespace: ilm, name: ilm, for: Available }

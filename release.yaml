@@ -1,0 +1,60 @@
+version: 0.1.0
+talos:
+  version: v1.14.5
+  kubernetes: v1.37.1
+  imager: ghcr.io/siderolabs/imager:v1.14.5@sha256:ef33373986bb0765132f0558ea43c9f8fee2c3839f1d1a4232693b77092d7350
+platform:
+  ilmVersion: 2.20.0
+  hostName: ilm.appliance.internal
+implicitImages:
+  - busybox
+addons:
+  - { name: cilium, file: cilium.yaml, version: "1.20.4", source: "helm:https://helm.cilium.io/cilium@1.20.4", sha256: "68f137ce0bf242a037b9be385b227b29160cac901ba3ba7262cdd4dddd7dc609" }
+  - { name: local-path-provisioner, file: local-path-storage.yaml, version: "v0.0.33", source: "https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.33/deploy/local-path-storage.yaml", sha256: "f9be26a3d36551c341dbba2fe8e2b9eb21b607c9b7d7206cdf4e947014164313" }
+  - { name: cert-manager, file: cert-manager.yaml, version: "v1.20.2", source: "https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml", sha256: "1ce11cae912adecc69e6bb623435fafc9ed21505f9efff98bd71d7b80f01db1f" }
+  - { name: cloudnative-pg, file: cnpg.yaml, version: "1.29.1", source: "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.29.1/cnpg-1.29.1.yaml", sha256: "e0c5ff41bf5b01c0775bf225929b8423d543cd23e9742e4274fe7de8499cf93a" }
+  - { name: rabbitmq-cluster-operator, file: rabbitmq-cluster-operator.yaml, version: "v2.21.0", source: "https://github.com/rabbitmq/cluster-operator/releases/download/v2.21.0/cluster-operator.yml", sha256: "61868a4f16de890e7ef01e4fe76d94fb578b5873bf94850d11122c835efab098" }
+  - { name: rabbitmq-topology-operator, file: rabbitmq-topology-operator.yaml, version: "v1.19.2", source: "https://github.com/rabbitmq/messaging-topology-operator/releases/download/v1.19.2/messaging-topology-operator-with-certmanager.yaml", sha256: "fe7d2c0de03d742dbb583b3885fa422fb9290513b7239fe373d9a798d8fcec0e" }
+  - { name: keycloak-operator, file: keycloak-operator.yaml, version: "26.8.1", source: "https://github.com/keycloak/keycloak-k8s-resources/kubernetes/cluster-wide?ref=26.8.1", sha256: "5fe38cf41cb497881af5e6e7d6eb53745bf52877ca210146ef82f8f66df12650" }
+  - { name: traefik, file: traefik-crds.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "386400a9cb00fc2c4cd226ac45d32e2cbc96b731fffcfbc2884778970e91c476" }
+  - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "e6abf0691d5bde2a7b70ccb72cd99b603403d95164b6d28f4fb32e75e140bfd6" }
+  - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
+  - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "7609fa98d045bb10ebbf856c5a1decb250f818b447a3420e78734a4c9651e88c" }
+  - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "c85bb9f48bb14f757bbe0666bd98d0b203e718dc4965ff3065c28a63b2d16231" }
+images:
+  - { ref: "ghcr.io/siderolabs/installer-base:v1.14.5", digest: "sha256:1644fe7ddfe3deb4b81487c3c7e49fce830eca862b608b32f577b866c8d36b48" }
+  - { ref: "registry.k8s.io/coredns/coredns:v1.14.7", digest: "sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286" }
+  - { ref: "registry.k8s.io/etcd:v3.7.3", digest: "sha256:0d27b9478551f431f82d1e0ddb6c87ad07ebae8b904c637f3a99213349523910" }
+  - { ref: "registry.k8s.io/pause:3.10.2", digest: "sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4" }
+  - { ref: "registry.k8s.io/kube-apiserver:v1.37.1", digest: "sha256:e190f914a6cc21cab9268485d1ae7282fdeab1315ac64b668aa42d732fd1061d" }
+  - { ref: "registry.k8s.io/kube-controller-manager:v1.37.1", digest: "sha256:d470c1b85aebb466e971c06239cc6a31a4ac337a78600cef80375a79a1be1641" }
+  - { ref: "registry.k8s.io/kube-scheduler:v1.37.1", digest: "sha256:b6e2474a6c20309f0df1e7337364281fda95c6a0722259ba7f032a1e177d3f29" }
+  - { ref: "ghcr.io/siderolabs/kubelet:v1.37.1", digest: "sha256:3777bdaaa352e1f425dff9d8868a970923c66d0629bad16f935c41018a83d9d8" }
+  - { ref: "quay.io/cilium/cilium-envoy:v1.39.5-1792733054-8c73b2816bc8239e27f1fd53b271884688137459@sha256:547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629", digest: "sha256:547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629" }
+  - { ref: "quay.io/cilium/cilium:v1.20.4@sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e", digest: "sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e" }
+  - { ref: "quay.io/cilium/operator-generic:v1.20.4@sha256:7a7a3489dc66ad67e420d285c8a8d2e169b0957ad15e120f593d27081bf38d82", digest: "sha256:7a7a3489dc66ad67e420d285c8a8d2e169b0957ad15e120f593d27081bf38d82" }
+  - { ref: "ghcr.io/cloudnative-pg/cloudnative-pg:1.29.1", digest: "sha256:0dfff19ba7b52ca25851a1010028b6940fff2e233290465af1cfb08a5f3f4661" }
+  - { ref: "ghcr.io/cloudnative-pg/pgbouncer:1.25.1", digest: "sha256:e6ddfe22d845e603825e235dd8334b21ecd125abea2a2172478f556b8dee2bb8" }
+  - { ref: "ghcr.io/cloudnative-pg/postgresql:18", digest: "sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533" }
+  - { ref: "ghcr.io/rabbitmq/cluster-operator:2.21.0", digest: "sha256:188436f4200a082cb8aeda841b6cb609767e3663e5e7d70e74439ec1b9db1370" }
+  - { ref: "ghcr.io/rabbitmq/messaging-topology-operator:1.19.2", digest: "sha256:c115f5c67b093cbf34c8b77ef232aa9742f67ce51ec0113bdc98fbee0b341783" }
+  - { ref: "hub.omnitrustregistry.com/ilm/auth-opa-policies:1.4.1", digest: "sha256:660837afc161ef17d49df46258a2c2fdb96c595c9ae05b51bc156d58d6c41113" }
+  - { ref: "hub.omnitrustregistry.com/ilm/auth:1.8.0", digest: "sha256:bf04907457632cbcfa20dc334b9d2f514f0a449661e8624739173abe885b60d1" }
+  - { ref: "hub.omnitrustregistry.com/ilm/core:2.20.0", digest: "sha256:2051fd87d8cdbd060eaa9a016e40460702f71f1973c9a50bf30e9d76c4b54bba" }
+  - { ref: "hub.omnitrustregistry.com/ilm/curl:8.16.0", digest: "sha256:66b7328074595d60d3afa9d8899425770fbbc1c3e88d514e09d5dcb8df9d3aa5" }
+  - { ref: "hub.omnitrustregistry.com/ilm/frontend-administrator:2.20.0", digest: "sha256:43eff8d0a3e932b2c9578c0a71b7b4bf946f4eb44336847a625d6e3330e5eced" }
+  - { ref: "hub.omnitrustregistry.com/ilm/keycloak-theme:0.1.4", digest: "sha256:65aa220b2a65260bacd91cf0a1e517c4d37e56c8a3f82ffd001dce4a70045af3" }
+  - { ref: "hub.omnitrustregistry.com/ilm/kong:3.9.1", digest: "sha256:5505080c8bf7822002f098857ada4d4540f9234d57c95260cd1031f4baf55d8f" }
+  - { ref: "hub.omnitrustregistry.com/ilm/opa:1.10.0-static", digest: "sha256:32f1544858be83d51ba15838ba0fca19235e260a4fb46b52fe3c977f6a131e40" }
+  - { ref: "hub.omnitrustregistry.com/ilm/operator:1.1.0", digest: "sha256:0c538faec0deb05fa37dfbd71822434066b260203a08ee162f37d4ef66ec3463" }
+  - { ref: "hub.omnitrustregistry.com/ilm/scheduler:1.2.0", digest: "sha256:138cc67120689b7f1445519e5423a6b84f046797eee55b7129fb95707cbe668e" }
+  - { ref: "quay.io/jetstack/cert-manager-acmesolver:v1.20.2", digest: "sha256:cfa55e9c3dcfc6a3cba97575748c1549b04a30fd14d88a2fcb9e2dddef415e2f" }
+  - { ref: "quay.io/jetstack/cert-manager-cainjector:v1.20.2", digest: "sha256:6f5a644135887b2aa7d5cc145072fa56421560e3586ff1f184358022d490f4e1" }
+  - { ref: "quay.io/jetstack/cert-manager-controller:v1.20.2", digest: "sha256:fe0623d7d04a382c888f03343a3a2da716e0d96ad3d5d790c0ebcbcb2a4329a5" }
+  - { ref: "quay.io/jetstack/cert-manager-webhook:v1.20.2", digest: "sha256:baf651128b9f05c426cbd5e60e2036bf382c99ca270f49d0757d6f7d2452f4e5" }
+  - { ref: "quay.io/keycloak/keycloak-operator:26.8.1", digest: "sha256:4c88e4e9a9d488efd6487ab602974d3cb762ff2ee6f173b2716df418bfe33e53" }
+  - { ref: "quay.io/keycloak/keycloak:26.8.1", digest: "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332" }
+  - { ref: "rabbitmq:4.3.1-management", digest: "sha256:8734b9e9cd03d12b2e1d973415fc4c5c941c5eca351b4bd63f721782b1bf7c8b" }
+  - { ref: "docker.io/traefik:v3.7.17", digest: "sha256:f4bb143d1135a579b630ed491e17ec50f6f7c9c6a30585ff3d385471d2a86f5a" }
+  - { ref: "rancher/local-path-provisioner:v0.0.33", digest: "sha256:1c269eb2c304572eb315348fcdd488ad588541f7784352c54267d22b50f6efd1" }
+  - { ref: "docker.io/library/busybox:latest", digest: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4" }

@@ -1,0 +1,674 @@
+package firstboot
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/netip"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
+	"github.com/OmniTrustILM/appliance-ng/internal/talos"
+)
+
+const (
+	testVersion   = "v-test"
+	testInstaller = "registry.example/installer:v1"
+	testHostName  = "ilm.appliance.internal"
+)
+
+var (
+	globalAddr = []netip.Prefix{netip.MustParsePrefix("10.0.2.15/24")}
+	linkLocal  = []netip.Prefix{netip.MustParsePrefix("fe80::1/64"), netip.MustParsePrefix("169.254.1.2/16")}
+)
+
+// fakeNode is a talos.Node whose answers the test scripts.
+type fakeNode struct {
+	mu sync.Mutex
+
+	stage        talos.Stage
+	stageAfter   talos.Stage // stage reported once a configuration was applied
+	bootstrapped bool
+	bootCheckErr error
+	configured   bool
+	configErr    error
+	addrs        [][]netip.Prefix // answers of successive Addresses calls; the last one repeats
+	addrGate     map[int]chan struct{}
+	applyErrs    []error
+	bootErrs     []error
+	kubeconfig   []byte
+	kubeErrs     []error
+
+	stageCalls, addrCalls, bootstrapCalls, kubeCalls int
+	applied                                          [][]byte
+}
+
+func (n *fakeNode) Stage(context.Context) (talos.Stage, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.stageCalls++
+	if len(n.applied) > 0 && n.stageAfter != "" {
+		return n.stageAfter, nil
+	}
+	return n.stage, nil
+}
+
+func (n *fakeNode) ApplyConfig(_ context.Context, cfg []byte) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.applyErrs) > 0 {
+		err := n.applyErrs[0]
+		n.applyErrs = n.applyErrs[1:]
+		return err
+	}
+	n.applied = append(n.applied, cfg)
+	return nil
+}
+
+func (n *fakeNode) Bootstrap(context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.bootstrapCalls++
+	if len(n.bootErrs) > 0 {
+		err := n.bootErrs[0]
+		n.bootErrs = n.bootErrs[1:]
+		return err
+	}
+	n.bootstrapped = true
+	return nil
+}
+
+func (n *fakeNode) IsBootstrapped(context.Context) (bool, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.bootstrapped, n.bootCheckErr
+}
+
+func (n *fakeNode) Configured(context.Context) (bool, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.configured, n.configErr
+}
+
+func (n *fakeNode) Kubeconfig(context.Context) ([]byte, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.kubeCalls++
+	if len(n.kubeErrs) > 0 {
+		err := n.kubeErrs[0]
+		n.kubeErrs = n.kubeErrs[1:]
+		return nil, err
+	}
+	return n.kubeconfig, nil
+}
+
+func (n *fakeNode) Addresses(context.Context) ([]netip.Prefix, error) {
+	n.mu.Lock()
+	n.addrCalls++
+	call := n.addrCalls
+	gate := n.addrGate[call]
+	var addrs []netip.Prefix
+	if len(n.addrs) > 0 {
+		addrs = n.addrs[min(call, len(n.addrs))-1]
+	}
+	n.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	return addrs, nil
+}
+
+func (n *fakeNode) snapshot() fakeNode {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return fakeNode{
+		stageCalls: n.stageCalls, addrCalls: n.addrCalls, bootstrapCalls: n.bootstrapCalls,
+		kubeCalls: n.kubeCalls, applied: slices.Clone(n.applied),
+	}
+}
+
+// fakeCluster is a kube.Cluster where a wait passes once the step that owns it was applied,
+// unless the wait is listed in stuck.
+type fakeCluster struct {
+	mu sync.Mutex
+
+	steps   []kube.Step
+	applied []string        // step names in apply order
+	created []string        // step names in create-only order
+	done    map[string]bool // steps whose objects exist
+	stuck   map[string]string
+	labels  map[string]map[string]string
+
+	readyCalls map[string]int
+}
+
+func newFakeCluster(steps []kube.Step, alreadyApplied ...string) *fakeCluster {
+	c := &fakeCluster{steps: steps, done: map[string]bool{}, stuck: map[string]string{},
+		labels: map[string]map[string]string{}, readyCalls: map[string]int{}}
+	for _, s := range alreadyApplied {
+		c.done[s] = true
+	}
+	return c
+}
+
+func (c *fakeCluster) Apply(_ context.Context, docs []byte) error {
+	return c.record(&c.applied, docs)
+}
+
+func (c *fakeCluster) Create(_ context.Context, docs []byte) error {
+	return c.record(&c.created, docs)
+}
+
+func (c *fakeCluster) record(into *[]string, docs []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	step := strings.TrimSpace(string(docs))
+	step = step[:strings.IndexByte(step, '-')]
+	if len(*into) == 0 || (*into)[len(*into)-1] != step {
+		*into = append(*into, step)
+	}
+	c.done[step] = true
+	return nil
+}
+
+func (c *fakeCluster) LabelNamespace(_ context.Context, ns string, labels map[string]string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.labels[ns] = labels
+	return nil
+}
+
+func (c *fakeCluster) Ready(_ context.Context, w kube.WaitFor) (bool, string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readyCalls[w.Name]++
+	if reason, ok := c.stuck[w.Name]; ok {
+		return false, reason, nil
+	}
+	if !c.done[w.Name] {
+		return false, "not found", nil
+	}
+	return true, "", nil
+}
+
+func (c *fakeCluster) appliedSteps() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.applied)
+}
+
+func (c *fakeCluster) createdSteps() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.created)
+}
+
+func (c *fakeCluster) calls(name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.readyCalls[name]
+}
+
+// testSteps returns steps named after names, each with two files and one wait named after the step.
+// File contents start with the step name so the fake cluster knows which step it applies.
+func testSteps(names ...string) ([]kube.Step, fs.FS) {
+	fsys := fstest.MapFS{}
+	var steps []kube.Step
+	for _, name := range names {
+		files := []string{name + "-1.yaml", name + "-2.yaml"}
+		for _, f := range files {
+			fsys[f] = &fstest.MapFile{Data: []byte(strings.TrimSuffix(f, ".yaml") + "\n")}
+		}
+		steps = append(steps, kube.Step{
+			Name:            name,
+			Files:           files,
+			NamespaceLabels: map[string]map[string]string{name: {"pod-security.kubernetes.io/enforce": "privileged"}},
+			Wait:            []kube.WaitFor{{Kind: "Deployment", Namespace: name, Name: name, For: "Available"}},
+		})
+	}
+	return steps, fsys
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent writers and readers.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+type harness struct {
+	node    *fakeNode
+	cluster *fakeCluster
+	deps    Deps
+	store   *StatusStore
+	log     *syncBuffer
+	console *syncBuffer
+	inputs  []machineconfig.Input
+	inMu    sync.Mutex
+	cancel  context.CancelFunc
+	done    chan error
+}
+
+func newHarness(node *fakeNode, cluster *fakeCluster, steps []kube.Step, fsys fs.FS) *harness {
+	h := &harness{node: node, cluster: cluster, store: NewStatusStore(), log: &syncBuffer{}, console: &syncBuffer{}}
+	if fsys == nil {
+		fsys = fstest.MapFS{}
+	}
+	h.deps = Deps{
+		Node: node,
+		NewCluster: func(kc []byte) (kube.Cluster, error) {
+			if !bytes.Equal(kc, node.kubeconfig) {
+				return nil, errors.New("unexpected kubeconfig")
+			}
+			return cluster, nil
+		},
+		Steps:  steps,
+		Addons: fsys,
+		Generate: func(in machineconfig.Input) ([]byte, error) {
+			h.inMu.Lock()
+			defer h.inMu.Unlock()
+			h.inputs = append(h.inputs, in)
+			return []byte("generated-config"), nil
+		},
+		Console:         h.console,
+		Log:             slog.New(slog.NewTextHandler(h.log, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Retry:           time.Millisecond,
+		InstallerImage:  testInstaller,
+		HostName:        testHostName,
+		ClusterName:     "ilm",
+		Version:         testVersion,
+		ConsoleInterval: 5 * time.Millisecond,
+	}
+	return h
+}
+
+func (h *harness) start(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	h.cancel, h.done = cancel, make(chan error, 1)
+	go func() { h.done <- Run(ctx, h.deps, h.store) }()
+	t.Cleanup(func() { h.stop(t) })
+}
+
+func (h *harness) stop(t *testing.T) {
+	t.Helper()
+	if h.cancel == nil {
+		return
+	}
+	h.cancel()
+	h.cancel = nil
+	select {
+	case err := <-h.done:
+		if err != nil {
+			t.Errorf("Run returned %v after cancel", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+}
+
+func (h *harness) running() bool {
+	select {
+	case err := <-h.done:
+		h.done <- err
+		return false
+	default:
+		return true
+	}
+}
+
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func (h *harness) waitState(t *testing.T, want State) {
+	t.Helper()
+	eventually(t, "state "+string(want), func() bool { return h.store.Get().State == want })
+}
+
+func TestRunConfiguresFromMaintenance(t *testing.T) {
+	node := &fakeNode{stage: talos.StageMaintenance, addrs: [][]netip.Prefix{globalAddr}}
+	h := newHarness(node, nil, nil, nil)
+	h.start(t)
+
+	eventually(t, "apply and later passes", func() bool {
+		s := node.snapshot()
+		return len(s.applied) == 1 && s.stageCalls >= 5
+	})
+	h.stop(t)
+
+	s := node.snapshot()
+	if len(s.applied) != 1 || string(s.applied[0]) != "generated-config" {
+		t.Fatalf("applied %q, want the generated configuration once", s.applied)
+	}
+	want := machineconfig.Input{ClusterName: "ilm", NodeIP: "10.0.2.15", InstallerImage: testInstaller, HostName: testHostName}
+	if len(h.inputs) != 1 || h.inputs[0] != want {
+		t.Errorf("Generate inputs %+v, want [%+v]", h.inputs, want)
+	}
+	if got := h.store.Get().State; got != StateInstalling {
+		t.Errorf("state %q, want %q", got, StateInstalling)
+	}
+}
+
+func TestRunWaitsForAddress(t *testing.T) {
+	gate := make(chan struct{})
+	node := &fakeNode{
+		stage:    talos.StageMaintenance,
+		addrs:    [][]netip.Prefix{linkLocal, linkLocal, globalAddr},
+		addrGate: map[int]chan struct{}{3: gate},
+	}
+	h := newHarness(node, nil, nil, nil)
+	h.start(t)
+
+	eventually(t, "third Addresses call", func() bool { return node.snapshot().addrCalls == 3 })
+	if s := node.snapshot(); len(s.applied) != 0 {
+		t.Fatalf("applied a configuration before a global address: %q", s.applied)
+	}
+	if got := h.store.Get().State; got != StateWaitingForAddress {
+		t.Fatalf("state %q, want %q", got, StateWaitingForAddress)
+	}
+	if strings.Contains(h.console.String(), "169.254") || strings.Contains(h.console.String(), "fe80") {
+		t.Errorf("console shows a link-local address: %q", h.console.String())
+	}
+	close(gate)
+
+	eventually(t, "apply", func() bool { return len(node.snapshot().applied) == 1 })
+	if h.inputs[0].NodeIP != "10.0.2.15" {
+		t.Errorf("NodeIP %q, want 10.0.2.15", h.inputs[0].NodeIP)
+	}
+}
+
+func TestRunResumesFromEveryStage(t *testing.T) {
+	steps, fsys := testSteps("cilium", "storage", "keycloak", "platform")
+	allSteps := []string{"cilium", "storage", "keycloak", "platform"}
+
+	tests := []struct {
+		name           string
+		node           *fakeNode
+		alreadyApplied []string
+		wantState      State
+		wantBootstrap  int
+		wantSteps      []string
+	}{
+		{
+			name:          "running, not bootstrapped",
+			node:          &fakeNode{stage: talos.StageRunning},
+			wantState:     StateReady,
+			wantBootstrap: 1,
+			wantSteps:     allSteps,
+		},
+		{
+			name:          "running, bootstrap check fails",
+			node:          &fakeNode{stage: talos.StageRunning, bootCheckErr: errors.New("etcd unavailable")},
+			wantState:     StateReady,
+			wantBootstrap: 1,
+			wantSteps:     allSteps,
+		},
+		{
+			name:           "running, bootstrapped, steps half-applied",
+			node:           &fakeNode{stage: talos.StageRunning, bootstrapped: true},
+			alreadyApplied: []string{"cilium", "storage"},
+			wantState:      StateReady,
+			wantSteps:      allSteps,
+		},
+		{
+			name:      "maintenance, already configured",
+			node:      &fakeNode{stage: talos.StageMaintenance, configured: true},
+			wantState: StateInstalling,
+		},
+		{
+			name: "maintenance, configuration check fails",
+			node: &fakeNode{stage: talos.StageMaintenance, configErr: errors.New("machined unavailable")},
+		},
+		{
+			name:      "installing",
+			node:      &fakeNode{stage: talos.StageInstalling},
+			wantState: StateInstalling,
+		},
+		{
+			name:      "booting, not configured",
+			node:      &fakeNode{stage: talos.StageBooting},
+			wantState: StateInstalling,
+		},
+		{
+			name:          "booting, configured, not bootstrapped",
+			node:          &fakeNode{stage: talos.StageBooting, configured: true},
+			wantState:     StateReady,
+			wantBootstrap: 1,
+			wantSteps:     allSteps,
+		},
+		{
+			name:      "booting, configuration check fails",
+			node:      &fakeNode{stage: talos.StageBooting, configErr: errors.New("machined unavailable")},
+			wantState: StateInstalling,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.node.addrs = [][]netip.Prefix{globalAddr}
+			tt.node.kubeconfig = []byte("kubeconfig")
+			cluster := newFakeCluster(steps, tt.alreadyApplied...)
+			h := newHarness(tt.node, cluster, steps, fsys)
+			h.start(t)
+
+			if tt.wantState == StateReady {
+				h.waitState(t, StateReady)
+			} else {
+				eventually(t, "several passes", func() bool { return tt.node.snapshot().stageCalls >= 5 })
+			}
+			h.stop(t)
+
+			s := tt.node.snapshot()
+			if len(s.applied) != 0 {
+				t.Errorf("ApplyConfig called %d times, want 0", len(s.applied))
+			}
+			if s.bootstrapCalls != tt.wantBootstrap {
+				t.Errorf("Bootstrap called %d times, want %d", s.bootstrapCalls, tt.wantBootstrap)
+			}
+			if got := cluster.appliedSteps(); !slices.Equal(got, tt.wantSteps) {
+				t.Errorf("applied steps %v, want %v", got, tt.wantSteps)
+			}
+			if tt.wantSteps == nil && s.kubeCalls != 0 {
+				t.Errorf("Kubeconfig called %d times, want 0", s.kubeCalls)
+			}
+			if got := h.store.Get().State; got != tt.wantState {
+				t.Errorf("state %q, want %q", got, tt.wantState)
+			}
+			if tt.node.configErr != nil && !strings.Contains(h.store.Get().Message, "machined unavailable") {
+				t.Errorf("message %q does not name the failed check", h.store.Get().Message)
+			}
+			if len(h.inputs) != 0 {
+				t.Errorf("Generate called %d times, want 0", len(h.inputs))
+			}
+		})
+	}
+}
+
+func TestRunReportsStuckStep(t *testing.T) {
+	steps, fsys := testSteps("cilium", "keycloak", "platform")
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := newFakeCluster(steps)
+	cluster.stuck["keycloak"] = "ImagePullBackOff"
+	h := newHarness(node, cluster, steps, fsys)
+	h.start(t)
+
+	eventually(t, "5 retries of keycloak", func() bool { return cluster.calls("keycloak") >= 6 })
+	if !h.running() {
+		t.Fatal("Run returned while a step was stuck")
+	}
+	st := h.store.Get()
+	if st.State != StateAddons || st.Step != "keycloak" {
+		t.Errorf("status %q/%q, want %q/keycloak", st.State, st.Step, StateAddons)
+	}
+	if !strings.Contains(st.Message, "ImagePullBackOff") {
+		t.Errorf("message %q does not name the reason", st.Message)
+	}
+	if cluster.calls("platform") != 0 {
+		t.Error("the next step started while keycloak was stuck")
+	}
+}
+
+func TestRunReportsStuckPlatform(t *testing.T) {
+	steps, fsys := testSteps("cilium", "platform")
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := newFakeCluster(steps)
+	cluster.stuck["platform"] = "Progressing"
+	h := newHarness(node, cluster, steps, fsys)
+	h.start(t)
+
+	eventually(t, "platform polled", func() bool { return cluster.calls("platform") >= 3 })
+	if st := h.store.Get(); st.State != StatePlatform || st.Step != "platform" || !strings.Contains(st.Message, "Progressing") {
+		t.Errorf("status %+v, want platform/platform naming the reason", st)
+	}
+}
+
+func TestRunNeverLogsSecrets(t *testing.T) {
+	const secret, kubeSecret = "SECRET-MARKER", "KUBE-MARKER"
+	steps, fsys := testSteps("cilium", "platform")
+	node := &fakeNode{
+		stage:      talos.StageMaintenance,
+		stageAfter: talos.StageRunning,
+		addrs:      [][]netip.Prefix{globalAddr},
+		kubeconfig: []byte("users: [" + kubeSecret + "]"),
+		applyErrs:  []error{fmt.Errorf("apply configuration: invalid document %q", secret)},
+		kubeErrs:   []error{fmt.Errorf("fetch kubeconfig: truncated %q", kubeSecret)},
+	}
+	cluster := newFakeCluster(steps)
+	h := newHarness(node, cluster, steps, fsys)
+	h.deps.Generate = func(machineconfig.Input) ([]byte, error) { return []byte("ca: " + secret), nil }
+	newCluster := h.deps.NewCluster
+	failed := false
+	h.deps.NewCluster = func(kc []byte) (kube.Cluster, error) {
+		if !failed {
+			failed = true
+			return nil, fmt.Errorf("load kubeconfig: cannot parse %q", kc)
+		}
+		return newCluster(kc)
+	}
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	wantLine := "ILM appliance v-test: https://ilm.appliance.internal (node 10.0.2.15), state ready\n"
+	eventually(t, "console line in state ready", func() bool { return strings.Contains(h.console.String(), wantLine) })
+	h.stop(t)
+
+	for name, out := range map[string]string{"log": h.log.String(), "console": h.console.String(), "status": fmt.Sprint(h.store.Get())} {
+		for _, marker := range []string{secret, kubeSecret} {
+			if strings.Contains(out, marker) {
+				t.Errorf("%s contains %s:\n%s", name, marker, out)
+			}
+		}
+	}
+	if !strings.Contains(h.log.String(), "state=ready") {
+		t.Errorf("log does not record the state changes:\n%s", h.log.String())
+	}
+}
+
+func TestRunRetriesFailedBootstrap(t *testing.T) {
+	gate := make(chan struct{})
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{
+		stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		bootErrs: []error{errors.New("etcd not ready"), errors.New("etcd not ready")},
+		addrGate: map[int]chan struct{}{3: gate},
+	}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	eventually(t, "two failed bootstraps", func() bool { return node.snapshot().addrCalls == 3 })
+	if st := h.store.Get(); st.State != StateBootstrapping || !strings.Contains(st.Message, "etcd not ready") {
+		t.Errorf("status %+v, want bootstrapping with the error", st)
+	}
+	close(gate)
+	h.waitState(t, StateReady)
+	if got := node.snapshot().bootstrapCalls; got != 3 {
+		t.Errorf("Bootstrap called %d times, want 3", got)
+	}
+}
+
+func TestRunRejectsIncompleteDeps(t *testing.T) {
+	h := newHarness(&fakeNode{}, nil, nil, nil)
+	h.deps.InstallerImage = ""
+	if err := Run(context.Background(), h.deps, h.store); err == nil {
+		t.Error("Run accepted an empty installer image")
+	}
+}
+
+func TestBackoff(t *testing.T) {
+	tests := []struct {
+		failures int
+		want     time.Duration
+	}{
+		{0, 5 * time.Second},
+		{1, 10 * time.Second},
+		{3, 40 * time.Second},
+		{4, time.Minute},
+		{100, time.Minute},
+	}
+	for _, tt := range tests {
+		if got := backoff(5*time.Second, tt.failures); got != tt.want {
+			t.Errorf("backoff(5s, %d) = %v, want %v", tt.failures, got, tt.want)
+		}
+	}
+}
+
+func TestRunLogsAlreadyBootstrappedOnce(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{
+		stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		bootErrs: []error{talos.ErrAlreadyBootstrapped},
+	}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	logged := h.log.String()
+	if !strings.Contains(logged, `msg="etcd already bootstrapped"`) || strings.Contains(logged, `msg="etcd bootstrapped"`) {
+		t.Errorf("log should say etcd was already bootstrapped, and only that:\n%s", logged)
+	}
+}
+
+func TestRunCreatesCreateOnlyStepsInsteadOfApplying(t *testing.T) {
+	steps, fsys := testSteps("cilium", "platform")
+	steps[1].CreateOnly = true
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := newFakeCluster(steps)
+	h := newHarness(node, cluster, steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	h.stop(t)
+	if got := cluster.appliedSteps(); !slices.Equal(got, []string{"cilium"}) {
+		t.Errorf("applied %v, want [cilium]", got)
+	}
+	if got := cluster.createdSteps(); !slices.Equal(got, []string{"platform"}) {
+		t.Errorf("created %v, want [platform]", got)
+	}
+}

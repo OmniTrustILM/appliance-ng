@@ -1,0 +1,11 @@
+version: v1alpha1
+metadata:
+  name: ilm-firstboot
+  # Replaced with the release.yaml version at build time.
+  version: 0.0.0
+  author: OmniTrustILM
+  description: |
+    First-boot service that configures, installs and sets up the ILM appliance.
+  compatibility:
+    talos:
+      version: ">= v1.14.0"

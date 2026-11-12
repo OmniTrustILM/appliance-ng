@@ -1,0 +1,29 @@
+# EPHEMERAL, IMAGECACHE and the "data" volume together fit on a 50 GB disk.
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  maxSize: 24GiB
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: IMAGECACHE
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 8GiB
+  maxSize: 8GiB
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: data
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 8GiB
+  maxSize: 12GiB
+---
+apiVersion: v1alpha1
+kind: ImageCacheConfig
+local:
+  enabled: true

@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      # make test downloads the envtest Kubernetes binaries through setup-envtest.
+      - name: Run tests with coverage
+        run: make test
+      # cmd/ only wires flags to internal/ and is excluded from coverage, as in sonar-project.properties.
+      - name: Verify coverage threshold
+        run: |
+          grep -v '/cmd/' coverage.out > coverage-internal.out
+          total=$(go tool cover -func=coverage-internal.out | awk '/^total:/ {sub("%", "", $3); print $3}')
+          echo "Total coverage: ${total}%"
+          if [ "$(echo "$total < 80" | bc)" -eq 1 ]; then
+            echo "::error::Coverage ${total}% is below the 80% threshold"
+            exit 1
+          fi
+      - name: Upload coverage report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: coverage.out
+          if-no-files-found: error
+      - name: Prepare PR context artifact
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          jq -n '{pr_number: env.PR_NUMBER, head_sha: env.HEAD_SHA, head_repo: env.HEAD_REPO,
+            head_branch: env.HEAD_BRANCH, base_ref: env.BASE_REF, run_id: env.RUN_ID}' > pr-context.json
+      - name: Upload PR context
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-context
+          path: pr-context.json
+          retention-days: 1
+          if-no-files-found: error
+      # Pushes to main and pull requests from branches of this repository have the secrets and trusted code,
+      # so they scan here; fork pull requests are scanned by the Dispatch Sonar workflow.
+      - name: SonarCloud Scan
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+        uses: SonarSource/sonarqube-scan-action@299e4b793aaa83bf2aba7c9c14bedbb485688ec4 # v7.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.12
+
+  addons:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Validate release manifest against the add-ons
+        run: go run ./cmd/release validate
+      - name: Start a Kubernetes 1.37 cluster
+        run: >-
+          go run sigs.k8s.io/kind@v0.33.0 create cluster --wait 2m
+          --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      # A client dry run validates no fields, so every file is dry-run on the server instead.
+      # Namespaces and CRDs are created for real first, as the earlier steps would have.
+      - name: Dry-run every add-on manifest
+        run: |
+          files=$(find addons -maxdepth 1 -name '*.yaml' ! -name order.yaml | sort)
+          # shellcheck disable=SC2086
+          go run github.com/mikefarah/yq/v4@v4.54.1 'select(.kind == "Namespace" or .kind == "CustomResourceDefinition")' $files |
+            kubectl apply --server-side -f - >/dev/null
+          kubectl wait --for condition=Established crd --all --timeout 2m
+          for file in $files; do
+            kubectl apply --server-side --force-conflicts --dry-run=server -f "$file" >/dev/null
+          done
