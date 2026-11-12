@@ -46,15 +46,30 @@ imager_ref() { echo "${1/#localhost:/host.docker.internal:}"; }
 
 # imager <command> [args...] runs the Talos imager with $OUT mounted at /out, adding the
 # first-boot extension, and keeps its log in $OUT/imager-<command>.log.
+imager_config=""
 imager() {
   local cmd="$1" logfile="$OUT/imager-$1.log"
   shift
   # A registry that is not local may be private: give the imager (root in its container) the host's credentials.
   local docker_config="${DOCKER_CONFIG:-$HOME/.docker}/config.json" auth=()
-  if ! local_registry && [[ -f "$docker_config" ]]; then auth=(-v "$docker_config:/root/.docker/config.json:ro"); fi
+  if ! local_registry && [[ -f "$docker_config" ]]; then
+    command -v jq >/dev/null || die "jq is required to pass the registry credentials in $docker_config to the imager"
+    # Credential helpers (credsStore, credHelpers) are host programs the imager does not have, and its registry
+    # client gives up on the first one that fails: pass only the credentials stored in the file itself.
+    # Entries kept by a helper (such as the Docker Desktop keychain) are not passed: a private registry needs plain auths.
+    imager_config="$(mktemp -d)"
+    trap '[[ -z "$imager_config" ]] || rm -rf -- "$imager_config"' EXIT
+    jq 'del(.credsStore, .credHelpers)' "$docker_config" >"$imager_config/config.json" || die "cannot read $docker_config"
+    # The imager image sets no HOME, so its registry client finds the credentials only through DOCKER_CONFIG.
+    auth=(-v "$imager_config:/docker-config:ro" -e DOCKER_CONFIG=/docker-config)
+  fi
   log "imager $cmd (log: $logfile)"
   # shellcheck disable=SC2046 # insecure_flag prints zero or one word
   docker run --rm --add-host=host.docker.internal:host-gateway -v "$PWD/$OUT:/out" ${auth[@]+"${auth[@]}"} "$IMAGER" "$cmd" --arch "$ARCH" $(insecure_flag) \
     --system-extension-image "$(imager_ref "$EXTENSION_REF")" "$@" >"$logfile" 2>&1 ||
     { tail -20 "$logfile" >&2; die "imager $cmd failed"; }
+  if [[ -n "$imager_config" ]]; then
+    rm -rf -- "$imager_config"
+    imager_config=""
+  fi
 }

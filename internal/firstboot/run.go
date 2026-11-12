@@ -13,12 +13,16 @@ import (
 	"slices"
 	"time"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
+
+// resetTimeout is how long a requested reset may take before the system images are checked again.
+var resetTimeout = 10 * time.Minute
 
 const (
 	maxBackoff             = time.Minute
@@ -84,6 +88,15 @@ type runner struct {
 	s       *StatusStore
 	nodeIP  string
 	applied bool // a configuration was applied by this process; never apply a second one
+	// resetting is set once a reset to recover system images was requested at resetAt; the reset ends this
+	// process. Talos runs the reset after it answered, so a reset that fails leaves the process running.
+	resetting bool
+	resetAt   time.Time
+	// resetMissed is set when a requested reset did not happen within resetTimeout.
+	resetMissed bool
+	// wasReady is set once META shows, or cannot rule out, that the node has been ready; its storage then holds
+	// user data and is never reset.
+	wasReady bool
 }
 
 func (r *runner) run(ctx context.Context) error {
@@ -107,17 +120,56 @@ func (r *runner) run(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := r.recordReady(ctx); err != nil {
+		return err
+	}
 	r.set(StateReady, "", "ILM Platform is ready")
 	return nil
 }
 
-// retry calls pass until it reports done. Between calls it waits Retry, doubling while the state and step stay
-// the same, up to one minute. An error is recorded in the status message and the log; it never ends the loop.
+// markReady marks the node in META as having been ready, which disables the storage reset for good, and then
+// forgets the reset record. The record stays while the marker is missing, so it still bounds the reset.
+func (r *runner) markReady(ctx context.Context) error {
+	if err := r.d.Node.MarkReady(ctx); err != nil {
+		return err
+	}
+	if err := r.d.Node.ClearResetRecord(ctx); err != nil {
+		r.d.Log.Warn("could not clear the record of the node storage reset", "error", err)
+	}
+	return nil
+}
+
+// recordReady writes the ready marker, waiting as retry does between failures, until it succeeds or ctx is done.
+// It never checks the system images: the platform is up, so no reset may be requested while the marker is missing.
+func (r *runner) recordReady(ctx context.Context) error {
+	for failures := 0; ; failures++ {
+		err := r.markReady(ctx)
+		if err == nil {
+			r.d.Log.Info("node marked as ready")
+			return nil
+		}
+		cur := r.s.Get()
+		r.set(cur.State, cur.Step, "recording the ready marker: "+err.Error())
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff(r.d.Retry, failures)):
+		}
+	}
+}
+
+// retry calls pass until it reports done, unless broken system images are being recovered. Between calls it waits
+// Retry, doubling while the state and step stay the same, up to one minute. An error is recorded in the status
+// message and the log; it never ends the loop.
 func (r *runner) retry(ctx context.Context, pass func(context.Context) (bool, error)) error {
 	failures := 0
 	last := r.s.Get()
 	for {
-		done, err := pass(ctx)
+		recovering, err := r.recoverImages(ctx)
+		done := false
+		if !recovering {
+			done, err = pass(ctx)
+		}
 		if done {
 			return nil
 		}
@@ -159,6 +211,87 @@ func (r *runner) set(state State, step, message string) {
 		r.d.Log.Info("state changed", "state", string(state), "step", step, "message", message)
 	case changed:
 		r.d.Log.Info("status", "state", string(state), "step", step, "message", message)
+	}
+}
+
+// recoverImages resets the node storage when a system service cannot execute the binary of its image, as a power
+// cut shortly after the image was unpacked leaves it. Removing the image does not help: containerd keeps the
+// unpacked layers while a container uses them and reuses them on the next unpack. The reset wipes EPHEMERAL, which
+// holds the images, their layers and the half-built cluster, and keeps the machine configuration, so the setup
+// starts over from a configured node. It runs only on a node that has never been ready, as marked in META, when
+// there is no user data yet; a marker that cannot be read counts as set.
+// The node is reset once until it is ready, as recorded in META before the reset: an image that still fails after
+// a reset is broken in the image cache itself, so it is reported instead of resetting again. Without that record
+// there is no reset at all. It reports whether a reset is under way or blocked; a failed check is logged and
+// leaves the pass to run.
+func (r *runner) recoverImages(ctx context.Context) (bool, error) {
+	if r.resetting {
+		if time.Since(r.resetAt) < resetTimeout {
+			return true, nil
+		}
+		r.resetting, r.resetMissed = false, true
+		r.d.Log.Warn("the requested reset did not happen, checking the system images again", "waited", resetTimeout)
+	}
+	if r.wasReady {
+		return false, nil
+	}
+	broken, err := r.d.Node.BrokenSystemImages(ctx)
+	if err != nil {
+		r.d.Log.Debug("system image check failed", "error", err)
+		return false, nil
+	}
+	if len(broken) == 0 {
+		return false, nil
+	}
+	if wasReady, err := r.d.Node.WasReady(ctx); err != nil || wasReady {
+		r.wasReady = true
+		r.d.Log.Warn("system images fail to execute, not resetting node storage: the node may have been ready",
+			"images", broken, "error", err)
+		return false, nil
+	}
+	recorded, err := r.d.Node.ResetRecorded(ctx)
+	if err != nil {
+		return true, err
+	}
+	switch {
+	case recorded && r.resetMissed:
+		return true, fmt.Errorf("requested node storage reset did not happen, system image %s fails to execute", broken[0])
+	case recorded:
+		return true, fmt.Errorf("system image %s fails to execute after a reset", broken[0])
+	}
+	if err := r.d.Node.RecordReset(ctx); err != nil {
+		return true, err
+	}
+	cur := r.s.Get()
+	r.d.Log.Warn("system images fail to execute", "images", broken)
+	r.set(cur.State, cur.Step, "resetting node storage to recover broken system images")
+	err = r.d.Node.ResetEphemeral(ctx)
+	if err != nil && resetRejected(err) {
+		// No reset happened, so it is not used up: the next pass may try again.
+		r.d.Log.Warn("could not reset node storage", "error", err)
+		if err := r.d.Node.ClearResetRecord(ctx); err != nil {
+			r.d.Log.Warn("could not clear the record of the node storage reset", "error", err)
+		}
+		return true, fmt.Errorf("could not reset node storage: %s", status.Code(err))
+	}
+	if err != nil {
+		// machined may have scheduled the reset before the answer was lost, so wait for it as for an accepted one.
+		r.d.Log.Warn("node storage reset not confirmed, waiting for it", "error", err)
+	}
+	r.resetting, r.resetAt = true, time.Now()
+	return true, nil
+}
+
+// resetRejected reports whether err proves that machined refused the reset before scheduling it: machined answers
+// those cases with a status of its own, while a lost connection, a timeout or an internal error leave it open
+// whether the reset runs.
+func resetRejected(err error) bool {
+	switch status.Code(err) {
+	case codes.InvalidArgument, codes.PermissionDenied, codes.FailedPrecondition, codes.Unimplemented,
+		codes.Unauthenticated, codes.AlreadyExists:
+		return true
+	default:
+		return false
 	}
 }
 
