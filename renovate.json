@@ -44,6 +44,13 @@
   ],
   "packageRules": [
     {
+      "description": "Update the Talos release with the imager and the Kubernetes images",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["github-releases"],
+      "groupName": "talos and kubernetes",
+      "matchPackageNames": ["siderolabs/talos"]
+    },
+    {
       "description": "Update the Talos imager and the Kubernetes images together",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["docker"],
