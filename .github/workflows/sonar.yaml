@@ -104,7 +104,7 @@ jobs:
           # The trusted properties come first so a fork's sonar-project.properties cannot redirect the token.
           args: >
             -Dsonar.host.url=https://sonarcloud.io
-            -Dsonar.organization=omnitrustilm
+            -Dsonar.organization=ilm
             -Dsonar.projectKey=OmniTrustILM_appliance-ng
             -Dsonar.scm.revision=${{ env.HEAD_SHA }}
             -Dsonar.pullrequest.key=${{ env.PR_NUMBER }}
