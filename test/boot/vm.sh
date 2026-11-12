@@ -60,7 +60,8 @@ firmware() {
 }
 
 running() { # running <dir>: true only if the pid file names a live QEMU started for <dir>
-  local dir="$1" pid
+  local dir pid
+  dir="$(cd "$1" 2>/dev/null && pwd)" || return 1 # same absolute spelling start gives QEMU
   pid="$(cat "$dir/qemu.pid" 2>/dev/null)" || return 1
   # A stale pid file may name an unrelated process that reused the pid; only our QEMU has this pid file
   # on its command line.
