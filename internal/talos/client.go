@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
@@ -50,7 +51,26 @@ type Node interface {
 	Addresses(ctx context.Context) ([]netip.Prefix, error)
 	// Configured reports whether the node holds a machine configuration (the active MachineConfig resource).
 	Configured(ctx context.Context) (bool, error)
+	// BrokenSystemImages returns the images of system services that fail because their binary cannot be executed.
+	BrokenSystemImages(ctx context.Context) ([]string, error)
+	// ResetRecorded reports whether a reset of the node storage was recorded since the node was last ready; the
+	// record survives the reset.
+	ResetRecorded(ctx context.Context) (bool, error)
+	// RecordReset records a reset of the node storage.
+	RecordReset(ctx context.Context) error
+	// ClearResetRecord forgets the reset of the node storage.
+	ClearResetRecord(ctx context.Context) error
+	// WasReady reports whether the node has been ready once; the marker survives reboots and resets.
+	WasReady(ctx context.Context) (bool, error)
+	// MarkReady marks the node as having been ready.
+	MarkReady(ctx context.Context) error
+	// ResetEphemeral wipes the EPHEMERAL partition and reboots; the machine configuration and the volumes are kept.
+	ResetEphemeral(ctx context.Context) error
 }
+
+// callTimeout bounds every call to machined that the caller did not bound: some calls, such as listing etcd members
+// while etcd has no leader, otherwise never return.
+var callTimeout = 30 * time.Second
 
 const (
 	roleKey   = "talos-role"
@@ -63,7 +83,7 @@ type node struct {
 }
 
 // Dial connects to the machined Unix socket. Every call carries the admin role metadata that apid
-// would otherwise add; machined rejects the call without it.
+// would otherwise add; machined rejects the call without it. A call without a deadline gives up after callTimeout.
 func Dial(ctx context.Context, socket string) (Node, error) {
 	c, err := client.New(ctx,
 		client.WithUnixSocket(socket),
@@ -84,13 +104,43 @@ func Dial(ctx context.Context, socket string) (Node, error) {
 func withRoleUnary(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn,
 	invoker grpc.UnaryInvoker, opts ...grpc.CallOption,
 ) error {
+	ctx, cancel := bounded(ctx)
+	defer cancel()
 	return invoker(withRole(ctx), method, req, reply, cc, opts...)
 }
 
 func withRoleStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string,
 	streamer grpc.Streamer, opts ...grpc.CallOption,
 ) (grpc.ClientStream, error) {
-	return streamer(withRole(ctx), desc, cc, method, opts...)
+	ctx, cancel := bounded(ctx)
+	s, err := streamer(withRole(ctx), desc, cc, method, opts...)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return &boundedStream{ClientStream: s, cancel: cancel}, nil
+}
+
+// bounded gives ctx the call timeout unless it already has a deadline.
+func bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, callTimeout)
+}
+
+// boundedStream releases the call timeout once the stream ends.
+type boundedStream struct {
+	grpc.ClientStream
+	cancel context.CancelFunc
+}
+
+func (s *boundedStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err != nil {
+		s.cancel()
+	}
+	return err
 }
 
 func withRole(ctx context.Context) context.Context {

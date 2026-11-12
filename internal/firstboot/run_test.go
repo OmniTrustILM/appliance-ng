@@ -15,6 +15,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
@@ -47,9 +49,94 @@ type fakeNode struct {
 	bootErrs     []error
 	kubeconfig   []byte
 	kubeErrs     []error
+	broken       []string
+	brokenErr    error
+	recorded     bool // the reset record, which survives the reset
+	recordedErr  error
+	recordErr    error
+	clearErr     error
+	resetErrs    []error
+	marked       bool // the ready marker, which survives reboots and resets
+	markedErr    error
+	markErrs     []error
 
-	stageCalls, addrCalls, bootstrapCalls, kubeCalls int
-	applied                                          [][]byte
+	stageCalls, addrCalls, bootstrapCalls, kubeCalls, brokenCalls int
+	applied                                                       [][]byte
+	resets, clears, marks                                         int
+}
+
+func (n *fakeNode) WasReady(context.Context) (bool, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.marked, n.markedErr
+}
+
+func (n *fakeNode) MarkReady(context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.markErrs) > 0 {
+		err := n.markErrs[0]
+		n.markErrs = n.markErrs[1:]
+		return err
+	}
+	n.marks++
+	n.marked = true
+	return nil
+}
+
+func (n *fakeNode) BrokenSystemImages(context.Context) ([]string, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.brokenCalls++
+	return slices.Clone(n.broken), n.brokenErr
+}
+
+func (n *fakeNode) ResetRecorded(context.Context) (bool, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.recorded, n.recordedErr
+}
+
+func (n *fakeNode) RecordReset(context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.recordErr != nil {
+		return n.recordErr
+	}
+	n.recorded = true
+	return nil
+}
+
+func (n *fakeNode) ClearResetRecord(context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.clearErr != nil {
+		return n.clearErr
+	}
+	n.clears++
+	n.recorded = false
+	return nil
+}
+
+func (n *fakeNode) ResetEphemeral(context.Context) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.recorded {
+		return errors.New("reset requested before it was recorded")
+	}
+	if len(n.resetErrs) > 0 {
+		err := n.resetErrs[0]
+		n.resetErrs = n.resetErrs[1:]
+		return err
+	}
+	n.resets++
+	return nil
+}
+
+func (n *fakeNode) setBroken(refs ...string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.broken = refs
 }
 
 func (n *fakeNode) Stage(context.Context) (talos.Stage, error) {
@@ -132,7 +219,8 @@ func (n *fakeNode) snapshot() fakeNode {
 	defer n.mu.Unlock()
 	return fakeNode{
 		stageCalls: n.stageCalls, addrCalls: n.addrCalls, bootstrapCalls: n.bootstrapCalls,
-		kubeCalls: n.kubeCalls, applied: slices.Clone(n.applied),
+		kubeCalls: n.kubeCalls, applied: slices.Clone(n.applied), brokenCalls: n.brokenCalls,
+		resets: n.resets, clears: n.clears, recorded: n.recorded, marks: n.marks, marked: n.marked,
 	}
 }
 
@@ -670,5 +758,252 @@ func TestRunCreatesCreateOnlyStepsInsteadOfApplying(t *testing.T) {
 	}
 	if got := cluster.createdSteps(); !slices.Equal(got, []string{"platform"}) {
 		t.Errorf("created %v, want [platform]", got)
+	}
+}
+
+const (
+	etcdImage    = "registry.k8s.io/etcd:v3.7.3"
+	kubeletImage = "ghcr.io/siderolabs/kubelet:v1.37.1"
+	resetMessage = "resetting node storage to recover broken system images"
+)
+
+func TestRunResetsTheNodeForBrokenSystemImages(t *testing.T) {
+	node := &fakeNode{stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
+		broken: []string{etcdImage, kubeletImage}}
+	h := newHarness(node, nil, nil, nil)
+	h.start(t)
+
+	eventually(t, "reset", func() bool { return node.snapshot().resets == 1 })
+	checks := node.snapshot().brokenCalls
+	time.Sleep(20 * time.Millisecond)
+
+	s := node.snapshot()
+	if !s.recorded || s.resets != 1 {
+		t.Fatalf("recorded %v with %d resets, want the record and one reset", s.recorded, s.resets)
+	}
+	if s.bootstrapCalls != 0 || s.brokenCalls != checks {
+		t.Errorf("bootstrap calls %d, checks %d -> %d: want the node left alone while it resets", s.bootstrapCalls, checks, s.brokenCalls)
+	}
+	if !h.running() {
+		t.Fatal("Run returned while the node resets")
+	}
+	if msg := h.store.Get().Message; msg != resetMessage {
+		t.Errorf("message %q, want %q", msg, resetMessage)
+	}
+	if !strings.Contains(h.log.String(), resetMessage) {
+		t.Errorf("log does not record the reset:\n%s", h.log.String())
+	}
+}
+
+func TestRunChecksImagesWhileApplyingAddons(t *testing.T) {
+	steps, fsys := testSteps("cilium")
+	cluster := newFakeCluster(steps)
+	cluster.stuck["cilium"] = "pods not ready"
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, addrs: [][]netip.Prefix{globalAddr},
+		kubeconfig: []byte("kubeconfig")}
+	h := newHarness(node, cluster, steps, fsys)
+	h.start(t)
+
+	eventually(t, "waiting for cilium", func() bool { return cluster.calls("cilium") > 0 })
+	node.setBroken(kubeletImage)
+	eventually(t, "reset", func() bool { return node.snapshot().resets == 1 })
+}
+
+func TestRunLeavesHealthyImagesAlone(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	s := node.snapshot()
+	if s.brokenCalls == 0 || s.resets != 0 {
+		t.Fatalf("checks %d, resets %d: want checks only", s.brokenCalls, s.resets)
+	}
+}
+
+func TestRunIgnoresFailedImageCheck(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		brokenErr: errors.New("machined unavailable")}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+}
+
+func TestRunDoesNotResetTwice(t *testing.T) {
+	node := &fakeNode{stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
+		broken: []string{etcdImage}, recorded: true}
+	h := newHarness(node, nil, nil, nil)
+	h.start(t)
+
+	want := "system image " + etcdImage + " fails to execute after a reset"
+	eventually(t, "message", func() bool { return h.store.Get().Message == want })
+	time.Sleep(20 * time.Millisecond)
+	s := node.snapshot()
+	if s.resets != 0 || s.bootstrapCalls != 0 || !h.running() {
+		t.Fatalf("%d resets, %d bootstrap calls: want neither and the service up", s.resets, s.bootstrapCalls)
+	}
+	if s.brokenCalls < 2 {
+		t.Errorf("checks %d, want the service to keep checking", s.brokenCalls)
+	}
+}
+
+func TestRunDoesNotResetWithoutTheRecord(t *testing.T) {
+	tests := map[string]*fakeNode{
+		"read fails":  {recordedErr: errors.New("META unreadable")},
+		"write fails": {recordErr: errors.New("META write failed")},
+	}
+	for name, node := range tests {
+		t.Run(name, func(t *testing.T) {
+			node.stage, node.configured, node.addrs = talos.StageBooting, true, [][]netip.Prefix{globalAddr}
+			node.broken = []string{etcdImage}
+			h := newHarness(node, nil, nil, nil)
+			h.start(t)
+
+			eventually(t, "META error in the status", func() bool { return strings.Contains(h.store.Get().Message, "META") })
+			time.Sleep(20 * time.Millisecond)
+			if s := node.snapshot(); s.resets != 0 || s.bootstrapCalls != 0 {
+				t.Fatalf("%d resets, %d bootstrap calls: want neither", s.resets, s.bootstrapCalls)
+			}
+		})
+	}
+}
+
+func TestRunReportsAFailedReset(t *testing.T) {
+	node := &fakeNode{stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
+		broken: []string{etcdImage}, resetErrs: []error{errors.New("reset refused")}}
+	h := newHarness(node, nil, nil, nil)
+	h.deps.Retry = 10 * time.Millisecond
+	h.start(t)
+
+	want := "could not reset node storage: " + codes.Unknown.String()
+	eventually(t, "reset error in the status", func() bool { return h.store.Get().Message == want })
+	eventually(t, "reset on the next pass", func() bool { return node.snapshot().resets == 1 })
+	if s := node.snapshot(); !s.recorded || s.clears != 1 || !h.running() {
+		t.Fatalf("recorded %v, %d clears: want the record cleared after the failure, written again and the service up",
+			s.recorded, s.clears)
+	}
+	if !strings.Contains(h.log.String(), "reset refused") {
+		t.Errorf("log does not record the reset error:\n%s", h.log.String())
+	}
+}
+
+func TestRunDoesNotResetOnceReady(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	checks := node.snapshot().brokenCalls
+	node.setBroken(etcdImage)
+	time.Sleep(50 * time.Millisecond)
+	if s := node.snapshot(); s.resets != 0 || s.brokenCalls != checks || s.recorded {
+		t.Fatalf("%d resets, checks %d -> %d, recorded %v: want nothing after ready", s.resets, checks, s.brokenCalls, s.recorded)
+	}
+}
+
+func TestRunClearsTheResetRecordWhenReady(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		recorded: true}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	if s := node.snapshot(); s.clears != 1 || s.recorded {
+		t.Fatalf("%d clears, recorded %v: want the record cleared once", s.clears, s.recorded)
+	}
+}
+
+func TestRunReadyDespiteAFailedClear(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		clearErr: errors.New("machined unavailable")}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	eventually(t, "warning", func() bool { return strings.Contains(h.log.String(), "machined unavailable") })
+}
+
+func TestRunChecksAgainWhenTheResetDoesNotHappen(t *testing.T) {
+	old := resetTimeout
+	resetTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { resetTimeout = old })
+	node := &fakeNode{stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
+		broken: []string{etcdImage}}
+	h := newHarness(node, nil, nil, nil)
+	h.start(t)
+
+	eventually(t, "reset", func() bool { return node.snapshot().resets == 1 })
+	want := "requested node storage reset did not happen, system image " + etcdImage + " fails to execute"
+	eventually(t, "message", func() bool { return h.store.Get().Message == want })
+	if s := node.snapshot(); s.resets != 1 {
+		t.Fatalf("%d resets, want one", s.resets)
+	}
+	if !strings.Contains(h.log.String(), "reset did not happen") {
+		t.Errorf("log does not record the missing reset:\n%s", h.log.String())
+	}
+}
+
+func TestRunNeverResetsANodeThatWasReady(t *testing.T) {
+	tests := map[string]*fakeNode{
+		"marker set":        {marked: true},
+		"marker unreadable": {markedErr: errors.New("META unreadable")},
+	}
+	for name, node := range tests {
+		t.Run(name, func(t *testing.T) {
+			node.stage, node.configured, node.addrs = talos.StageBooting, true, [][]netip.Prefix{globalAddr}
+			node.broken = []string{etcdImage}
+			h := newHarness(node, nil, nil, nil)
+			h.start(t)
+
+			eventually(t, "the normal path", func() bool { return node.snapshot().bootstrapCalls > 0 })
+			time.Sleep(20 * time.Millisecond)
+			if s := node.snapshot(); s.resets != 0 || s.recorded {
+				t.Fatalf("%d resets, recorded %v: want neither", s.resets, s.recorded)
+			}
+			if got := strings.Count(h.log.String(), "not resetting node storage"); got != 1 {
+				t.Errorf("%d warnings, want one:\n%s", got, h.log.String())
+			}
+		})
+	}
+}
+
+func TestRunMarksTheNodeReady(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		recorded: true}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	if s := node.snapshot(); s.marks != 1 || !s.marked || s.recorded {
+		t.Fatalf("%d marks, marked %v, recorded %v: want the marker written once and the record cleared",
+			s.marks, s.marked, s.recorded)
+	}
+}
+
+func TestRunRetriesTheReadyMarker(t *testing.T) {
+	steps, fsys := testSteps("platform")
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig"),
+		recorded: true, markErrs: []error{errors.New("META full"), errors.New("META full")}}
+	h := newHarness(node, newFakeCluster(steps), steps, fsys)
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	eventually(t, "marker", func() bool { return node.snapshot().marked })
+	if s := node.snapshot(); s.marks != 1 || s.recorded || s.clears != 1 {
+		t.Fatalf("%d marks, recorded %v, %d clears: want the marker written and then the record cleared",
+			s.marks, s.recorded, s.clears)
+	}
+	if !strings.Contains(h.log.String(), "META full") {
+		t.Errorf("log does not record the failed marker:\n%s", h.log.String())
+	}
+	if st := h.store.Get().State; st != StateReady {
+		t.Errorf("state %s, want ready", st)
 	}
 }
