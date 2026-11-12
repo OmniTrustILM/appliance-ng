@@ -295,3 +295,33 @@ func TestKubernetesVersionMatchesRelease(t *testing.T) {
 		t.Errorf("Generate uses Kubernetes %s, release.yaml pins %s", got, want)
 	}
 }
+
+func TestControlPlaneImagesAreInRelease(t *testing.T) {
+	m, err := release.Load("../../release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pinned := map[string]bool{}
+	for _, img := range m.Images {
+		pinned[img.Ref] = true
+	}
+
+	cfg, err := configloader.NewFromBytes(mustGenerate(t, testInput()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, ref := range map[string]string{
+		"kube-apiserver":          cfg.K8sAPIServerConfig().Image(),
+		"kube-controller-manager": cfg.K8sControllerManagerConfig().Image(),
+		"kube-scheduler":          cfg.K8sSchedulerConfig().Image(),
+		"kubelet":                 cfg.K8sKubeletConfig().Image(),
+		"etcd":                    cfg.Cluster().Etcd().Image(),
+		"coredns":                 cfg.K8sCoreDNSConfig().Image(),
+	} {
+		if !pinned[ref] {
+			t.Errorf("%s image %q is not in release.yaml", name, ref)
+		}
+	}
+}
