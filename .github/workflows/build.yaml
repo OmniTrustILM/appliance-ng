@@ -87,6 +87,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
           if [ ! -w /dev/kvm ]; then
             echo "::error::/dev/kvm is missing or not writable on this runner."
             ls -l /dev/kvm || true
@@ -131,16 +132,3 @@ jobs:
             out/${{ matrix.arch }}/*.qcow2
             out/${{ matrix.arch }}/SHA256SUMS
           retention-days: 3
-
-  probe-arm64-kvm:
-    name: probe arm64 kvm
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 10
-    steps:
-      - name: Report KVM support
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-arm qemu-efi-aarch64
-          ls -l /dev/kvm || true
-          qemu-system-aarch64 -accel help
