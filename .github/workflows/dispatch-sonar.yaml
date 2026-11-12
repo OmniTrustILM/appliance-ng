@@ -73,7 +73,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: 'sonar.yaml',
-              ref: process.env.BASE_REF,
+              // Always run the trusted workflow from the default branch, never a revision the PR names.
+              ref: context.payload.repository.default_branch,
               inputs: {
                 pr_number:   process.env.PR_NUMBER,
                 head_sha:    process.env.HEAD_SHA,
