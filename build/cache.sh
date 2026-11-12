@@ -70,7 +70,7 @@ verify_cache() {
       failed=1
       continue
     fi
-    got="sha256:$(sha256sum "$file" | cut -d' ' -f1)"
+    got="sha256:$(sha256 "$file")"
     if [ "$got" != "$want" ]; then
       log "cache content mismatch: $ref is $got in the cache, release.yaml has $want"
       failed=1

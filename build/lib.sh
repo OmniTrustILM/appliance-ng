@@ -10,6 +10,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 log() { echo "[$(basename "$0" .sh)] $*" >&2; }
 die() { log "error: $*"; exit 1; }
+# sha256 <file> prints the file's SHA-256 (sha256sum on Linux, shasum on macOS).
+sha256() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
 
 yq() {
   if type -P yq >/dev/null; then
