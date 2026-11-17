@@ -408,11 +408,11 @@ func TestLoadStepsFromEmbeddedAddons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(steps) != 9 {
-		t.Fatalf("got %d steps, want 9", len(steps))
+	if len(steps) != 8 {
+		t.Fatalf("got %d steps, want 8", len(steps))
 	}
-	if last := steps[len(steps)-1]; last.Name != "platform" {
-		t.Errorf("last step = %q, want platform", last.Name)
+	if last := steps[len(steps)-1]; last.Name != "ilm-operator" {
+		t.Errorf("last step = %q, want ilm-operator", last.Name)
 	}
 	if got := steps[1].NamespaceLabels["local-path-storage"]["pod-security.kubernetes.io/enforce"]; got != "privileged" {
 		t.Errorf("storage namespace label = %q", got)
@@ -465,5 +465,35 @@ func TestCreateRejectsBadInput(t *testing.T) {
 	c := newCluster(t)
 	if err := c.Create(ctx(t), []byte("apiVersion: v1\nmetadata:\n  name: x\n")); err == nil {
 		t.Error("document without kind: want error")
+	}
+}
+
+func TestConfigClusterWritesAsItsFieldManager(t *testing.T) {
+	c, err := kube.NewConfigCluster(restConfig, "appliance-manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: managed
+  namespace: default
+data:
+  a: "1"
+`)
+	if err := c.Apply(ctx(t), manifest); err != nil {
+		t.Fatal(err)
+	}
+	cm, err := dynamic.NewForConfigOrDie(restConfig).Resource(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}).
+		Namespace("default").Get(ctx(t), "managed", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var managers []string
+	for _, e := range cm.GetManagedFields() {
+		managers = append(managers, e.Manager)
+	}
+	if len(managers) != 1 || managers[0] != "appliance-manager" {
+		t.Errorf("field managers = %v, want [appliance-manager]", managers)
 	}
 }

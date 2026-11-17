@@ -73,8 +73,8 @@ func TestStatusSinceChangesWithStateOnly(t *testing.T) {
 }
 
 func TestNewServerSetsTimeouts(t *testing.T) {
-	srv := NewServer(":8443", NewStatusStore())
-	if srv.Addr != ":8443" || srv.ReadHeaderTimeout == 0 || srv.ReadTimeout == 0 || srv.WriteTimeout == 0 || srv.IdleTimeout == 0 {
+	srv := NewServer(":8444", NewStatusStore())
+	if srv.Addr != ":8444" || srv.ReadHeaderTimeout == 0 || srv.ReadTimeout == 0 || srv.WriteTimeout == 0 || srv.IdleTimeout == 0 {
 		t.Errorf("server %+v lacks address or timeouts", srv)
 	}
 }

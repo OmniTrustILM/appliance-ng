@@ -1,6 +1,7 @@
-.PHONY: addons images test lint boot-test
+.PHONY: addons images test lint boot-test generate manifests
 
 ENVTEST_K8S_VERSION ?= 1.37.x
+CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0
 
 addons:
 	./build/addons.sh
@@ -8,6 +9,7 @@ addons:
 # make images ARCH=amd64|arm64 REGISTRY=<registry>; defaults in build/lib.sh.
 images:
 	./build/extension.sh
+	./build/manager.sh
 	./build/installer.sh
 	./build/cache.sh
 	./build/media.sh
@@ -17,6 +19,15 @@ MEDIA ?= iso
 ARCH ?= arm64
 boot-test:
 	./test/boot/run.sh $(MEDIA) $(ARCH)
+
+# Regenerate the deep-copy code and the CRD of the Appliance API.
+generate:
+	$(CONTROLLER_GEN) object paths=./api/...
+
+# Regenerate the CRD and addons/manager.yaml, which embeds it, and pin its sha256 in release.yaml.
+manifests:
+	$(CONTROLLER_GEN) crd paths=./api/... output:crd:dir=config/crd
+	./build/manifests.sh
 
 test:
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260125163108-a19ec76a3c5d use $(ENVTEST_K8S_VERSION) -p path)" \

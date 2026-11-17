@@ -16,6 +16,7 @@ const (
 	StateConfiguring       State = "configuring"
 	StateInstalling        State = "installing"
 	StateBootstrapping     State = "bootstrapping"
+	StateHandover          State = "handover"
 	StateAddons            State = "addons"
 	StatePlatform          State = "platform"
 	StateReady             State = "ready"

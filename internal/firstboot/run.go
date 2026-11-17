@@ -1,5 +1,5 @@
 // Package firstboot turns a freshly booted Talos node into a running ILM appliance: it configures the node,
-// bootstraps etcd, applies the add-ons and waits for the default ILM Platform.
+// bootstraps etcd, hands the setup over to the Appliance Manager and reports the Appliance status.
 package firstboot
 
 import (
@@ -7,16 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
-	"maps"
-	"slices"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
@@ -27,22 +23,22 @@ var resetTimeout = 10 * time.Minute
 const (
 	maxBackoff             = time.Minute
 	defaultConsoleInterval = 60 * time.Second
-	// platformStep is the step that creates the ILM Platform; the service reports StatePlatform while it runs.
-	platformStep = "platform"
 )
 
 // Deps is what Run needs. Console and Log must not be nil; ConsoleInterval defaults to defaultConsoleInterval.
+// Manager is the Appliance Manager manifest with its image set; HostName and ILMVersion are the release defaults
+// of the default Appliance.
 type Deps struct {
 	Node            talos.Node
-	NewCluster      func([]byte) (kube.Cluster, error)
-	Steps           []kube.Step
-	Addons          fs.FS
+	NewCluster      func([]byte) (Cluster, error)
+	Manager         []byte
 	Generate        func(machineconfig.Input) ([]byte, error)
 	Console         io.Writer
 	Log             *slog.Logger
 	Retry           time.Duration
 	InstallerImage  string
 	HostName        string
+	ILMVersion      string
 	ClusterName     string
 	Version         string
 	ConsoleInterval time.Duration
@@ -50,20 +46,21 @@ type Deps struct {
 
 func (d Deps) validate() error {
 	switch {
-	case d.Node == nil || d.NewCluster == nil || d.Generate == nil || d.Addons == nil:
-		return errors.New("first boot: node, cluster, generator and add-ons are required")
+	case d.Node == nil || d.NewCluster == nil || d.Generate == nil || len(d.Manager) == 0:
+		return errors.New("first boot: node, cluster, generator and manager manifest are required")
 	case d.Console == nil || d.Log == nil:
 		return errors.New("first boot: console and logger are required")
 	case d.Retry <= 0:
 		return errors.New("first boot: retry interval must be positive")
-	case d.InstallerImage == "" || d.HostName == "" || d.ClusterName == "":
-		return errors.New("first boot: installer image, host name and cluster name are required")
+	case d.InstallerImage == "" || d.HostName == "" || d.ILMVersion == "" || d.ClusterName == "":
+		return errors.New("first boot: installer image, host name, ILM version and cluster name are required")
 	}
 	return nil
 }
 
-// Run drives the node to a ready ILM appliance and then idles until ctx is done. Every decision is taken from
-// what the node and the cluster report, so a restart at any point resumes where the setup stands.
+// Run drives the node to a running cluster, hands the setup over to the Appliance Manager and then reports the
+// Appliance status until ctx is done. Every decision is taken from what the node and the cluster report, so a
+// restart at any point resumes where the setup stands.
 // It returns nil when ctx is cancelled and an error only for invalid Deps.
 func Run(ctx context.Context, d Deps, s *StatusStore) error {
 	if err := d.validate(); err != nil {
@@ -76,10 +73,7 @@ func Run(ctx context.Context, d Deps, s *StatusStore) error {
 	go runConsole(ctx, d.Console, d.Log, d.Version, d.HostName, interval, s)
 
 	r := &runner{d: d, s: s}
-	// run returns an error only when ctx is cancelled; once ready, keep serving status until then.
-	if r.run(ctx) == nil {
-		<-ctx.Done()
-	}
+	r.run(ctx)
 	return nil
 }
 
@@ -97,34 +91,27 @@ type runner struct {
 	// wasReady is set once META shows, or cannot rule out, that the node has been ready; its storage then holds
 	// user data and is never reset.
 	wasReady bool
+	// marked is set once this process wrote the ready marker.
+	marked bool
 }
 
-func (r *runner) run(ctx context.Context) error {
-	if err := r.retry(ctx, r.nodePass); err != nil {
-		return err
+func (r *runner) run(ctx context.Context) {
+	if r.retry(ctx, r.nodePass) != nil {
+		return
 	}
-	var cluster kube.Cluster
+	var cluster Cluster
 	err := r.retry(ctx, func(ctx context.Context) (bool, error) {
 		var err error
 		cluster, err = r.connect(ctx)
 		return err == nil, err
 	})
 	if err != nil {
-		return err
+		return
 	}
-	for _, step := range r.d.Steps {
-		if err := r.retry(ctx, func(ctx context.Context) (bool, error) { return r.applyStep(ctx, cluster, step) }); err != nil {
-			return err
-		}
-		if err := r.retry(ctx, func(ctx context.Context) (bool, error) { return r.waitStep(ctx, cluster, step) }); err != nil {
-			return err
-		}
+	if r.retry(ctx, func(ctx context.Context) (bool, error) { return r.handover(ctx, cluster) }) != nil {
+		return
 	}
-	if err := r.recordReady(ctx); err != nil {
-		return err
-	}
-	r.set(StateReady, "", "ILM Platform is ready")
-	return nil
+	r.mirror(ctx, cluster)
 }
 
 // markReady marks the node in META as having been ready, which disables the storage reset for good, and then
@@ -413,8 +400,8 @@ func (r *runner) bootstrap(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (r *runner) connect(ctx context.Context) (kube.Cluster, error) {
-	r.set(StateAddons, "", "connecting to Kubernetes")
+func (r *runner) connect(ctx context.Context) (Cluster, error) {
+	r.set(StateHandover, "", "connecting to Kubernetes")
 	kc, err := r.d.Node.Kubeconfig(ctx)
 	if err != nil {
 		return nil, redacted("fetch kubeconfig", err)
@@ -424,64 +411,6 @@ func (r *runner) connect(ctx context.Context) (kube.Cluster, error) {
 		return nil, errors.New("connect to Kubernetes: kubeconfig rejected")
 	}
 	return cluster, nil
-}
-
-func stepState(step kube.Step) State {
-	if step.Name == platformStep {
-		return StatePlatform
-	}
-	return StateAddons
-}
-
-func (r *runner) applyStep(ctx context.Context, cluster kube.Cluster, step kube.Step) (bool, error) {
-	r.set(stepState(step), step.Name, "applying")
-	for _, ns := range slices.Sorted(maps.Keys(step.NamespaceLabels)) {
-		if err := cluster.LabelNamespace(ctx, ns, step.NamespaceLabels[ns]); err != nil {
-			return false, err
-		}
-	}
-	for _, file := range step.Files {
-		docs, err := fs.ReadFile(r.d.Addons, file)
-		if err != nil {
-			return false, fmt.Errorf("read %s: %w", file, err)
-		}
-		write := cluster.Apply
-		if step.CreateOnly {
-			write = cluster.Create
-		}
-		if err := write(ctx, docs); err != nil {
-			return false, fmt.Errorf("apply %s: %w", file, err)
-		}
-	}
-	r.d.Log.Info("step applied", "step", step.Name)
-	return true, nil
-}
-
-// waitStep reports done once every wait of the step passes; otherwise the message names the first that does not.
-func (r *runner) waitStep(ctx context.Context, cluster kube.Cluster, step kube.Step) (bool, error) {
-	for _, w := range step.Wait {
-		ready, reason, err := cluster.Ready(ctx, w)
-		if err != nil {
-			return false, err
-		}
-		if !ready {
-			r.set(stepState(step), step.Name, fmt.Sprintf("waiting for %s %s: %s", w.Kind, objectName(w), reason))
-			return false, nil
-		}
-	}
-	r.d.Log.Info("step ready", "step", step.Name)
-	return true, nil
-}
-
-func objectName(w kube.WaitFor) string {
-	switch {
-	case w.Namespace != "":
-		return w.Namespace + "/" + w.Name
-	case w.Name != "":
-		return w.Name
-	default:
-		return "(all)"
-	}
 }
 
 // redacted replaces an error that may quote the configuration or kubeconfig with a fixed text and its gRPC code.

@@ -6,16 +6,29 @@ import (
 )
 
 // CacheList returns the sorted, unique references to cache for arch, including
-// installerRef when it is not empty.
-func CacheList(m *Manifest, arch, installerRef string) []string {
+// the non-empty references of the images built with the appliance, such as the
+// installer and the manager. Images of private connectors are left out: they
+// need registry credentials at install time.
+func CacheList(m *Manifest, arch string, built ...string) []string {
+	private := map[string]bool{}
+	for _, c := range m.Connectors {
+		if c.Private {
+			private[normalize(c.Image)] = true
+		}
+	}
 	var refs []string
 	for _, img := range m.Images {
+		if private[normalize(img.Ref)] {
+			continue
+		}
 		if len(img.Arches) == 0 || slices.Contains(img.Arches, arch) {
 			refs = append(refs, img.Ref)
 		}
 	}
-	if installerRef != "" {
-		refs = append(refs, installerRef)
+	for _, ref := range built {
+		if ref != "" {
+			refs = append(refs, ref)
+		}
 	}
 	slices.Sort(refs)
 	return slices.Compact(refs)

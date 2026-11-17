@@ -10,7 +10,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 VM="$REPO/test/boot/vm.sh"
-STATUS_URL=http://127.0.0.1:18443/status
+STATUS_URL=http://127.0.0.1:18444/status
 UI_HOST=ilm.appliance.internal
 UI_URL="https://$UI_HOST:10443/administrator/"
 STATUS_TIMEOUT=180

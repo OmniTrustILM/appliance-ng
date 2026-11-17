@@ -34,8 +34,9 @@ case "$ARCH" in amd64 | arm64) ;; *) die "ARCH must be amd64 or arm64, not $ARCH
 OUT="out/$ARCH"
 EXTENSION_REF="$REGISTRY/firstboot-extension:$VERSION-$ARCH"
 INSTALLER_REF="$REGISTRY/installer:$VERSION-$ARCH"
+MANAGER_REF="$REGISTRY/manager:$VERSION-$ARCH"
 # shellcheck disable=SC2034 # used by the scripts that source this file
-readonly ARCH REGISTRY VERSION TALOS_VERSION IMAGER OUT EXTENSION_REF INSTALLER_REF
+readonly ARCH REGISTRY VERSION TALOS_VERSION IMAGER OUT EXTENSION_REF INSTALLER_REF MANAGER_REF
 mkdir -p "$OUT"
 
 # A registry on localhost is plain HTTP; the imager container reaches it through the Docker host

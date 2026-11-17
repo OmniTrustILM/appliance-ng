@@ -1,4 +1,4 @@
-// Package talos is a client for the local machined socket of a Talos node.
+// Package talos is a client for the Talos API of the local node, over the machined socket or over apid.
 package talos
 
 import (
@@ -15,6 +15,7 @@ import (
 	"github.com/cosi-project/runtime/pkg/state"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
+	clientconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/network"
 	"github.com/siderolabs/talos/pkg/machinery/resources/runtime"
@@ -41,7 +42,7 @@ const (
 // ErrAlreadyBootstrapped is returned by Bootstrap when etcd is already bootstrapped.
 var ErrAlreadyBootstrapped = errors.New("etcd already bootstrapped")
 
-// Node is the subset of the Talos API that the first-boot service needs.
+// Node is the subset of the Talos API that the first-boot service and the appliance manager need.
 type Node interface {
 	Stage(ctx context.Context) (Stage, error)
 	ApplyConfig(ctx context.Context, cfg []byte) error
@@ -66,9 +67,18 @@ type Node interface {
 	MarkReady(ctx context.Context) error
 	// ResetEphemeral wipes the EPHEMERAL partition and reboots; the machine configuration and the volumes are kept.
 	ResetEphemeral(ctx context.Context) error
+	// PatchConfig applies a strategic merge patch to the running machine configuration; the result is persisted and
+	// applied in no-reboot mode. A failed apply returns an error that names the changed documents.
+	PatchConfig(ctx context.Context, patch []byte) error
+	// RemoveExtensionConfig removes the file mounted at file from the ExtensionServiceConfig name, in no-reboot mode.
+	RemoveExtensionConfig(ctx context.Context, name, file string) error
+	// Versions returns the Talos version of the node and the Kubernetes version of its machine configuration.
+	Versions(ctx context.Context) (talos, kubernetes string, err error)
+	Reboot(ctx context.Context) error
+	Shutdown(ctx context.Context) error
 }
 
-// callTimeout bounds every call to machined that the caller did not bound: some calls, such as listing etcd members
+// callTimeout bounds every call to the node that the caller did not bound: some calls, such as listing etcd members
 // while etcd has no leader, otherwise never return.
 var callTimeout = 30 * time.Second
 
@@ -89,8 +99,8 @@ func Dial(ctx context.Context, socket string) (Node, error) {
 		client.WithUnixSocket(socket),
 		client.WithGRPCDialOptions(
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithChainUnaryInterceptor(withRoleUnary),
-			grpc.WithChainStreamInterceptor(withRoleStream),
+			grpc.WithChainUnaryInterceptor(boundedUnary, withRoleUnary),
+			grpc.WithChainStreamInterceptor(boundedStreamCall, withRoleStream),
 		),
 	)
 	if err != nil {
@@ -101,24 +111,68 @@ func Dial(ctx context.Context, socket string) (Node, error) {
 	return &node{c: c, st: c.COSI}, nil
 }
 
-func withRoleUnary(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn,
+// DialAPI connects to apid at endpoint with mutual TLS, using the CA, the client certificate and the key of the
+// current context of talosconfig; apid takes the role from the client certificate. A call without a deadline gives
+// up after callTimeout.
+func DialAPI(ctx context.Context, endpoint string, talosconfig []byte) (Node, error) {
+	cfg, err := clientconfig.FromBytes(talosconfig)
+	if err != nil {
+		return nil, fmt.Errorf("parse talosconfig: %w", err)
+	}
+	current, ok := cfg.Contexts[cfg.Context]
+	if !ok || current == nil {
+		return nil, fmt.Errorf("talosconfig has no context %q", cfg.Context)
+	}
+	if current.Crt == "" || current.Key == "" {
+		return nil, fmt.Errorf("talosconfig context %q has no client certificate", cfg.Context)
+	}
+
+	c, err := client.New(ctx,
+		client.WithConfigContext(current),
+		client.WithEndpoints(endpoint),
+		client.WithGRPCDialOptions(
+			grpc.WithChainUnaryInterceptor(boundedUnary),
+			grpc.WithChainStreamInterceptor(boundedStreamCall),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("connect to the Talos API at %s: %w", endpoint, err)
+	}
+	slog.Debug("connected to the Talos API", "endpoint", endpoint, "context", cfg.Context)
+
+	return &node{c: c, st: c.COSI}, nil
+}
+
+func boundedUnary(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn,
 	invoker grpc.UnaryInvoker, opts ...grpc.CallOption,
 ) error {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+func boundedStreamCall(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string,
+	streamer grpc.Streamer, opts ...grpc.CallOption,
+) (grpc.ClientStream, error) {
+	ctx, cancel := bounded(ctx)
+	s, err := streamer(ctx, desc, cc, method, opts...)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return &boundedStream{ClientStream: s, cancel: cancel}, nil
+}
+
+func withRoleUnary(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn,
+	invoker grpc.UnaryInvoker, opts ...grpc.CallOption,
+) error {
 	return invoker(withRole(ctx), method, req, reply, cc, opts...)
 }
 
 func withRoleStream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string,
 	streamer grpc.Streamer, opts ...grpc.CallOption,
 ) (grpc.ClientStream, error) {
-	ctx, cancel := bounded(ctx)
-	s, err := streamer(withRole(ctx), desc, cc, method, opts...)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	return &boundedStream{ClientStream: s, cancel: cancel}, nil
+	return streamer(withRole(ctx), desc, cc, method, opts...)
 }
 
 // bounded gives ctx the call timeout unless it already has a deadline.
@@ -257,4 +311,54 @@ func (n *node) Kubeconfig(ctx context.Context) ([]byte, error) {
 	}
 
 	return kc, nil
+}
+
+// Reboot reboots the node.
+func (n *node) Reboot(ctx context.Context) error {
+	if err := n.c.Reboot(ctx); err != nil {
+		return fmt.Errorf("reboot: %w", err)
+	}
+	return nil
+}
+
+// Shutdown shuts the node down.
+func (n *node) Shutdown(ctx context.Context) error {
+	if err := n.c.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shut down: %w", err)
+	}
+	return nil
+}
+
+// Versions returns the Talos version the node runs and the Kubernetes version of its machine configuration, the
+// tag of the kubelet image.
+func (n *node) Versions(ctx context.Context) (talosVersion, kubernetesVersion string, err error) {
+	resp, err := n.c.Version(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("read Talos version: %w", err)
+	}
+	msgs := resp.GetMessages()
+	if len(msgs) == 0 || msgs[0].GetVersion().GetTag() == "" {
+		return "", "", errors.New("node reported no Talos version")
+	}
+	talosVersion = msgs[0].GetVersion().GetTag()
+
+	cfg, err := n.machineConfig(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	kubelet := cfg.K8sKubeletConfig()
+	if kubelet == nil || imageTag(kubelet.Image()) == "" {
+		return "", "", errors.New("machine configuration names no tagged kubelet image")
+	}
+
+	return talosVersion, imageTag(kubelet.Image()), nil
+}
+
+// imageTag returns the tag of an image reference, or "" for a reference without one.
+func imageTag(ref string) string {
+	ref, _, _ = strings.Cut(ref, "@")
+	if i := strings.LastIndex(ref, ":"); i > strings.LastIndex(ref, "/") {
+		return ref[i+1:]
+	}
+	return ""
 }

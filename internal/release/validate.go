@@ -19,18 +19,24 @@ import (
 var imageRefPattern = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]+)?/[^ ]+:[^ ]+$`)
 
 // Validate checks every add-on file against its pinned hash and reports each
-// image the files use that the manifest does not list.
+// image the files or the connector catalogue use that the manifest does not list,
+// and a manager image placeholder that no add-on uses.
 func Validate(m *Manifest, addons fs.FS) []error {
-	listed := make(map[string]bool, len(m.Images))
+	listed := make(map[string]string, len(m.Images))
 	for _, img := range m.Images {
-		listed[normalize(img.Ref)] = true
+		listed[normalize(img.Ref)] = img.Digest
 	}
 	implicit := make(map[string]bool, len(m.ImplicitImages))
 	for _, name := range m.ImplicitImages {
 		implicit[name] = true
 	}
 
-	var errs []error
+	errs := validateConnectors(m.Connectors, listed)
+	manager := ""
+	if m.ManagerImage != "" {
+		manager = normalize(m.ManagerImage)
+	}
+	managerUsed := false
 	reported := map[string]bool{}
 	for _, addon := range m.Addons {
 		data, err := readAddon(addons, addon)
@@ -44,9 +50,47 @@ func Validate(m *Manifest, addons fs.FS) []error {
 			continue
 		}
 		for _, img := range images {
-			if ref := normalize(img); !listed[ref] && !reported[ref] {
+			ref := normalize(img)
+			if ref == manager {
+				managerUsed = true
+				continue
+			}
+			if _, ok := listed[ref]; !ok && !reported[ref] {
 				reported[ref] = true
 				errs = append(errs, fmt.Errorf("addon %s (%s): image %s is not listed in the manifest", addon.Name, addon.File, ref))
+			}
+		}
+	}
+	if manager != "" && !managerUsed {
+		errs = append(errs, fmt.Errorf("manager image %s is used by no add-on", m.ManagerImage))
+	}
+	return errs
+}
+
+// validateConnectors reports each connector whose image is not listed with the
+// connector's digest, or whose database, schema or settings are unknown.
+func validateConnectors(connectors []Connector, digests map[string]string) []error {
+	var errs []error
+	for _, c := range connectors {
+		digest, ok := digests[normalize(c.Image)]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Errorf("connector %s: image %s is not listed in the manifest", c.Name, c.Image))
+		case digest != c.Digest:
+			errs = append(errs, fmt.Errorf("connector %s: digest %s differs from the listed image digest %s", c.Name, c.Digest, digest))
+		}
+		switch c.Database {
+		case DatabaseJDBC, DatabaseEnv:
+		case "":
+			if c.Schema != "" {
+				errs = append(errs, fmt.Errorf("connector %s: schema %s set without a database", c.Name, c.Schema))
+			}
+		default:
+			errs = append(errs, fmt.Errorf("connector %s: unknown database %q", c.Name, c.Database))
+		}
+		for _, setting := range c.Settings {
+			if !slices.Contains([]string{SettingProxy, SettingTrust, SettingMail}, setting) {
+				errs = append(errs, fmt.Errorf("connector %s: unknown setting %q", c.Name, setting))
 			}
 		}
 	}
