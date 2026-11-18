@@ -41,6 +41,27 @@ func (n *node) PatchConfig(ctx context.Context, patch []byte) error {
 	return n.applyNoReboot(ctx, current, patched)
 }
 
+// ExtensionConfigFile returns the content of the file mounted at file by the ExtensionServiceConfig name of the
+// running machine configuration, or nil when there is none.
+func (n *node) ExtensionConfigFile(ctx context.Context, name, file string) ([]byte, error) {
+	current, err := n.machineConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, doc := range current.Documents() {
+		ext, ok := doc.(*extensions.ServiceConfigV1Alpha1)
+		if !ok || ext.ServiceName != name {
+			continue
+		}
+		for _, f := range ext.ServiceConfigFiles {
+			if f.ConfigFileMountPath == file {
+				return []byte(f.ConfigFileContent), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
 // RemoveExtensionConfig removes the file mounted at file from the ExtensionServiceConfig name and keeps the rest of
 // the machine configuration. Talos rejects an ExtensionServiceConfig with neither files nor environment, so a
 // document left with neither is removed. Nothing is applied when there is no such file.

@@ -1,0 +1,889 @@
+openapi: 3.0.3
+info:
+  title: ILM Appliance API
+  version: v1
+  description: |
+    The API of the ILM appliance. Operations tagged `setup` are served by the first-boot service during wizard
+    part 1; all other operations are served by the Appliance Manager.
+
+    Every request after the session is established sends the session cookie. Requests other than GET, HEAD and
+    OPTIONS also send the session's CSRF token in the `X-CSRF-Token` header. Errors are JSON objects with a
+    machine-readable `code`, a human-readable `message` and, for a field that failed validation, its `field`.
+    No response carries a secret, except the TOTP enrolment response, which returns the seed once.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+tags:
+  - name: setup
+    description: Wizard part 1, served by the first-boot service.
+  - name: session
+    description: Sign-in and sign-out of the console.
+  - name: status
+    description: The state of the appliance.
+  - name: appliance
+    description: The configuration of the appliance.
+  - name: wizard
+    description: Wizard part 2.
+  - name: catalogue
+    description: The platform components that can be installed.
+  - name: audit
+    description: The audit log.
+  - name: certificate
+    description: The appliance's built-in certificate authority.
+  - name: platform
+    description: The installed ILM platform.
+paths:
+  /api/v1/setup/code:
+    post:
+      tags: [setup]
+      operationId: postSetupCode
+      summary: Start the setup session with the one-time setup code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupCode'
+      responses:
+        '200':
+          description: The code is valid; the response sets the session cookie.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfToken'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Locked'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/setup/state:
+    get:
+      tags: [setup]
+      operationId: getSetupState
+      summary: The step wizard part 1 resumes from
+      description: With a valid setup session the response also carries the session's CSRF token.
+      responses:
+        '200':
+          description: The current step.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupState'
+  /api/v1/setup/admin:
+    put:
+      tags: [setup]
+      operationId: putSetupAdmin
+      summary: Set the first administrator
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminAccount'
+      responses:
+        '204':
+          description: The administrator is saved.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/setup/totp:
+    post:
+      tags: [setup]
+      operationId: postSetupTotp
+      summary: Enrol the administrator's TOTP authenticator
+      description: Returns the seed once; a second request is refused.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The TOTP seed and its otpauth URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpEnrolment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/setup/totp/confirm:
+    post:
+      tags: [setup]
+      operationId: postSetupTotpConfirm
+      summary: Confirm the enrolment with a code from the authenticator
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCode'
+      responses:
+        '204':
+          description: The authenticator is confirmed.
+        '400':
+          $ref: '#/components/responses/BadRequestWithServerTime'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/setup/node:
+    put:
+      tags: [setup]
+      operationId: putSetupNode
+      summary: Set the network settings of the node
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeSettings'
+      responses:
+        '204':
+          description: The network settings are saved.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/setup/dhcp:
+    get:
+      tags: [setup]
+      operationId: getSetupDhcp
+      summary: The values DHCP delivered, to prefill the network settings
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The DHCP-delivered values; a value DHCP did not deliver is absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DhcpSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/setup/apply:
+    post:
+      tags: [setup]
+      operationId: postSetupApply
+      summary: Apply the saved settings and finish wizard part 1
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The settings are being applied.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/session:
+    get:
+      tags: [session]
+      operationId: getSession
+      summary: The signed-in user and the session's CSRF token
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The session is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [session]
+      operationId: postSession
+      summary: Sign in with user name, password and TOTP code
+      description: |
+        A failed sign-in does not tell which factor failed: whatever was wrong, the answer is 400 with code
+        `invalid_credentials` and the appliance time. 401 is answered only while failed attempts lock sign-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignIn'
+      responses:
+        '200':
+          description: Signed in; the response sets the session cookie.
+          headers:
+            Set-Cookie:
+              description: The session cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfToken'
+        '400':
+          $ref: '#/components/responses/SignInFailed'
+        '401':
+          $ref: '#/components/responses/SignInLocked'
+    delete:
+      tags: [session]
+      operationId: deleteSession
+      summary: Sign out
+      security:
+        - session: []
+      responses:
+        '204':
+          description: Signed out; the response clears the session cookie.
+          headers:
+            Set-Cookie:
+              description: The cookie that clears the session cookie.
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/status:
+    get:
+      tags: [status]
+      operationId: getStatus
+      summary: The state of the appliance
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The state of the appliance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/appliance:
+    get:
+      tags: [appliance]
+      operationId: getAppliance
+      summary: The configuration of the appliance, without secret values
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The configuration; a secret is reported only as set or not set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplianceSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/wizard/platform:
+    put:
+      tags: [wizard]
+      operationId: putWizardPlatform
+      summary: Set the platform host name, its components and the mail server
+      description: |
+        Replaces the platform settings and the mail server; without `mail` the mail server is removed. The ILM
+        version is always the one the release ships. The mail password is kept in a Secret. Without `password`
+        the stored one is kept only while the user name, host, port and security are unchanged; otherwise the
+        answer is 400 with field `mail.password`. Accepted until setup is complete, then answered with 409.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformSettings'
+      responses:
+        '202':
+          description: The platform is being installed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/catalogue:
+    get:
+      tags: [catalogue]
+      operationId: getCatalogue
+      summary: The platform components that can be installed
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The components.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Catalogue'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      operationId: getAudit
+      summary: The most recent audit entries, newest first
+      security:
+        - session: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: The maximum number of entries.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: The audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLog'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/ca.pem:
+    get:
+      tags: [certificate]
+      operationId: getCaPem
+      summary: The root certificate of the built-in certificate authority
+      description: Public, so it needs no session. Browsers and clients import it to trust the built-in certificate.
+      responses:
+        '200':
+          description: The root certificate in PEM.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/x-pem-file:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/platform/admin-credential:
+    post:
+      tags: [platform]
+      operationId: postPlatformAdminCredential
+      summary: Download the ILM administrator's certificate and key, once
+      description: |
+        Returns the certificate and private key the platform generated for the ILM administrator as a PKCS#12 file
+        encrypted with the password of the request. Each certificate is handed out once; later requests are answered
+        with 410 until the platform renews the certificate.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminCredentialRequest'
+      responses:
+        '200':
+          description: The PKCS#12 file.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/x-pkcs12:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: appliance_session
+  responses:
+    BadRequest:
+      description: The request is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadRequestWithServerTime:
+      description: The request is invalid or the code was rejected; the appliance time makes clock skew visible.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorWithServerTime'
+    Unauthorized:
+      description: There is no valid session.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The request lacks the session's CSRF token in `X-CSRF-Token`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Locked:
+      description: The credentials were rejected; `retryAfter` is set while further attempts are locked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorWithRetry'
+    SignInFailed:
+      description: >-
+        The sign-in failed, with code `invalid_credentials` whichever of user, password or TOTP code was wrong, or
+        the request is malformed; the appliance time makes clock skew visible.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SignInError'
+    SignInLocked:
+      description: Too many failed sign-ins; sign-in is locked for `retryAfter` seconds.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LockedError'
+    NotFound:
+      description: The resource does not exist yet.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Gone:
+      description: The resource was handed out once and is not available any more.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The request conflicts with the current state, for example setup is in progress in another browser.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: A machine-readable error code.
+        message:
+          type: string
+        field:
+          type: string
+          description: The request field that failed validation.
+    ErrorWithRetry:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            retryAfter:
+              type: integer
+              minimum: 0
+              description: Seconds until the next attempt is accepted.
+    ErrorWithServerTime:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            serverTime:
+              type: string
+              format: date-time
+              description: The appliance time.
+    SignInError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [serverTime]
+          properties:
+            serverTime:
+              type: string
+              format: date-time
+              description: The appliance time.
+    LockedError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [retryAfter]
+          properties:
+            retryAfter:
+              type: integer
+              minimum: 0
+              description: Seconds until the next attempt is accepted.
+    CsrfToken:
+      type: object
+      required: [csrfToken]
+      properties:
+        csrfToken:
+          type: string
+    SetupCode:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    SetupStep:
+      type: string
+      enum: [code, admin, totp, node, apply, applying]
+    SetupState:
+      type: object
+      required: [step]
+      properties:
+        step:
+          $ref: '#/components/schemas/SetupStep'
+        csrfToken:
+          type: string
+          description: Present with a valid setup session.
+    AdminAccount:
+      type: object
+      required: [user, password]
+      properties:
+        user:
+          type: string
+        password:
+          type: string
+          format: password
+          writeOnly: true
+    TotpEnrolment:
+      type: object
+      required: [seed, otpauthUrl]
+      properties:
+        seed:
+          type: string
+        otpauthUrl:
+          type: string
+    TotpCode:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+    Proxy:
+      type: object
+      properties:
+        http:
+          type: string
+          description: The HTTP proxy URL.
+        https:
+          type: string
+          description: The HTTPS proxy URL.
+        noProxy:
+          type: string
+          description: Comma-separated hosts and networks that bypass the proxy.
+    NodeSettings:
+      type: object
+      required: [hostName, address, gateway, dns, ntp]
+      properties:
+        hostName:
+          type: string
+        address:
+          type: string
+          description: The static node address in CIDR notation; empty keeps the address DHCP delivers.
+        gateway:
+          type: string
+          description: The default gateway of the static address; empty with DHCP.
+        dns:
+          type: array
+          items:
+            type: string
+        ntp:
+          type: array
+          items:
+            type: string
+        proxy:
+          $ref: '#/components/schemas/Proxy'
+    DhcpSettings:
+      type: object
+      properties:
+        hostName:
+          type: string
+        address:
+          type: string
+          description: The node address in CIDR notation.
+        gateway:
+          type: string
+        dns:
+          type: array
+          items:
+            type: string
+        ntp:
+          type: array
+          items:
+            type: string
+    Session:
+      type: object
+      required: [user, csrfToken]
+      properties:
+        user:
+          type: string
+        csrfToken:
+          type: string
+    SignIn:
+      type: object
+      required: [user, password, totp]
+      properties:
+        user:
+          type: string
+        password:
+          type: string
+          format: password
+          writeOnly: true
+        totp:
+          type: string
+    Condition:
+      type: object
+      required: [type, status]
+      properties:
+        type:
+          type: string
+        status:
+          type: string
+          enum: ['True', 'False', 'Unknown']
+        reason:
+          type: string
+        message:
+          type: string
+        lastTransitionTime:
+          type: string
+          format: date-time
+    Versions:
+      type: object
+      properties:
+        appliance:
+          type: string
+        talos:
+          type: string
+        kubernetes:
+          type: string
+        operator:
+          type: string
+        ilm:
+          type: string
+    Status:
+      type: object
+      required: [setup, conditions, versions, rebootRequired]
+      properties:
+        setup:
+          type: string
+          enum: [part1, part2, complete]
+        addonStep:
+          type: string
+          description: The add-on being installed while AddonsReady is not true yet.
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+        versions:
+          $ref: '#/components/schemas/Versions'
+        nodeAddress:
+          type: string
+        rebootRequired:
+          type: boolean
+    MailSecurity:
+      type: string
+      enum: [none, starttls, tls]
+    Mail:
+      type: object
+      required: [host, port, security, from]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        security:
+          $ref: '#/components/schemas/MailSecurity'
+        from:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          writeOnly: true
+    MailSettings:
+      type: object
+      required: [host, port, security, from, passwordSet]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        security:
+          $ref: '#/components/schemas/MailSecurity'
+        from:
+          type: string
+        username:
+          type: string
+        passwordSet:
+          type: boolean
+    PlatformSettings:
+      type: object
+      required: [hostName, components]
+      properties:
+        hostName:
+          type: string
+        components:
+          type: array
+          items:
+            type: string
+        mail:
+          $ref: '#/components/schemas/Mail'
+    Registry:
+      type: object
+      required: [host, credentialsSet]
+      properties:
+        host:
+          type: string
+        credentialsSet:
+          type: boolean
+    ApplianceSettings:
+      type: object
+      required: [node, dns, ntp, tlsSource, trustSet, registries]
+      properties:
+        node:
+          type: object
+          required: [hostName]
+          properties:
+            hostName:
+              type: string
+            address:
+              type: string
+            gateway:
+              type: string
+        dns:
+          type: array
+          items:
+            type: string
+        ntp:
+          type: array
+          items:
+            type: string
+        proxy:
+          $ref: '#/components/schemas/Proxy'
+        tlsSource:
+          type: string
+          enum: [builtin, secret]
+        trustSet:
+          type: boolean
+          description: Whether additional trusted CA certificates are set.
+        registries:
+          type: array
+          items:
+            $ref: '#/components/schemas/Registry'
+        mail:
+          $ref: '#/components/schemas/MailSettings'
+        platform:
+          type: object
+          required: [components]
+          properties:
+            ilmVersion:
+              type: string
+            hostName:
+              type: string
+            components:
+              type: array
+              items:
+                type: string
+    CatalogueItem:
+      type: object
+      required: [name, title, private]
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        private:
+          type: boolean
+          description: Whether the component's images come from a registry that needs credentials.
+    Catalogue:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogueItem'
+    AuditEntry:
+      type: object
+      required: [time, user, action, result, paths]
+      properties:
+        time:
+          type: string
+          format: date-time
+        user:
+          type: string
+          description: The signed-in user, or the existing account a sign-in attempt named; empty otherwise.
+        action:
+          type: string
+          enum: [sign-in, sign-out, wizard-platform, admin-credential]
+        result:
+          type: string
+          enum: [success, failure, denied]
+          description: >-
+            `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure`
+            when it was refused for another reason.
+        paths:
+          type: array
+          description: The Appliance fields the request changed, as JSON paths; never their values.
+          items:
+            type: string
+    AdminCredentialRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 12
+          description: >-
+            The password that encrypts the PKCS#12 file. Like a console password, it has at least 12 characters, is
+            not one of the most common passwords and does not contain the user name.
+    AuditLog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'

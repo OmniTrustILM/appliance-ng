@@ -32,7 +32,7 @@ metadata:
 rules:
   - apiGroups: [appliance.otilm.com]
     resources: [appliances]
-    verbs: [get, list, watch, update, patch]
+    verbs: [get, list, watch, create, update, patch]
   # The reconciler's controller owner references set blockOwnerDeletion, which needs update on the owner's finalizers.
   - apiGroups: [appliance.otilm.com]
     resources: [appliances/finalizers]
@@ -71,7 +71,7 @@ rules:
     resources: [ingressclasses]
     verbs: [get, list, watch, create, update, patch]
   - apiGroups: [cert-manager.io]
-    resources: [certificates, issuers]
+    resources: [certificates, issuers, clusterissuers]
     verbs: [get, list, watch, create, update, patch]
   - apiGroups: [traefik.io]
     resources: [middlewares, tlsoptions]
@@ -97,6 +97,7 @@ subjects:
     namespace: appliance-system
 ---
 # The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
+# It keeps the console accounts and the SMTP credentials there and deletes the hand-over Secret once it imported it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -105,7 +106,19 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch, create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-users]
+    verbs: [update]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-handover]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-mail]
+    verbs: [update, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -121,7 +134,8 @@ subjects:
     name: appliance-manager
     namespace: appliance-system
 ---
-# Copies of the referenced Secrets and the connector key Secrets in the platform namespace.
+# Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
+# the administrator certificate there and marks its Secret once handed out.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -188,6 +202,31 @@ spec:
         runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
+      # The hostPath behind /data is created root-owned and hostPath ignores fsGroup, so a root init container
+      # hands it to the manager's user before the manager starts.
+      initContainers:
+        - name: data-owner
+          image: docker.io/library/busybox:latest
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, "chown 65532:65532 /data && chmod 0700 /data"]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
       containers:
         - name: manager
           image: appliance.invalid/manager:release
@@ -196,6 +235,9 @@ spec:
               value: 127.0.0.1
             - name: KUBERNETES_SERVICE_PORT
               value: "7445"
+            # Below the memory limit, so that the garbage collector runs before the container is killed.
+            - name: GOMEMLIMIT
+              value: 200MiB
           ports:
             - name: https
               containerPort: 8443

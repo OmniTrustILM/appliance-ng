@@ -10,6 +10,10 @@ container:
       destination: /system/run/machined
       type: bind
       options: [rbind, rshared, rw]
+    - source: /sys/firmware/dmi/tables
+      destination: /sys/firmware/dmi/tables
+      type: bind
+      options: [rbind, ro]
   security:
     maskedPaths: []
     readonlyPaths: []

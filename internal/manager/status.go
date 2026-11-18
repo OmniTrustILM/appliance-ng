@@ -15,9 +15,21 @@ import (
 
 // Reasons of the Appliance conditions.
 const (
-	reasonReady       = "Ready"
-	reasonProgressing = "Progressing"
-	reasonFailed      = "Failed"
+	reasonReady                 = "Ready"
+	reasonProgressing           = "Progressing"
+	reasonFailed                = "Failed"
+	reasonWaitingForOperator    = "WaitingForOperator"
+	reasonWaitingForCertManager = "WaitingForCertManager"
+	reasonWaitingForNodeAddress = "WaitingForNodeAddress"
+	reasonIssuing               = "Issuing"
+)
+
+// Messages of failed conditions. Condition messages reach the first-boot status and the console, so they are fixed
+// texts; the error itself goes to the manager's log only.
+const (
+	messageAddonsFailed      = "applying the add-ons failed, retrying; the manager log has the details"
+	messagePlatformFailed    = "applying the platform failed, retrying; the manager log has the details"
+	messageCertificateFailed = "requesting the built-in certificate failed, retrying; the manager log has the details"
 )
 
 // platformAvailable is the condition operator v1.1.0 sets when the Platform serves.
@@ -46,7 +58,7 @@ func (r *ApplianceReconciler) writeStatus(ctx context.Context, a *v1alpha1.Appli
 }
 
 // platformReady reports whether the operator has observed the Platform's current generation and finds it
-// available, with the reason when it does not.
+// available, with the operator's reason when it does not; the operator's message stays out of the Appliance.
 func platformReady(p *otilm.Platform) (bool, string) {
 	if p.Status.ObservedGeneration != p.Generation {
 		return false, fmt.Sprintf("the operator has not observed generation %d of the Platform yet", p.Generation)
@@ -56,7 +68,7 @@ func platformReady(p *otilm.Platform) (bool, string) {
 	case c == nil:
 		return false, "the Platform reports no Available condition yet"
 	case c.Status != metav1.ConditionTrue:
-		return false, c.Message
+		return false, "the Platform is not available yet: " + c.Reason
 	}
 	return true, "the Platform is available"
 }

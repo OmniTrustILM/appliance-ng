@@ -27,6 +27,11 @@ import (
 )
 
 const (
+	// ManagerFieldManager is the field manager of the Appliance Manager's writes.
+	ManagerFieldManager = "appliance-manager"
+	// SystemNamespace holds the Appliance's own Secrets and the built-in certificate.
+	SystemNamespace = "appliance-system"
+
 	firstbootFieldManager = "appliance-firstboot"
 	// mappingTimeout bounds the wait for a kind that a CRD in the same call has not yet made available.
 	mappingTimeout  = 30 * time.Second

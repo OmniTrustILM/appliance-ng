@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
+	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 )
 
 // managerFile is the add-on manifest of the Appliance Manager: its namespace, CRD, RBAC and Deployment.
@@ -102,12 +105,24 @@ func defaultAppliance(hostName, ilmVersion string) ([]byte, error) {
 	})
 }
 
-// handover applies the Appliance Manager and creates the default Appliance unless one exists, which is left as it
-// is. Both are safe to repeat, so every start of the service runs them.
+// handover applies the Appliance Manager and hands the answers of wizard part 1 over to it. A node without a
+// hand-over file, set up before the wizard existed, gets the default Appliance unless one exists, which is left as
+// it is. Every step is safe to repeat, so every start of the service runs them.
 func (r *runner) handover(ctx context.Context, cluster Cluster) (bool, error) {
 	r.set(StateHandover, "", "applying the Appliance Manager")
 	if err := cluster.Apply(ctx, r.d.Manager); err != nil {
 		return false, fmt.Errorf("apply the Appliance Manager: %w", err)
+	}
+	file, err := r.handoverFile(ctx)
+	if err != nil {
+		return false, err
+	}
+	if file != nil {
+		if err := r.handOverAnswers(ctx, cluster, file); err != nil {
+			return false, err
+		}
+		r.d.Log.Info("setup handed over to the Appliance Manager")
+		return true, nil
 	}
 	r.set(StateHandover, "", "creating the default Appliance")
 	docs, err := defaultAppliance(r.d.HostName, r.d.ILMVersion)
@@ -119,6 +134,55 @@ func (r *runner) handover(ctx context.Context, cluster Cluster) (bool, error) {
 	}
 	r.d.Log.Info("setup handed over to the Appliance Manager")
 	return true, nil
+}
+
+// handoverFile returns the hand-over file from the machine configuration, or nil when there is none. Talos mounts
+// the file only into a service started after the configuration was loaded, which first-boot never is. A failure
+// is reported by its code only: reading the configuration may quote it, and it holds the hand-over.
+func (r *runner) handoverFile(ctx context.Context) ([]byte, error) {
+	data, err := r.d.Node.ExtensionConfigFile(ctx, machineconfig.HandoverService, machineconfig.HandoverPath)
+	if err != nil {
+		return nil, redacted("read the hand-over file", err)
+	}
+	return data, nil
+}
+
+// handOverAnswers creates the hand-over Secret from the hand-over file, which the Appliance Manager imports and
+// deletes before it removes the file from the configuration: once an Appliance reports the hand-over complete, the
+// Secret is not created again.
+func (r *runner) handOverAnswers(ctx context.Context, cluster Cluster, file []byte) error {
+	a, err := cluster.Appliance(ctx)
+	switch {
+	case err == nil && meta.IsStatusConditionTrue(a.Status.Conditions, v1alpha1.ConditionHandoverComplete):
+		r.d.Log.Info("the setup answers are imported already")
+		return nil
+	case err != nil && !apierrors.IsNotFound(err):
+		return err
+	}
+	r.set(StateHandover, "", "handing the setup answers over to the Appliance Manager")
+	docs, err := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"namespace": setup.HandoverSecretNamespace, "name": setup.HandoverSecretName},
+		"type":       "Opaque",
+		"data":       map[string][]byte{setup.HandoverSecretKey: file},
+	})
+	if err != nil {
+		return errors.New("encode the hand-over Secret failed")
+	}
+	// The error of a failed create may quote the Secret, so only its reason is kept.
+	if err := cluster.Create(ctx, docs); err != nil {
+		return fmt.Errorf("create the hand-over Secret failed (%s)", reason(err))
+	}
+	return nil
+}
+
+// reason returns the Kubernetes reason of err, or Unknown.
+func reason(err error) metav1.StatusReason {
+	if r := apierrors.ReasonForError(err); r != metav1.StatusReasonUnknown {
+		return r
+	}
+	return "Unknown"
 }
 
 // mirror reads the Appliance every Retry and reports its status as the setup state until ctx is done. Until the
@@ -148,9 +212,14 @@ func (r *runner) mirror(ctx context.Context, cluster Cluster) {
 // marked ready before the state says so.
 func (r *runner) mirrorPass(ctx context.Context, cluster Cluster) error {
 	a, err := cluster.Appliance(ctx)
+	if apierrors.IsNotFound(err) {
+		r.set(StateHandover, "", "waiting for the Appliance Manager to import the setup")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
+	r.s.setHostName(a.Spec.Node.HostName)
 	state, message := applianceState(a)
 	if state == StateReady && !r.marked {
 		r.set(StatePlatform, "", message)
@@ -163,9 +232,13 @@ func (r *runner) mirrorPass(ctx context.Context, cluster Cluster) error {
 	return nil
 }
 
-// applianceState maps the Appliance conditions to the setup state: the add-ons until they are ready, then the
-// platform until it is ready. A condition counts as ready only for the Appliance's current generation.
+// applianceState maps the Appliance conditions to the setup state: the hand-over while the import of the setup
+// answers is under way, the add-ons until they are ready, then the platform until it is ready. A condition counts
+// as ready only for the Appliance's current generation.
 func applianceState(a *v1alpha1.Appliance) (State, string) {
+	if c := meta.FindStatusCondition(a.Status.Conditions, v1alpha1.ConditionHandoverComplete); c != nil && c.Status != metav1.ConditionTrue {
+		return StateHandover, conditionMessage(c, a.Generation, "importing the setup answers")
+	}
 	addons := meta.FindStatusCondition(a.Status.Conditions, v1alpha1.ConditionAddonsReady)
 	if !currentlyTrue(addons, a.Generation) {
 		return StateAddons, conditionMessage(addons, a.Generation, "waiting for the Appliance Manager")

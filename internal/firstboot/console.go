@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -16,13 +17,21 @@ func consoleLine(version, hostName, nodeIP string, state State) string {
 	return fmt.Sprintf("ILM appliance %s: https://%s (node %s), state %s\n", version, hostName, nodeIP, state)
 }
 
-// runConsole writes the console line every interval and on each state change until ctx is done.
-func runConsole(ctx context.Context, w io.Writer, log *slog.Logger, version, hostName string, interval time.Duration, s *StatusStore) {
+// runConsole writes the console line, or the lines set for the current state, every interval and on each change
+// until ctx is done. The line shows the host name of the Appliance once it is known, defaultHostName until then.
+func runConsole(ctx context.Context, w io.Writer, log *slog.Logger, version, defaultHostName string, interval time.Duration, s *StatusStore) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		state, ip := s.consoleView()
-		if _, err := io.WriteString(w, consoleLine(version, hostName, ip, state)); err != nil {
+		state, ip, hostName, lines := s.consoleView()
+		if hostName == "" {
+			hostName = defaultHostName
+		}
+		text := consoleLine(version, hostName, ip, state)
+		if lines != nil {
+			text = strings.Join(lines, "\n") + "\n"
+		}
+		if _, err := io.WriteString(w, text); err != nil {
 			log.Debug("console write failed", "error", err)
 		}
 		select {

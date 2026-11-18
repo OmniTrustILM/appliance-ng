@@ -208,6 +208,32 @@ func TestApplyNoRebootReportsAnEncodeFailureWhileNamingTheChange(t *testing.T) {
 	}
 }
 
+func TestExtensionConfigFile(t *testing.T) {
+	n := dialConfigured(t, &fakeMachine{})
+	for _, tc := range []struct{ name, file, want string }{
+		{"firstboot", "/etc/firstboot/setup", "code"},
+		{"other", "/etc/firstboot/setup", "other"},
+		{"firstboot", "/etc/firstboot/gone", ""},
+		{"missing", "/etc/firstboot/setup", ""},
+	} {
+		got, err := n.ExtensionConfigFile(context.Background(), tc.name, tc.file)
+		if err != nil {
+			t.Fatalf("ExtensionConfigFile(%s, %s): %v", tc.name, tc.file, err)
+		}
+		if string(got) != tc.want || (tc.want == "" && got != nil) {
+			t.Errorf("ExtensionConfigFile(%s, %s) = %q, want %q", tc.name, tc.file, got, tc.want)
+		}
+	}
+}
+
+func TestExtensionConfigFileWithoutRunningConfiguration(t *testing.T) {
+	n := dialFake(t, &fakeMachine{})
+	n.st = failingState{newState(t)}
+	if _, err := n.ExtensionConfigFile(context.Background(), "firstboot", "/etc/firstboot/setup"); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestRemoveExtensionConfigDropsOnlyThatFile(t *testing.T) {
 	fake := &fakeMachine{}
 	if err := dialConfigured(t, fake).RemoveExtensionConfig(context.Background(), "firstboot", "/etc/firstboot/setup"); err != nil {

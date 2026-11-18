@@ -2,19 +2,15 @@ package console
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 )
 
 const (
@@ -23,29 +19,32 @@ const (
 	shutdownTimeout = 5 * time.Second
 )
 
-// NewServer returns the HTTPS server of the console for the address listen, with a self-signed certificate.
-func NewServer(log *slog.Logger, listen string) (*http.Server, error) {
-	cert, err := selfSignedCertificate(log)
-	if err != nil {
-		return nil, err
-	}
+// NewServer returns the HTTPS server of the console for the address listen; it serves handler with the
+// certificate cert.
+func NewServer(log *slog.Logger, listen string, handler http.Handler, cert *Certificate) *http.Server {
 	return &http.Server{
 		Addr:              listen,
-		Handler:           routes(),
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		Handler:           handler,
+		TLSConfig:         &tls.Config{GetCertificate: cert.GetCertificate, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
-	}, nil
+	}
 }
 
-func routes() http.Handler {
+// Routes serves the health check, api under /api/ and the console everywhere else. Wizard part 1 is over once
+// the manager serves, so its pages send the browser to sign-in.
+func Routes(api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	toSignIn := http.RedirectHandler("/signin", http.StatusFound)
+	mux.Handle("/setup", toSignIn)
+	mux.Handle("/setup/", toSignIn)
+	mux.Handle("/api/", api)
 	mux.Handle("/", Handler(Files()))
 	return mux
 }
@@ -82,32 +81,17 @@ func serve(ctx context.Context, log *slog.Logger, srv *http.Server, ln net.Liste
 // selfSignedCertificate makes an ECDSA P-256 certificate, kept in memory only, for localhost and the host's
 // global unicast IPv4 addresses (the pod runs in the host network).
 func selfSignedCertificate(log *slog.Logger) (tls.Certificate, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate the console key: %w", err)
+	hosts := []string{"localhost", "127.0.0.1"}
+	for _, ip := range hostAddresses() {
+		hosts = append(hosts, ip.String())
 	}
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("generate the certificate serial: %w", err)
-	}
-	ips := append([]net.IP{net.IPv4(127, 0, 0, 1)}, hostAddresses()...)
 	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "ILM Appliance"},
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  ips,
-		NotBefore:    now.Add(-time.Hour),
-		NotAfter:     now.Add(certValidity),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	cert, err := certs.SelfSigned("ILM Appliance", hosts, now.Add(-time.Hour), now.Add(certValidity))
 	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("create the console certificate: %w", err)
+		return tls.Certificate{}, fmt.Errorf("console certificate: %w", err)
 	}
-	log.Info("console certificate created", "addresses", ips, "notAfter", template.NotAfter)
-	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+	log.Info("console certificate created", "hosts", hosts, "notAfter", now.Add(certValidity))
+	return cert, nil
 }
 
 // hostAddresses returns the distinct global unicast IPv4 addresses of the host's interfaces; link-local ones are

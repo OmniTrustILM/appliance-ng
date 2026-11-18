@@ -2,3 +2,7 @@ out/
 coverage.out
 docs/superpowers/
 .superpowers/
+web/node_modules/
+web/coverage/
+# The console build; web/dist/index.html is the tracked placeholder for Go builds without it.
+web/dist/app/

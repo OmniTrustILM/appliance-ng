@@ -13,6 +13,7 @@ type State string
 // Setup phases in the order a fresh appliance passes through them.
 const (
 	StateWaitingForAddress State = "waiting-for-address"
+	StateSetup             State = "setup"
 	StateConfiguring       State = "configuring"
 	StateInstalling        State = "installing"
 	StateBootstrapping     State = "bootstrapping"
@@ -30,12 +31,18 @@ type Status struct {
 	Since   time.Time `json:"since"`
 }
 
-// StatusStore holds the current status and the node address shown on the console.
+// StatusStore holds the current status and what the console shows. The console lines may carry the setup code,
+// so they are never part of the status.
 type StatusStore struct {
 	mu      sync.Mutex
 	status  Status
 	nodeIP  string
+	lines   []string
+	linesIn State
 	changed chan struct{}
+
+	// hostName is the host name of the Appliance once it is read; until then the console shows the default.
+	hostName string
 }
 
 // NewStatusStore returns an empty store.
@@ -61,12 +68,25 @@ func (s *StatusStore) set(state State, step, message string) (moved, messageChan
 	}
 	s.status.State, s.status.Step, s.status.Message = state, step, message
 	if moved {
-		select {
-		case s.changed <- struct{}{}:
-		default:
-		}
+		s.notify()
 	}
 	return moved, messageChanged
+}
+
+// notify wakes the console; the caller holds s.mu.
+func (s *StatusStore) notify() {
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
+}
+
+// setConsole makes the console show lines instead of the status line while the state is state.
+func (s *StatusStore) setConsole(state State, lines []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines, s.linesIn = lines, state
+	s.notify()
 }
 
 func (s *StatusStore) setNodeIP(ip string) {
@@ -75,10 +95,25 @@ func (s *StatusStore) setNodeIP(ip string) {
 	s.nodeIP = ip
 }
 
-func (s *StatusStore) consoleView() (State, string) {
+// setHostName records the host name of the Appliance and wakes the console when it changed.
+func (s *StatusStore) setHostName(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.status.State, s.nodeIP
+	if s.hostName != name {
+		s.hostName = name
+		s.notify()
+	}
+}
+
+// consoleView returns the state, the node address, the Appliance host name and the lines set for the current state,
+// if any.
+func (s *StatusStore) consoleView() (state State, nodeIP, hostName string, lines []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.linesIn != s.status.State {
+		return s.status.State, s.nodeIP, s.hostName, nil
+	}
+	return s.status.State, s.nodeIP, s.hostName, s.lines
 }
 
 // Handler serves GET /status and nothing else. It uses a private mux so that handlers registered on

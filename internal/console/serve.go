@@ -20,6 +20,7 @@ func Handler(fsys fs.FS) http.Handler {
 		h.Set("Content-Security-Policy", "default-src 'self'")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("X-Content-Type-Options", "nosniff")
 
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			http.NotFound(w, r)

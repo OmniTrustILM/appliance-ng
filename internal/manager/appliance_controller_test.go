@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
@@ -84,7 +85,9 @@ func run(m *testing.M) int {
 		return 1
 	}
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd"), crdDir, traefikCRDs},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "config", "crd"), crdDir, traefikCRDs, filepath.Join("..", "..", "addons", "cert-manager.yaml"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 	testConfig, err = env.Start()
@@ -115,7 +118,7 @@ func setup() error {
 	if testRelease, err = release.Load(filepath.Join("..", "..", "release.yaml")); err != nil {
 		return err
 	}
-	for _, ns := range []string{SystemNamespace, platform.Namespace} {
+	for _, ns := range []string{SystemNamespace, platform.Namespace, certs.ClusterResourceNamespace} {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
 			return err
 		}
@@ -153,13 +156,14 @@ func extractCRDs(manifest, dir string) error {
 
 // fakeCluster passes every add-on step unless unready names a wait that is not ready.
 type fakeCluster struct {
-	unready string
-	applies int
+	unready  string
+	applies  int
+	applyErr error
 }
 
 func (f *fakeCluster) Apply(context.Context, []byte) error {
 	f.applies++
-	return nil
+	return f.applyErr
 }
 
 func (f *fakeCluster) Create(context.Context, []byte) error { return nil }
@@ -280,8 +284,11 @@ func TestReconcileWaitsForAddons(t *testing.T) {
 }
 
 func TestReconcileNoPlatformUntilPart2(t *testing.T) {
-	createAppliance(t, v1alpha1.ApplianceSpec{})
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}})
 	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	issue(t)
 
 	if res := runReconcile(t, r); res.RequeueAfter != resync {
 		t.Errorf("requeue after %v, want %v to repeat the add-on pass", res.RequeueAfter, resync)
@@ -372,8 +379,8 @@ func TestReconcileMissingSecretFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ilm-tls") {
 		t.Fatalf("err = %v, want one naming the missing Secret", err)
 	}
-	if c := condition(t, getAppliance(t), v1alpha1.ConditionPlatformReady); c.Status != metav1.ConditionFalse || !strings.Contains(c.Message, "ilm-tls") {
-		t.Errorf("PlatformReady = %+v, want False naming the Secret", c)
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionPlatformReady); c.Status != metav1.ConditionFalse || c.Reason != reasonFailed || c.Message != messagePlatformFailed {
+		t.Errorf("PlatformReady = %+v, want False with the fixed failure message", c)
 	}
 
 	tls := &corev1.Secret{
@@ -461,9 +468,11 @@ func TestReconcileCopiesOnlyTheReferencedTrustKey(t *testing.T) {
 }
 
 func TestReconcileCompletesSetupOnce(t *testing.T) {
-	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec()})
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}, Platform: platformSpec()})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	runReconcile(t, r)
+	issue(t)
 
 	setAvailable(t, metav1.ConditionTrue, 0)
 	runReconcile(t, r)
@@ -489,8 +498,9 @@ func TestReconcileCompletesSetupOnce(t *testing.T) {
 	if a.Status.Setup != v1alpha1.SetupComplete {
 		t.Errorf("setup = %q, want complete to stay after a later failure", a.Status.Setup)
 	}
-	if c := condition(t, a, v1alpha1.ConditionPlatformReady); c.Status != metav1.ConditionFalse || c.Message != "database down" {
-		t.Errorf("PlatformReady = %+v, want False with the operator's message", c)
+	if c := condition(t, a, v1alpha1.ConditionPlatformReady); c.Status != metav1.ConditionFalse ||
+		!strings.Contains(c.Message, "Test") || strings.Contains(c.Message, "database down") {
+		t.Errorf("PlatformReady = %+v, want False with the operator's reason and without its message", c)
 	}
 }
 

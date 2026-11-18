@@ -36,6 +36,10 @@ const (
 // TLSSecretName is the name, in the platform namespace, of the copy of the TLS Secret the Appliance references.
 const TLSSecretName = "appliance-tls"
 
+// CoreAPIURL is the in-cluster base URL of the Core API, /api included, that operator v1.1.0 registers connectors
+// with: it renders Core as Service core on port 8080 in the Platform's namespace.
+const CoreAPIURL = "http://core." + Namespace + ".svc.cluster.local:8080/api"
+
 // TrustKey is the key of the trust Secret holding the CA bundle, the operator's default
 // for trustedCertificates.
 const TrustKey = "ca.crt"
@@ -245,6 +249,13 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, secrets Sec
 			Probes:     probes(c.HealthPath),
 			Env:        env,
 			SecretRefs: refs,
+			// The operator mounts the root file system read-only; Java connectors need a writable /tmp to start.
+			Volumes: []otilm.VolumeSpec{{Name: "tmp", MountPath: "/tmp"}},
+			Registration: &otilm.RegistrationSpec{
+				PlatformURL: CoreAPIURL,
+				Name:        c.DisplayName,
+				AuthType:    otilm.AuthTypeNone,
+			},
 		},
 	}, nil
 }

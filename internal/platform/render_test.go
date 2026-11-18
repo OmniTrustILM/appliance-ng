@@ -169,6 +169,19 @@ func TestRenderComponents(t *testing.T) {
 	if !reflect.DeepEqual(ejbca.Spec.SecretRefs, want) {
 		t.Errorf("ejbca secretRefs %+v", ejbca.Spec.SecretRefs)
 	}
+	for _, c := range []struct {
+		connector otilm.Connector
+		name      string
+	}{{x509, "X.509 Compliance Provider"}, {ejbca, "EJBCA NG Connector"}} {
+		want := &otilm.RegistrationSpec{PlatformURL: "http://core.ilm.svc.cluster.local:8080/api", Name: c.name, AuthType: otilm.AuthTypeNone}
+		if !reflect.DeepEqual(c.connector.Spec.Registration, want) {
+			t.Errorf("%s registration %+v, want %+v", c.connector.Name, c.connector.Spec.Registration, want)
+		}
+		// The operator mounts the root file system read-only, so the connector writes temporary files to a volume.
+		if want := []otilm.VolumeSpec{{Name: "tmp", MountPath: "/tmp"}}; !reflect.DeepEqual(c.connector.Spec.Volumes, want) {
+			t.Errorf("%s volumes %+v, want %+v", c.connector.Name, c.connector.Spec.Volumes, want)
+		}
+	}
 }
 
 func TestRenderConnectorSettings(t *testing.T) {

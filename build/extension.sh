@@ -8,6 +8,10 @@ ctx="$OUT/extension"
 rm -rf "$ctx"
 mkdir -p "$ctx"
 
+# The binary embeds web/dist/app for wizard part 1, so the console is built first.
+log "building the console"
+(cd web && npm ci && npm run build)
+
 log "building firstboot $VERSION for $ARCH, installer $INSTALLER_REF, manager $MANAGER_REF"
 CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath \
   -ldflags "-s -w -X main.version=$VERSION -X main.installerImage=$INSTALLER_REF -X main.managerImage=$MANAGER_REF" \

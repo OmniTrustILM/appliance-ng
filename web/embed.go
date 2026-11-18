@@ -1,9 +1,9 @@
-// Package web holds the built web console.
+// Package web holds the web console.
 package web
 
 import "embed"
 
-// Dist is the built console; its files are under dist/.
+// Dist holds dist/index.html, a placeholder page, and the console build in dist/app when it was built.
 //
-//go:embed dist
+//go:embed all:dist
 var Dist embed.FS

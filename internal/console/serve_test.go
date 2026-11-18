@@ -50,6 +50,7 @@ func TestConsoleSecurityHeaders(t *testing.T) {
 		for header, want := range map[string]string{
 			"Content-Security-Policy": "default-src 'self'",
 			"X-Frame-Options":         "DENY",
+			"X-Content-Type-Options":  "nosniff",
 			"Referrer-Policy":         "no-referrer",
 		} {
 			if got := res.Header.Get(header); got != want {
@@ -78,5 +79,19 @@ func TestConsoleFilesHoldTheIndex(t *testing.T) {
 func TestConsoleWithoutIndexFails(t *testing.T) {
 	if res := get(t, Handler(fstest.MapFS{}), "/"); res.StatusCode != http.StatusInternalServerError {
 		t.Errorf("GET / = %d, want 500 without index.html", res.StatusCode)
+	}
+}
+
+func TestConsoleFilesPreferTheBuild(t *testing.T) {
+	built := fstest.MapFS{
+		"dist/index.html":     {Data: []byte("placeholder")},
+		"dist/app/index.html": {Data: []byte("built")},
+	}
+	if got := body(t, get(t, Handler(files(built)), "/")); got != "built" {
+		t.Errorf("GET / = %q, want the built console", got)
+	}
+	placeholder := fstest.MapFS{"dist/index.html": {Data: []byte("placeholder")}}
+	if got := body(t, get(t, Handler(files(placeholder)), "/")); got != "placeholder" {
+		t.Errorf("GET / = %q, want the placeholder without a build", got)
 	}
 }

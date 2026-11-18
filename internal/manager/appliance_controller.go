@@ -37,15 +37,16 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/addons"
+	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 const (
-	fieldManager = "appliance-manager"
+	fieldManager = kube.ManagerFieldManager
 	// SystemNamespace holds the Appliance's own Secrets, which the spec references by name.
-	SystemNamespace = "appliance-system"
+	SystemNamespace = kube.SystemNamespace
 	// addonsRequeue is how often a pass is repeated while an add-on is not ready; add-on objects are not watched.
 	addonsRequeue = 10 * time.Second
 	// resync is how often the add-on pass is repeated once everything is ready, because add-on objects are not
@@ -180,19 +181,20 @@ func (r *ApplianceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Appliance) (ctrl.Result, error) {
 	progress, err := r.addonsProgress(ctx, a)
 	if err != nil {
-		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, err.Error())
+		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, messageAddonsFailed)
 		return ctrl.Result{}, err
 	}
+	certificate := r.reconcileCertificate(ctx, a, progress)
 	if !progress.Done {
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonProgressing, progress.Step+": "+progress.Message)
 		return ctrl.Result{RequeueAfter: addonsRequeue}, nil
 	}
 	setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionTrue, reasonReady, "all add-ons are ready")
 	if a.Spec.Platform == nil {
-		return ctrl.Result{RequeueAfter: resync}, nil
+		return requeue(certificate), nil
 	}
 	if err := r.watchOperator(ctx); err != nil {
-		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonFailed, err.Error())
+		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonWaitingForOperator, "waiting for the ILM operator to serve its kinds")
 		return ctrl.Result{}, err
 	}
 
@@ -201,18 +203,26 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 	ready, message, err := r.reconcilePlatform(ctx, a)
 	switch {
 	case err != nil:
-		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonFailed, err.Error())
+		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonFailed, messagePlatformFailed)
 		return ctrl.Result{}, err
 	case !ready:
 		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonProgressing, message)
-		return ctrl.Result{RequeueAfter: resync}, nil
+		return requeue(certificate), nil
 	}
 	setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionTrue, reasonReady, message)
 	if a.Status.Setup == v1alpha1.SetupPart2 {
 		a.Status.Setup = v1alpha1.SetupComplete
 		log.FromContext(ctx).Info("setup complete")
 	}
-	return ctrl.Result{RequeueAfter: resync}, nil
+	return requeue(certificate), nil
+}
+
+// requeue repeats the add-on pass after resync, or sooner when the certificate asks for it.
+func requeue(certificate time.Duration) ctrl.Result {
+	if certificate > 0 && certificate < resync {
+		return ctrl.Result{RequeueAfter: certificate}
+	}
+	return ctrl.Result{RequeueAfter: resync}
 }
 
 // addonsProgress runs the full add-on pass, which applies every step, on the first reconcile, when the
@@ -295,14 +305,13 @@ func (r *ApplianceReconciler) deleteRemovedConnectors(ctx context.Context, a *v1
 
 // copySecrets copies the certificate and key of the TLS Secret, the referenced key of the trust Secret and the
 // registry credentials the spec references into the platform namespace, and returns the names of the copies.
-// Built-in TLS has no Secret.
 func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appliance) (platform.SecretNames, error) {
 	var names platform.SecretNames
-	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
-		src, err := r.systemSecret(ctx, a.Spec.TLS.SecretRef)
-		if err != nil {
-			return names, err
-		}
+	src, err := r.tlsSecret(ctx, a)
+	if err != nil {
+		return names, err
+	}
+	if src != nil {
 		if src.Type != corev1.SecretTypeTLS {
 			return names, fmt.Errorf("secret %s/%s has type %q, want %s", SystemNamespace, src.Name, src.Type, corev1.SecretTypeTLS)
 		}
@@ -332,6 +341,25 @@ func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appli
 	}
 	names.PullSecret = pull
 	return names, nil
+}
+
+// tlsSecret returns the Secret the spec references for TLS, or the built-in certificate's Secret once cert-manager
+// issued it; nil means the built-in certificate is not issued yet.
+func (r *ApplianceReconciler) tlsSecret(ctx context.Context, a *v1alpha1.Appliance) (*corev1.Secret, error) {
+	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
+		return r.systemSecret(ctx, a.Spec.TLS.SecretRef)
+	}
+	s := &corev1.Secret{}
+	err := r.Client.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: certs.SecretName}, s)
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("read secret %s/%s: %w", certs.Namespace, certs.SecretName, err)
+	case len(s.Data[corev1.TLSCertKey]) == 0 || len(s.Data[corev1.TLSPrivateKeyKey]) == 0:
+		return nil, nil
+	}
+	return s, nil
 }
 
 // dockerAuth is an entry of the auths of a dockerconfigjson Secret.
