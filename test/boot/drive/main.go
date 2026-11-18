@@ -61,7 +61,7 @@ const (
 
 // slirpNodeAddress is the address QEMU's user network gives the node, which the certificate of the first-boot
 // service is issued for.
-const slirpNodeAddress = "10.0.2.15"
+const slirpNodeAddress = "10.0.2.15" // NOSONAR: fixed by QEMU's user network, used only by the boot test
 
 func main() {
 	if len(os.Args) < 2 {
