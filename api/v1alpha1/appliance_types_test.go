@@ -156,3 +156,35 @@ func TestApplianceStatusSubresource(t *testing.T) {
 	a.Status.Setup = "bogus"
 	wantInvalid(t, testClient.Status().Update(context.Background(), a))
 }
+
+func TestApplianceNetworkFormat(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   func(*v1alpha1.Appliance)
+		valid bool
+	}{
+		{"default first boot", func(*v1alpha1.Appliance) {}, true},
+		{"IPv4 CIDR", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "10.0.2.15/24" }, true},
+		{"address without prefix", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "10.0.2.15" }, false},
+		{"address octet out of range", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "10.0.2.300/24" }, false},
+		{"IPv6 address", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "fd00::1/64" }, false},
+		{"IPv4 gateway", func(a *v1alpha1.Appliance) { a.Spec.Node.Gateway = "10.0.2.2" }, true},
+		{"gateway not an IP", func(a *v1alpha1.Appliance) { a.Spec.Node.Gateway = "gw" }, false},
+		{"DNS IP", func(a *v1alpha1.Appliance) { a.Spec.DNS.Servers = []string{"1.1.1.1"} }, true},
+		{"DNS host name", func(a *v1alpha1.Appliance) { a.Spec.DNS.Servers = []string{"dns.example"} }, false},
+		{"NTP host name", func(a *v1alpha1.Appliance) { a.Spec.NTP.Servers = []string{"pool.ntp.org"} }, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			c.set(a)
+			err := create(t, a)
+			if c.valid && err != nil {
+				t.Fatalf("want accepted, got %v", err)
+			}
+			if !c.valid {
+				wantInvalid(t, err)
+			}
+		})
+	}
+}

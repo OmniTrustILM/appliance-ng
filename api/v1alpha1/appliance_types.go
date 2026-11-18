@@ -67,14 +67,21 @@ type NodeSpec struct {
 	HostName string `json:"hostName"`
 	// Address is the node address in CIDR notation; empty means DHCP.
 	// +optional
+	// +kubebuilder:validation:MaxLength=49
+	// +kubebuilder:validation:XValidation:rule="self == '' || (isCIDR(self) && cidr(self).ip().family() == 4)",message="node.address must be empty or an IPv4 CIDR"
 	Address string `json:"address,omitempty"`
 	// +optional
+	// +kubebuilder:validation:MaxLength=45
+	// +kubebuilder:validation:XValidation:rule="self == '' || (isIP(self) && ip(self).family() == 4)",message="node.gateway must be empty or an IPv4 address"
 	Gateway string `json:"gateway,omitempty"`
 }
 
 // DNSSpec lists the DNS servers.
 type DNSSpec struct {
 	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=45
+	// +kubebuilder:validation:items:XValidation:rule="isIP(self)",message="dns.servers entries must be IP addresses"
 	Servers []string `json:"servers,omitempty"`
 }
 
