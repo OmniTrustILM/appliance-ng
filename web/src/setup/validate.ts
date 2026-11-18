@@ -1,10 +1,13 @@
 const label = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
 const userName = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 
-/** Shows a setup code as the appliance prints it: upper case, in two groups of five. */
+/**
+ * Shows a setup code as the appliance prints it: ASCII letters in upper case, in groups of five. Like the appliance,
+ * it drops only hyphens and spaces and keeps every other character, so a longer preset code can be entered too.
+ */
 export function normaliseCode(input: string): string {
-  const characters = input.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
-  return characters.length > 5 ? `${characters.slice(0, 5)}-${characters.slice(5)}` : characters;
+  const characters = input.replace(/[- ]/g, '').replace(/[a-z]/g, (letter) => letter.toUpperCase());
+  return characters.match(/.{1,5}/gu)?.join('-') ?? '';
 }
 
 /** Splits a list typed with commas, spaces or new lines. */

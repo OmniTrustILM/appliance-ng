@@ -47,4 +47,31 @@ describe('SignOutButton', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
     expect(await screen.findByText('sign-in page')).toBeInTheDocument();
   });
+
+  it.each([
+    ['refuses', () => [403, { code: 'csrf', message: 'x' }] as const, 'refused'],
+    ['fails', () => [500, { code: 'internal', message: 'x' }] as const, 'could not process'],
+  ])('keeps the session and offers a retry when the appliance %s', async (_, reply, message) => {
+    let deletes = 0;
+    stubApi({
+      'GET /api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
+      'DELETE /api/v1/session': () => (++deletes === 1 ? reply() : [204]),
+    });
+    renderButton();
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.queryByText('sign-in page')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByText('sign-in page')).toBeInTheDocument();
+  });
+
+  it('keeps the session when the appliance cannot be reached', async () => {
+    const { mock } = stubApi({ 'GET /api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }] });
+    renderButton();
+    const button = await screen.findByRole('button', { name: 'Sign out' });
+    mock.mockRejectedValueOnce(new TypeError('network'));
+    await userEvent.click(button);
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
+    expect(screen.queryByText('sign-in page')).not.toBeInTheDocument();
+  });
 });

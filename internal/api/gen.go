@@ -144,6 +144,21 @@ func (e StatusSetup) Valid() bool {
 	}
 }
 
+// Defines values for GetStatusParamsXBackgroundRefresh.
+const (
+	N1 GetStatusParamsXBackgroundRefresh = "1"
+)
+
+// Valid indicates whether the value is a known member of the GetStatusParamsXBackgroundRefresh enum.
+func (e GetStatusParamsXBackgroundRefresh) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
 // AdminCredentialRequest defines model for AdminCredentialRequest.
 type AdminCredentialRequest struct {
 	// Password The password that encrypts the PKCS#12 file. Like a console password, it has at least 12 characters, is not one of the most common passwords and does not contain the user name.
@@ -384,6 +399,15 @@ type GetAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetStatusParams defines parameters for GetStatus.
+type GetStatusParams struct {
+	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
+	XBackgroundRefresh *GetStatusParamsXBackgroundRefresh `json:"X-Background-Refresh,omitempty"`
+}
+
+// GetStatusParamsXBackgroundRefresh defines parameters for GetStatus.
+type GetStatusParamsXBackgroundRefresh string
+
 // PostPlatformAdminCredentialJSONRequestBody defines body for PostPlatformAdminCredential for application/json ContentType.
 type PostPlatformAdminCredentialJSONRequestBody = AdminCredentialRequest
 
@@ -421,7 +445,7 @@ type ServerInterface interface {
 	PostSession(w http.ResponseWriter, r *http.Request)
 	// GetStatus The state of the appliance
 	// (GET /api/v1/status)
-	GetStatus(w http.ResponseWriter, r *http.Request)
+	GetStatus(w http.ResponseWriter, r *http.Request, params GetStatusParams)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
 	// (PUT /api/v1/wizard/platform)
 	PutWizardPlatform(w http.ResponseWriter, r *http.Request)
@@ -570,8 +594,35 @@ func (siw *ServerInterfaceWrapper) PostSession(w http.ResponseWriter, r *http.Re
 // GetStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetStatus(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetStatusParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Background-Refresh" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Background-Refresh")]; found {
+		var XBackgroundRefresh GetStatusParamsXBackgroundRefresh
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Background-Refresh", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Background-Refresh", valueList[0], &XBackgroundRefresh, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Background-Refresh", Err: err})
+			return
+		}
+
+		params.XBackgroundRefresh = &XBackgroundRefresh
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetStatus(w, r)
+		siw.Handler.GetStatus(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1167,6 +1218,7 @@ func (response PostSession401JSONResponse) VisitPostSessionResponse(w http.Respo
 }
 
 type GetStatusRequestObject struct {
+	Params GetStatusParams
 }
 
 type GetStatusResponseObject interface {
@@ -1555,8 +1607,10 @@ func (sh *strictHandler) PostSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetStatus operation middleware
-func (sh *strictHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) GetStatus(w http.ResponseWriter, r *http.Request, params GetStatusParams) {
 	var request GetStatusRequestObject
+
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetStatus(ctx, request.(GetStatusRequestObject))

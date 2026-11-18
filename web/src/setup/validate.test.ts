@@ -6,7 +6,17 @@ describe('normaliseCode', () => {
     expect(normaliseCode('abcde fghjk')).toBe('ABCDE-FGHJK');
     expect(normaliseCode('abc')).toBe('ABC');
     expect(normaliseCode('abcdef')).toBe('ABCDE-F');
-    expect(normaliseCode('ABCDE-FGHJK-LMN')).toBe('ABCDE-FGHJK');
+    expect(normaliseCode('ABCDE-')).toBe('ABCDE');
+  });
+
+  it('keeps a longer preset code whole', () => {
+    const preset = 'abcdefghjkmnpqrstuvwxyz234567892';
+    expect(normaliseCode(preset)).toBe('ABCDE-FGHJK-MNPQR-STUVW-XYZ23-45678-92');
+    expect(normaliseCode(normaliseCode(preset)).replaceAll('-', '')).toBe(preset.toUpperCase());
+  });
+
+  it('upper-cases ASCII letters only and keeps other characters, as the appliance does', () => {
+    expect(normaliseCode('ab_cd.éß')).toBe('AB_CD-.éß');
   });
 });
 

@@ -19,7 +19,10 @@ export function useStatus(intervalMs = 5000) {
     async function poll() {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), readTimeoutMs);
-      const result = await attempt(() => api.GET('/api/v1/status', { signal: controller.signal }));
+      // Marked as a background refresh, the poll does not keep an unattended session from going idle.
+      const result = await attempt(() =>
+        api.GET('/api/v1/status', { params: { header: { 'X-Background-Refresh': '1' } }, signal: controller.signal }),
+      );
       clearTimeout(timeout);
       if (!active) return;
       setStatus((last) => result?.data ?? last);

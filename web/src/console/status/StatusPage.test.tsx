@@ -38,6 +38,13 @@ describe('StatusPage', () => {
     expect(screen.getByRole('link', { name: /administrator credential/i })).toHaveAttribute('href', '/wizard/done');
   });
 
+  it('marks its reads as background refreshes, which do not keep the session alive', async () => {
+    const { mock } = stubApi({ 'GET /api/v1/status': [200, status] });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(mock.mock.calls[0][0].headers.get('X-Background-Refresh')).toBe('1');
+  });
+
   it('points to the wizard while setup is open', async () => {
     stubApi({ 'GET /api/v1/status': [200, { ...status, setup: 'part2', addonStep: undefined, rebootRequired: false }] });
     renderPage();

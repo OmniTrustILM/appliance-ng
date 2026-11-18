@@ -18,6 +18,9 @@ const (
 	IdleTimeout = 30 * time.Minute
 	// AbsoluteTimeout ends a session this long after sign-in.
 	AbsoluteTimeout = 8 * time.Hour
+	// BackgroundRefreshHeader set to 1 marks a request the console makes on its own, such as status polling. It does
+	// not count as activity, so an open page alone does not keep the session from going idle.
+	BackgroundRefreshHeader = "X-Background-Refresh"
 
 	tokenBytes = 32
 )
@@ -114,8 +117,8 @@ func (s *Sessions) Active() int {
 	return n
 }
 
-// Lookup finds the live session of the request's cookie, marks it seen and
-// returns its user and CSRF token.
+// Lookup finds the live session of the request's cookie, marks it seen unless
+// the request is a background refresh and returns its user and CSRF token.
 func (s *Sessions) Lookup(r *http.Request) (user, csrf string, ok bool) {
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil {
@@ -134,7 +137,9 @@ func (s *Sessions) Lookup(r *http.Request) (user, csrf string, ok bool) {
 		delete(s.sessions, key)
 		return "", "", false
 	}
-	sess.lastSeen = now
+	if r.Header.Get(BackgroundRefreshHeader) != "1" {
+		sess.lastSeen = now
+	}
 	return sess.user, sess.csrf, true
 }
 

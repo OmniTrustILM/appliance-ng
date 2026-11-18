@@ -106,6 +106,28 @@ func TestSessionIdleAndAbsoluteTimeout(t *testing.T) {
 		}
 	})
 
+	t.Run("background refresh", func(t *testing.T) {
+		token, _ := s.Create("admin")
+		poll := func() int {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+			req.Header.Set(BackgroundRefreshHeader, "1")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			return rec.Code
+		}
+		for range 6 {
+			clock.advance(5 * time.Minute)
+			if code := poll(); code != http.StatusOK {
+				t.Fatalf("a background refresh within the idle timeout = %d, want 200", code)
+			}
+		}
+		clock.advance(time.Second)
+		if code := poll(); code != http.StatusUnauthorized {
+			t.Fatalf("a background refresh 30 min after sign-in with no other request = %d, want 401", code)
+		}
+	})
+
 	t.Run("absolute", func(t *testing.T) {
 		token, _ := s.Create("admin")
 		for elapsed := time.Duration(0); elapsed < 8*time.Hour-20*time.Minute; elapsed += 20 * time.Minute {

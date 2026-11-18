@@ -29,24 +29,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     navigateRef.current = navigate;
   }, [navigate]);
 
+  // Counts the changes of the session, so that the initial lookup does not undo a sign-in or sign-out made while it
+  // was pending.
+  const changes = useRef(0);
+
   const signIn = useCallback((user: string, csrfToken: string) => {
+    changes.current++;
     setCsrfToken(csrfToken);
     setSession({ state: 'signedIn', user });
   }, []);
   const signOut = useCallback(() => {
+    changes.current++;
     setCsrfToken(undefined);
     setSession({ state: 'signedOut' });
   }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      changes.current++;
       setCsrfToken(undefined);
       setSession({ state: 'signedOut' });
       void navigateRef.current('/signin');
     });
     let active = true;
+    const before = changes.current;
     void attempt(() => api.GET('/api/v1/session')).then((result) => {
-      if (!active) return;
+      if (!active || changes.current !== before) return;
       const data = result?.data;
       setCsrfToken(data?.csrfToken);
       setSession(data ? { state: 'signedIn', user: data.user } : { state: 'signedOut' });
