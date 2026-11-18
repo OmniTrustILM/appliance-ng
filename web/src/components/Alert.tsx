@@ -16,11 +16,12 @@ const tones = {
   success: { box: 'border-success/35 bg-success-surface text-success', icon: 'bg-success' },
 };
 
-/** A tinted message box; errors are announced as alerts, the rest as status. */
+/** A tinted message box; errors are announced as alerts, the rest as status output. */
 export function Alert({ tone, title, busy = false, children }: AlertProps) {
+  const Box = tone === 'error' ? 'div' : 'output';
   return (
-    <div
-      role={tone === 'error' ? 'alert' : 'status'}
+    <Box
+      role={tone === 'error' ? 'alert' : undefined}
       className={cx('mb-[18px] flex gap-2.5 rounded-md border px-3.5 py-3 text-sm', tones[tone].box)}
     >
       <span
@@ -32,10 +33,10 @@ export function Alert({ tone, title, busy = false, children }: AlertProps) {
       >
         {busy ? <Spinner /> : '!'}
       </span>
-      <div className="text-content">
+      <span className="block text-content">
         {title && <strong className="block">{title}</strong>}
         {children}
-      </div>
-    </div>
+      </span>
+    </Box>
   );
 }

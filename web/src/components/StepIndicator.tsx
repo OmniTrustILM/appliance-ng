@@ -1,7 +1,5 @@
 import { cx } from './cx';
 
-const BAR_WIDTHS = ['w-1/6', 'w-2/6', 'w-3/6', 'w-4/6', 'w-5/6', 'w-full'];
-
 const DOT =
   'before:relative before:z-[1] before:grid before:size-7 before:place-items-center before:rounded-full before:border-2 before:text-[13px] before:font-semibold before:[counter-increment:s]';
 const LINE =
@@ -24,7 +22,6 @@ function stepState(index: number, current: number) {
 /** Shows the steps of a wizard; current is the index of the step in progress. */
 export function StepIndicator({ steps, current }: Readonly<{ steps: string[]; current: number }>) {
   const known = current >= 0;
-  const width = BAR_WIDTHS[Math.max(1, Math.round(((current + 1) / steps.length) * 6)) - 1];
   return (
     <>
       {known && (
@@ -35,16 +32,12 @@ export function StepIndicator({ steps, current }: Readonly<{ steps: string[]; cu
             </span>
             <strong className="font-semibold text-content">{steps[current]}</strong>
           </div>
-          <div
-            role="progressbar"
+          <progress
             aria-label="Progress"
-            aria-valuemin={1}
-            aria-valuemax={steps.length}
-            aria-valuenow={current + 1}
-            className="h-1.5 overflow-hidden rounded-full bg-divider"
-          >
-            <span className={cx('block h-full rounded-full bg-brand', width)} />
-          </div>
+            value={current + 1}
+            max={steps.length}
+            className="block h-1.5 w-full appearance-none overflow-hidden rounded-full bg-divider [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-divider [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-brand"
+          />
         </div>
       )}
       <ol className="mb-6 hidden p-0 [counter-reset:s] sm:flex">

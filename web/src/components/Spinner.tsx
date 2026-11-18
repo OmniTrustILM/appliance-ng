@@ -19,9 +19,9 @@ export function Spinner({ size = 'sm', onBrand = false }: SpinnerProps) {
 /** A centred loading indicator announced to assistive technology. */
 export function Loading() {
   return (
-    <div role="status" className="flex items-center justify-center gap-3 py-8 text-content-muted">
+    <output className="flex items-center justify-center gap-3 py-8 text-content-muted">
       <Spinner size="lg" />
       <span>Loading…</span>
-    </div>
+    </output>
   );
 }

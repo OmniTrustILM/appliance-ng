@@ -64,7 +64,7 @@ export function Layout({ variant, children }: Readonly<LayoutProps>) {
           {children}
         </main>
         <footer className="p-4 text-center text-xs text-content-subtle">
-          ILM Appliance ·
+          ILM Appliance ·{' '}
           <img src={otColor} alt="OmniTrust" className="ml-1 inline h-3.5 align-[-2px] dark:hidden" />
           <img src={otWhite} alt="OmniTrust" className="ml-1 hidden h-3.5 align-[-2px] dark:inline" />
         </footer>

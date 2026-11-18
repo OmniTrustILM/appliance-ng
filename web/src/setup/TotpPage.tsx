@@ -67,7 +67,7 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
         />
         <div className={enrolment ? 'grid items-start gap-6 sm:grid-cols-[200px_1fr]' : undefined}>
           {enrolment && <QrCode value={enrolment.otpauthUrl} label="QR code of the authenticator secret" />}
-          <div>
+          <div className="min-w-0">
             <ol className="mb-4 list-decimal space-y-1 pl-5 text-sm text-content-muted">
               <li>Open your authenticator app and add an account.</li>
               <li>Scan the code, or type the secret below.</li>

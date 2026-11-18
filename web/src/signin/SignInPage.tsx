@@ -56,7 +56,7 @@ export function SignInPage() {
   }
 
   return (
-    <div className="w-full max-w-[400px]">
+    <div className="w-full min-w-0 max-w-[400px]">
       <Card>
         <form onSubmit={submit} noValidate>
           <img src={ilmColor} alt="ILM" className="mb-5 h-8 dark:hidden" />

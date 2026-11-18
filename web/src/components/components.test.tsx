@@ -90,7 +90,9 @@ describe('StepIndicator', () => {
   it('shows the compact step', () => {
     render(<StepIndicator steps={['Code', 'Administrator', 'Network']} current={1} />);
     expect(screen.getByText('Step 2 of 3')).toBeInTheDocument();
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
+    const bar = screen.getByRole('progressbar', { name: 'Progress' });
+    expect(bar).toHaveAttribute('value', '2');
+    expect(bar).toHaveAttribute('max', '3');
   });
 
   it('renders no compact row when the step is unknown', () => {
