@@ -114,7 +114,8 @@ preset_hidden() {
 }
 
 drive_wizard() { # drive_wizard <part1|part2|check>
-  local args=(--url "$CONSOLE_URL" --user "$ADMIN" --password "$password" --seed-file "$seed_file")
+  local args=(--url "$CONSOLE_URL" --user "$ADMIN" --password "$password" --seed-file "$seed_file"
+    --insecure-skip-tls-verify) # the setup certificate is self-signed
   case "$1" in
     # QEMU's user network with restrict=on offers no router or DNS server by DHCP.
     part1) args+=(--code "$code" --host-name "$UI_HOST" --gateway 10.0.2.2 --dns 10.0.2.3) ;;

@@ -49,7 +49,7 @@ func TestServesBuiltinCertificateWithoutTLS(t *testing.T) {
 		_, _ = w.Write([]byte("-----BEGIN CERTIFICATE-----\nMA==\n-----END CERTIFICATE-----\n"))
 	}))
 	defer srv.Close()
-	err := newClient(srv.URL).servesBuiltinCertificate(context.Background())
+	err := newClient(srv.URL, true).servesBuiltinCertificate(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "no certificate") {
 		t.Errorf("servesBuiltinCertificate over plain HTTP = %v, want an error naming the missing certificate", err)
 	}
@@ -78,5 +78,16 @@ func TestConnectorRegistered(t *testing.T) {
 		if (err == nil) != tc.want {
 			t.Errorf("%s: connectorRegistered = %v, want registered %v", name, err, tc.want)
 		}
+	}
+}
+
+func TestValidateRequiresExplicitTLSTrust(t *testing.T) {
+	o := options{user: "u", password: "p", seedFile: "s", hostName: "h"}
+	if err := o.validate("part2"); err == nil || !strings.Contains(err.Error(), "--insecure-skip-tls-verify") {
+		t.Errorf("validate without the flag = %v, want an error naming it", err)
+	}
+	o.insecureSkipVerify = true
+	if err := o.validate("part2"); err != nil {
+		t.Errorf("validate with the flag = %v", err)
 	}
 }

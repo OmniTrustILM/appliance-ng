@@ -35,6 +35,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -73,6 +74,8 @@ func main() {
 	fs.StringVar(&o.connector, "connector", "", "display name of a connector that must register with Core (check)")
 	fs.StringVar(&o.uiURL, "ui-url", "", "base URL of the ILM (check)")
 	fs.StringVar(&o.uiAddr, "ui-addr", "", "address to reach the ILM at, host:port (check)")
+	fs.BoolVar(&o.insecureSkipVerify, "insecure-skip-tls-verify", false,
+		"trust the self-signed certificate of the setup console (required)")
 	_ = fs.Parse(os.Args[2:])
 
 	run, ok := map[string]func(context.Context, *client, options) error{
@@ -87,7 +90,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	if err := run(ctx, newClient(o.url), o); err != nil {
+	if err := run(ctx, newClient(o.url, o.insecureSkipVerify), o); err != nil {
 		fmt.Printf("drive %s: FAIL %v\n", cmd, err)
 		os.Exit(1)
 	}
@@ -102,9 +105,13 @@ func usage() {
 type options struct {
 	url, code, user, password, seedFile, hostName, gateway, dns string
 	component, connector, uiURL, uiAddr                         string
+	insecureSkipVerify                                          bool
 }
 
 func (o options) validate(cmd string) error {
+	if !o.insecureSkipVerify {
+		return errors.New("--insecure-skip-tls-verify is required: the setup console serves a self-signed certificate")
+	}
 	missing := o.user == "" || o.password == "" || o.seedFile == ""
 	switch {
 	case missing:
@@ -250,7 +257,10 @@ func check(ctx context.Context, c *client, o options) error {
 		return err
 	}
 	step("connector registration")
-	ui := uiClient(o.uiAddr, cert)
+	ui, err := uiClient(ctx, c, o, cert)
+	if err != nil {
+		return err
+	}
 	return waitUntil(ctx, registerTimeout, func() error { return connectorRegistered(ctx, ui, o.uiURL, o.connector) })
 }
 
@@ -285,8 +295,20 @@ func (c *client) adminCredential(ctx context.Context) (tls.Certificate, error) {
 	return cert, nil
 }
 
-// uiClient reaches the ILM at addr whatever the URL's host, and presents cert when the server asks for one.
-func uiClient(addr string, cert tls.Certificate) *http.Client {
+// uiClient reaches the ILM at o.uiAddr whatever the URL's host. It verifies the ILM edge certificate against the root
+// CA of the built-in CA for the host name of o.uiURL, and presents cert when the server asks for one.
+func uiClient(ctx context.Context, c *client, o options, cert tls.Certificate) (*http.Client, error) {
+	u, err := url.Parse(o.uiURL)
+	if err != nil {
+		return nil, fmt.Errorf("--ui-url: %w", err)
+	}
+	root, _, err := c.fetchRootCA(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	addr := o.uiAddr
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Client{
 		Timeout: 30 * time.Second,
@@ -295,15 +317,14 @@ func uiClient(addr string, cert tls.Certificate) *http.Client {
 				return dialer.DialContext(ctx, network, addr)
 			},
 			TLSClientConfig: &tls.Config{
-				// The ILM edge certificate is not verified: this client only checks that the connector registered.
-				// The console's built-in certificate was verified against the root CA before.
-				InsecureSkipVerify: true, //nolint:gosec // see above
+				RootCAs:    roots,
+				ServerName: u.Hostname(),
 				GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 					return &cert, nil
 				},
 			},
 		},
-	}
+	}, nil
 }
 
 // connectorRegistered checks through the Core API at base that the connector with the display name is registered:
@@ -356,36 +377,46 @@ func (c *client) checkAudit(ctx context.Context) error {
 	return nil
 }
 
-// servesBuiltinCertificate checks that the console's certificate chains to the root CA of the built-in CA.
-func (c *client) servesBuiltinCertificate(ctx context.Context) error {
+// fetchRootCA downloads the root CA of the built-in CA from the console and returns it with the TLS state of the
+// connection.
+func (c *client) fetchRootCA(ctx context.Context) (*x509.Certificate, *tls.ConnectionState, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v1/ca.pem", nil)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.TLS == nil || len(res.TLS.PeerCertificates) == 0 {
-		return errors.New("the console presented no certificate")
+		return nil, nil, errors.New("the console presented no certificate")
 	}
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET /api/v1/ca.pem: HTTP %d", res.StatusCode)
+		return nil, nil, fmt.Errorf("GET /api/v1/ca.pem: HTTP %d", res.StatusCode)
 	}
 	block, _ := pem.Decode(body)
 	if block == nil {
-		return errors.New("ca.pem holds no certificate")
+		return nil, nil, errors.New("ca.pem holds no certificate")
 	}
 	root, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
+		return nil, nil, err
+	}
+	return root, res.TLS, nil
+}
+
+// servesBuiltinCertificate checks that the console's certificate chains to the root CA of the built-in CA.
+func (c *client) servesBuiltinCertificate(ctx context.Context) error {
+	root, state, err := c.fetchRootCA(ctx)
+	if err != nil {
 		return err
 	}
-	peers := res.TLS.PeerCertificates
+	peers := state.PeerCertificates
 	roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
 	roots.AddCert(root)
 	for _, cert := range peers[1:] {
@@ -524,7 +555,7 @@ type client struct {
 	csrf string
 }
 
-func newClient(base string) *client {
+func newClient(base string, insecureSkipVerify bool) *client {
 	jar, _ := cookiejar.New(nil) // never fails without options
 	return &client{
 		base: strings.TrimSuffix(base, "/"),
@@ -532,9 +563,9 @@ func newClient(base string) *client {
 			Jar:     jar,
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				// The console serves a self-signed certificate until the built-in CA issues one; the boot test trusts
-				// it explicitly. check verifies the issued certificate against the CA.
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // see above
+				// The setup certificate is self-signed and tty1 is the only out-of-band channel, so trust is an explicit
+				// opt-in. check verifies the issued certificate against the built-in CA.
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify}, //nolint:gosec // opt-in flag
 			},
 		},
 	}
