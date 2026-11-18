@@ -2,7 +2,7 @@ import { useId, type InputHTMLAttributes } from 'react';
 import { cx } from './cx';
 
 export const INPUT = cx(
-  'h-10 w-full rounded-md border border-outline bg-surface-raised px-3 text-content transition-[border-color,box-shadow]',
+  'h-10 w-full rounded-md border border-outline bg-surface-raised px-3 text-content placeholder:text-content-subtle transition-[border-color,box-shadow]',
   'hover:border-content-subtle focus:border-brand focus:shadow-[0_0_0_3px_var(--color-brand-ring)] focus:outline-hidden',
   'aria-invalid:border-danger aria-invalid:focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-danger)_20%,transparent)]',
 );
