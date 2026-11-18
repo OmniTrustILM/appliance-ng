@@ -13,7 +13,8 @@ export function stubApi(routes: Record<string, Handler>) {
     const key = `${request.method} ${new URL(request.url).pathname}`;
     const text = request.method === 'GET' ? '' : await request.text();
     const body = text ? JSON.parse(text) : undefined;
-    (sent[key] ??= []).push(body);
+    sent[key] ??= [];
+    sent[key].push(body);
     const handler = routes[key];
     const [status, payload] = typeof handler === 'function'
       ? handler(body)

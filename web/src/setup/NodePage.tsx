@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import type { components } from '../api/schema';
 import { Field } from '../components/Field';
@@ -20,7 +20,7 @@ type Props = {
 const withoutPrefix = (cidr?: string) => cidr?.split('/')[0];
 
 /** Asks for the host name, the network settings and the optional proxy of the node. */
-export function NodePage({ initial, onDone, onExpired }: Props) {
+export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
   const [loaded, setLoaded] = useState(false);
   const [dhcpAddress, setDhcpAddress] = useState<string>();
   const [dhcp, setDhcp] = useState<components['schemas']['DhcpSettings']>({});
@@ -98,7 +98,7 @@ export function NodePage({ initial, onDone, onExpired }: Props) {
     };
   }
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     const found = problems();
     setErrors(found);
@@ -127,17 +127,17 @@ export function NodePage({ initial, onDone, onExpired }: Props) {
         <legend>Address</legend>
         <label>
           <input type="radio" name="mode" checked={mode === 'dhcp'} onChange={() => chooseMode('dhcp')} />
-          Keep the address from DHCP
+          <span>Keep the address from DHCP</span>
         </label>
         <label>
           <input type="radio" name="mode" checked={mode === 'static'} onChange={() => chooseMode('static')} />
-          Use a static address
+          <span>Use a static address</span>
         </label>
         {mode === 'dhcp' && (
-          <p role="status" className="form-warning">
+          <output className="form-warning">
             Reserve {dhcp.address ?? 'the address of the node'} for the node in the DHCP server. If the address
             changes after the installation, the console is no longer reachable at the address shown here.
-          </p>
+          </output>
         )}
         {mode === 'static' && (
           <>

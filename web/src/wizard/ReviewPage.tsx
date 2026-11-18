@@ -4,14 +4,14 @@ import { attempt, failureMessage, unreachable } from '../setup/failure';
 import { toRequest, type Answers, type CatalogueItem } from './answers';
 
 /** Shows the answers and sends them; the admin can still come back and change them until the setup is complete. */
-export function ReviewPage({ answers, catalogue, onBack, onSent, onRefused, onComplete }: {
+export function ReviewPage({ answers, catalogue, onBack, onSent, onRefused, onComplete }: Readonly<{
   answers: Answers;
   catalogue: CatalogueItem[];
   onBack: () => void;
   onSent: () => void;
   onRefused: (field: string, message: string) => void;
   onComplete: () => void;
-}) {
+}>) {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const titles = answers.components.map((name) => catalogue.find((item) => item.name === name)?.title ?? name);

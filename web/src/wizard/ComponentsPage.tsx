@@ -1,14 +1,14 @@
 import type { Answers, CatalogueItem } from './answers';
 
 /** Offers the components of the catalogue; those that need registry credentials cannot be chosen yet. */
-export function ComponentsPage({ catalogue, answers, error, onChange, onNext, onBack }: {
+export function ComponentsPage({ catalogue, answers, error, onChange, onNext, onBack }: Readonly<{
   catalogue: CatalogueItem[];
   answers: Answers;
   error?: string;
   onChange: (patch: Partial<Answers>) => void;
   onNext: () => void;
   onBack: () => void;
-}) {
+}>) {
   function toggle(name: string, checked: boolean) {
     const others = answers.components.filter((c) => c !== name);
     onChange({ components: checked ? [...others, name] : others });

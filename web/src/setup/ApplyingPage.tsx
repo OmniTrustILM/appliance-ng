@@ -2,7 +2,7 @@
  * The node installs and reboots; the setup service stops seconds after the apply, so the page asks for nothing
  * and leaves the reload to the user.
  */
-export function ApplyingPage({ address }: { address?: string }) {
+export function ApplyingPage({ address }: Readonly<{ address?: string }>) {
   const url = address ? `https://${address}:8443/` : undefined;
   return (
     <div>

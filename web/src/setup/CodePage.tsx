@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { api, setCsrfToken } from '../api/client';
 import { Field } from '../components/Field';
 import { attempt, failureMessage, unreachable } from './failure';
@@ -9,7 +9,7 @@ function seconds(count: number) {
 }
 
 /** Starts the setup session with the code shown on the appliance console. */
-export function CodePage({ onDone }: { onDone: () => void }) {
+export function CodePage({ onDone }: Readonly<{ onDone: () => void }>) {
   const [code, setCode] = useState('');
   const [error, setError] = useState<string>();
   const [lockedFor, setLockedFor] = useState(0);
@@ -21,7 +21,7 @@ export function CodePage({ onDone }: { onDone: () => void }) {
     return () => clearTimeout(timer);
   }, [lockedFor]);
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);

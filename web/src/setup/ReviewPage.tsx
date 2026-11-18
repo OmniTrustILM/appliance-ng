@@ -5,7 +5,7 @@ import type { NodeSettings } from './NodePage';
 
 export type Answers = { user: string; node: NodeSettings };
 
-function Row({ term, children }: { term: string; children: string }) {
+function Row({ term, children }: Readonly<{ term: string; children: string }>) {
   return (
     <>
       <dt>{term}</dt>
@@ -15,12 +15,12 @@ function Row({ term, children }: { term: string; children: string }) {
 }
 
 /** Summarises the answers and applies them; the password and the authenticator secret are never shown. */
-export function ReviewPage({ answers, onBack, onDone, onExpired }: {
+export function ReviewPage({ answers, onBack, onDone, onExpired }: Readonly<{
   answers?: Answers;
   onBack: () => void;
   onDone: () => void;
   onExpired: () => void;
-}) {
+}>) {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 

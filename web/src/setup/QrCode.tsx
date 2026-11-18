@@ -3,7 +3,7 @@ import qrcode from 'qrcode-generator';
 const quietZone = 4;
 
 /** Draws text as a QR code in the browser; nothing is sent anywhere. */
-export function QrCode({ value, label }: { value: string; label: string }) {
+export function QrCode({ value, label }: Readonly<{ value: string; label: string }>) {
   const code = qrcode(0, 'M');
   code.addData(value);
   code.make();

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import { Field } from '../components/Field';
 import { attempt, failureMessage, unreachable } from './failure';
@@ -7,14 +7,14 @@ import { adminProblems } from './validate';
 type Errors = Partial<Record<string, string>>;
 
 /** Asks for the administrator account of the appliance. */
-export function AdminPage({ onDone, onExpired }: { onDone: (user: string) => void; onExpired: () => void }) {
+export function AdminPage({ onDone, onExpired }: Readonly<{ onDone: (user: string) => void; onExpired: () => void }>) {
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState(false);
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     const problems = adminProblems({ user, password, confirmation });
     setErrors(problems);

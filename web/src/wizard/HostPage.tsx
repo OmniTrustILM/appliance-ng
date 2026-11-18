@@ -1,17 +1,17 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type SubmitEvent } from 'react';
 import { Field } from '../components/Field';
 import type { Answers, Errors } from './answers';
 
 /** Asks for the name the ILM is reached by. */
-export function HostPage({ answers, errors, onChange, onNext }: {
+export function HostPage({ answers, errors, onChange, onNext }: Readonly<{
   answers: Answers;
   errors: Errors;
   onChange: (patch: Partial<Answers>) => void;
   onNext: () => void;
-}) {
+}>) {
   const [problem, setProblem] = useState<string>();
 
-  function submit(event: FormEvent) {
+  function submit(event: SubmitEvent) {
     event.preventDefault();
     if (!answers.hostName.trim()) return setProblem('The host name is required.');
     setProblem(undefined);

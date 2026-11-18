@@ -214,23 +214,12 @@ func (s *Server) writeMailCredentials(ctx context.Context, m *mailInput, previou
 		return false, fmt.Errorf("read secret %s/%s: %w", SystemNamespace, MailSecretName, err)
 	}
 	if m == nil || m.username == "" {
-		if !exists {
-			return false, nil
-		}
-		if err := s.deps.Client.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
-			return false, fmt.Errorf("delete secret %s/%s: %w", SystemNamespace, MailSecretName, err)
-		}
-		return true, nil
+		return s.deleteMailCredentials(ctx, secret, exists)
 	}
 
-	data := map[string][]byte{MailUsernameKey: []byte(m.username)}
-	if m.password != nil {
-		data[MailPasswordKey] = []byte(*m.password)
-	} else if old, ok := secret.Data[MailPasswordKey]; ok && len(old) > 0 {
-		if string(secret.Data[MailUsernameKey]) != m.username || !sameServer(previous, &m.spec) {
-			return false, errPasswordNeeded
-		}
-		data[MailPasswordKey] = old
+	data, err := mailSecretData(secret, m, previous)
+	if err != nil {
+		return false, err
 	}
 	if !exists {
 		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: MailSecretName}, Type: corev1.SecretTypeOpaque, Data: data}
@@ -249,10 +238,39 @@ func (s *Server) writeMailCredentials(ctx context.Context, m *mailInput, previou
 	return true, nil
 }
 
+// deleteMailCredentials deletes the credentials Secret when it exists and reports whether it did.
+func (s *Server) deleteMailCredentials(ctx context.Context, secret *corev1.Secret, exists bool) (bool, error) {
+	if !exists {
+		return false, nil
+	}
+	if err := s.deps.Client.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+		return false, fmt.Errorf("delete secret %s/%s: %w", SystemNamespace, MailSecretName, err)
+	}
+	return true, nil
+}
+
+// mailSecretData returns the data of the credentials Secret for m, keeping the stored password when m has none and
+// it was stored for the same user name and mail server.
+func mailSecretData(secret *corev1.Secret, m *mailInput, previous *v1alpha1.MailSpec) (map[string][]byte, error) {
+	data := map[string][]byte{MailUsernameKey: []byte(m.username)}
+	if m.password != nil {
+		data[MailPasswordKey] = []byte(*m.password)
+	} else if old, ok := secret.Data[MailPasswordKey]; ok && len(old) > 0 {
+		if string(secret.Data[MailUsernameKey]) != m.username || !sameServer(previous, &m.spec) {
+			return nil, errPasswordNeeded
+		}
+		data[MailPasswordKey] = old
+	}
+	return data, nil
+}
+
 // sameServer reports whether a and b name the same mail server, reached the same way.
 func sameServer(a, b *v1alpha1.MailSpec) bool {
 	return a != nil && a.Host == b.Host && a.Port == b.Port && a.Security == b.Security
 }
+
+// pathMailCredentials is the JSON path of the mail credentials reference.
+const pathMailCredentials = "spec.mail.credentialsRef"
 
 // changedPaths lists the JSON paths the wizard changed from before to after, sorted; credentials says the
 // credentials Secret changed.
@@ -279,10 +297,10 @@ func changedPaths(before, after *v1alpha1.ApplianceSpec, credentials bool) []str
 		add(b.Port != a.Port, "spec.mail.port")
 		add(b.Security != a.Security, "spec.mail.security")
 		add(b.From != a.From, "spec.mail.from")
-		add(b.CredentialsRef != a.CredentialsRef, "spec.mail.credentialsRef")
+		add(b.CredentialsRef != a.CredentialsRef, pathMailCredentials)
 	}
-	if credentials && after.Mail != nil && !slices.Contains(paths, "spec.mail.credentialsRef") {
-		paths = append(paths, "spec.mail.credentialsRef")
+	if credentials && after.Mail != nil && !slices.Contains(paths, pathMailCredentials) {
+		paths = append(paths, pathMailCredentials)
 	}
 	slices.Sort(paths)
 	return paths

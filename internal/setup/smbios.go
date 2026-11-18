@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -82,14 +83,20 @@ func readStringSet(data []byte, start int) (strs []string, end int, err error) {
 			}
 			return strs, off + 1, nil
 		}
-		n := 0
-		for off+n < len(data) && data[off+n] != 0 {
-			n++
+		str, next, err := readString(data, off)
+		if err != nil {
+			return nil, 0, err
 		}
-		if off+n >= len(data) {
-			return nil, 0, fmt.Errorf("%w: unterminated string at offset %d", ErrMalformedDMI, off)
-		}
-		strs = append(strs, string(data[off:off+n]))
-		off += n + 1
+		strs = append(strs, str)
+		off = next
 	}
+}
+
+// readString reads the NUL-terminated string at off. It returns it and the offset after its NUL.
+func readString(data []byte, off int) (string, int, error) {
+	n := bytes.IndexByte(data[off:], 0)
+	if n < 0 {
+		return "", 0, fmt.Errorf("%w: unterminated string at offset %d", ErrMalformedDMI, off)
+	}
+	return string(data[off : off+n]), off + n + 1, nil
 }

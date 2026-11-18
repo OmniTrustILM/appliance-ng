@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export function Layout({ children }: { children: ReactNode }) {
+export function Layout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <div className="layout">
       <header className="layout-header">ILM Appliance</header>

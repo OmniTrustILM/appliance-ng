@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import { Field } from '../components/Field';
 import { SignOutButton } from '../signin/SignOutButton';
@@ -41,7 +41,7 @@ export function DonePage() {
     };
   }, []);
 
-  async function download(event: FormEvent) {
+  async function download(event: SubmitEvent) {
     event.preventDefault();
     setBusy(true);
     setFieldError(undefined);

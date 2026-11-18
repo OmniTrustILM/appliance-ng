@@ -1,5 +1,5 @@
 /** Explains the certificate of the ILM; only the built-in authority is available for now. */
-export function CertificatePage({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
+export function CertificatePage({ onNext, onBack }: Readonly<{ onNext: () => void; onBack: () => void }>) {
   return (
     <div>
       <h1>Certificate</h1>

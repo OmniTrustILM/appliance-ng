@@ -131,33 +131,51 @@ func parseProxy(p *setupapi.Proxy) (*Proxy, *fieldError) {
 		if f.in == nil || strings.TrimSpace(*f.in) == "" {
 			continue
 		}
-		u, err := url.Parse(strings.TrimSpace(*f.in))
-		switch {
-		case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
-			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "":
-			return nil, &fieldError{"proxy", "Enter the proxy as a URL, such as http://proxy.example.com:3128."}
-		case u.User != nil:
-			return nil, &fieldError{"proxy", "Proxy credentials are not supported."}
+		proxyURL, bad := parseProxyURL(*f.in)
+		if bad != nil {
+			return nil, bad
 		}
-		*f.out = u.String()
+		*f.out = proxyURL
 	}
 	if p.NoProxy != nil {
-		var entries []string
-		for _, e := range strings.Split(*p.NoProxy, ",") {
-			if e = strings.TrimSpace(e); e == "" {
-				continue
-			}
-			if !noProxyRE.MatchString(e) {
-				return nil, &fieldError{"proxy", "Enter the no-proxy list as host names, domains and networks separated by commas."}
-			}
-			entries = append(entries, e)
+		list, bad := parseNoProxy(*p.NoProxy)
+		if bad != nil {
+			return nil, bad
 		}
-		out.NoProxy = strings.Join(entries, ",")
+		out.NoProxy = list
 	}
 	if *out == (Proxy{}) {
 		return nil, nil
 	}
 	return out, nil
+}
+
+// parseProxyURL validates a proxy URL: http or https, a host, no credentials, no path, query or fragment.
+func parseProxyURL(v string) (string, *fieldError) {
+	u, err := url.Parse(strings.TrimSpace(v))
+	switch {
+	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "":
+		return "", &fieldError{"proxy", "Enter the proxy as a URL, such as http://proxy.example.com:3128."}
+	case u.User != nil:
+		return "", &fieldError{"proxy", "Proxy credentials are not supported."}
+	}
+	return u.String(), nil
+}
+
+// parseNoProxy validates a comma-separated no-proxy list and returns it without blank entries.
+func parseNoProxy(v string) (string, *fieldError) {
+	var entries []string
+	for _, e := range strings.Split(v, ",") {
+		if e = strings.TrimSpace(e); e == "" {
+			continue
+		}
+		if !noProxyRE.MatchString(e) {
+			return "", &fieldError{"proxy", "Enter the no-proxy list as host names, domains and networks separated by commas."}
+		}
+		entries = append(entries, e)
+	}
+	return strings.Join(entries, ","), nil
 }
 
 // asciiLower lower-cases the ASCII letters of s only.

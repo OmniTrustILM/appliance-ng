@@ -20,7 +20,7 @@ const SessionContext = createContext<SessionControl>({
 });
 
 /** Loads the console session once and sends the user to sign-in when the session ends. */
-export function SessionProvider({ children }: { children: ReactNode }) {
+export function SessionProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [session, setSession] = useState<Session>({ state: 'loading' });
   const navigate = useNavigate();
   // navigate changes with every page, which must not load the session again.
@@ -79,7 +79,7 @@ export function useSessionControl() {
 }
 
 /** Shows children to a signed-in user and sends anyone else to sign-in. */
-export function RequireSession({ children }: { children: ReactNode }) {
+export function RequireSession({ children }: Readonly<{ children: ReactNode }>) {
   const session = useSession();
   if (session.state === 'loading') return <p>Loading…</p>;
   if (session.state === 'signedOut') return <Navigate to="/signin" replace />;

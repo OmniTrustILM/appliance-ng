@@ -50,13 +50,14 @@ code="" code_hash="" password="" seed=""
 log() { echo "[run] $*" >&2; }
 
 random() { # random <characters> <length>: prints a random string of that length drawn from the characters
-  local out
-  out="$(LC_ALL=C tr -dc "$1" </dev/urandom | head -c "$2" || true)"
-  [[ ${#out} -eq $2 ]] && printf '%s' "$out"
+  local characters="$1" length="$2" out
+  out="$(LC_ALL=C tr -dc "$characters" </dev/urandom | head -c "$length" || true)"
+  [[ ${#out} -eq $length ]] && printf '%s' "$out"
 }
 
 sha256() { # sha256 <text>: prints the hex SHA-256 of text
-  if command -v sha256sum >/dev/null; then printf '%s' "$1" | sha256sum; else printf '%s' "$1" | shasum -a 256; fi |
+  local text="$1"
+  if command -v sha256sum >/dev/null; then printf '%s' "$text" | sha256sum; else printf '%s' "$text" | shasum -a 256; fi |
     cut -d' ' -f1
 }
 
@@ -129,16 +130,18 @@ capture_setup_certificate() {
 }
 
 drive_wizard() { # drive_wizard <part1|part2|check>
+  local part="$1"
   local args=(--url "$CONSOLE_URL" --user "$ADMIN" --password "$password" --seed-file "$seed_file"
     --host-name "$UI_HOST")
-  case "$1" in
+  case "$part" in
     # QEMU's user network with restrict=on offers no router or DNS server by DHCP; the node address is 10.0.2.15,
     # drive's default --server-name.
     part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway 10.0.2.2 --dns 10.0.2.3) ;;
     part2) args+=(--component "$COMPONENT") ;;
     check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$UI_HOST:10443" --ui-addr "$UI_ADDR") ;;
+    *) fail "unknown wizard part $part" ;;
   esac
-  "$drive" "$1" "${args[@]}" >&2 || fail "drive $1 failed"
+  "$drive" "$part" "${args[@]}" >&2 || fail "drive $part failed"
 }
 
 "$VM" stop "$dir" >/dev/null 2>&1 || true
@@ -172,6 +175,7 @@ while :; do
           log "$((SECONDS - start))s wizard part 2 done"
         fi ;;
       ready) break ;;
+      *) ;; # still booting; keep polling
     esac
   elif ! $reached && [[ "$elapsed" -ge "$STATUS_TIMEOUT" ]]; then
     fail "status not reachable within ${STATUS_TIMEOUT}s"

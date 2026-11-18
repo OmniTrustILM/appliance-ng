@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '../api/client';
 import { Field } from '../components/Field';
@@ -28,7 +28,7 @@ export function SignInPage() {
     return () => clearTimeout(timer);
   }, [remaining]);
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     setBusy(true);
     setFailure(undefined);

@@ -4,7 +4,7 @@ import { useStatus } from '../console/status/useStatus';
 import { RootCaLink } from './RootCaLink';
 
 /** Follows the installation of the platform; it finishes by itself when the setup is complete. */
-export function ProgressPage({ onBack, onComplete }: { onBack: () => void; onComplete: () => void }) {
+export function ProgressPage({ onBack, onComplete }: Readonly<{ onBack: () => void; onComplete: () => void }>) {
   const { status, error } = useStatus();
   const complete = status?.setup === 'complete';
   const conditions = status?.conditions ?? [];

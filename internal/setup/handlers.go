@@ -122,9 +122,12 @@ func (w *wizard) PutSetupAdmin(ctx context.Context, req setupapi.PutSetupAdminRe
 		return setupapi.PutSetupAdmin409JSONResponse{ConflictJSONResponse: wrongStep}, nil
 	}
 	w.user, w.passwordHash, w.step = req.Body.User, hash, setupapi.Totp
-	w.deps.Log.Info("setup step done", "step", "admin")
+	w.deps.Log.Info(msgStepDone, "step", "admin")
 	return setupapi.PutSetupAdmin204Response{}, nil
 }
+
+// msgStepDone is the log message when a wizard step is done.
+const msgStepDone = "setup step done"
 
 // hash hashes pw in one of the hash slots, which it frees also when hashing panics.
 func (w *wizard) hash(ctx context.Context, pw string) (string, error) {
@@ -171,7 +174,7 @@ func (w *wizard) PostSetupTotpConfirm(_ context.Context, req setupapi.PostSetupT
 		}}, nil
 	}
 	w.step = setupapi.Node
-	w.deps.Log.Info("setup step done", "step", "totp")
+	w.deps.Log.Info(msgStepDone, "step", "totp")
 	return setupapi.PostSetupTotpConfirm204Response{}, nil
 }
 
@@ -226,7 +229,7 @@ func (w *wizard) PutSetupNode(_ context.Context, req setupapi.PutSetupNodeReques
 		return setupapi.PutSetupNode409JSONResponse{ConflictJSONResponse: wrongStep}, nil
 	}
 	w.node, w.input, w.step = answers, input, setupapi.Apply
-	w.deps.Log.Info("setup step done", "step", "node", "hostName", answers.HostName, "dhcp", answers.Address == "")
+	w.deps.Log.Info(msgStepDone, "step", "node", "hostName", answers.HostName, "dhcp", answers.Address == "")
 	return setupapi.PutSetupNode204Response{}, nil
 }
 

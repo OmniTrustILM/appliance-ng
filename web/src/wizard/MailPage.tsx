@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type SubmitEvent } from 'react';
 import { Field } from '../components/Field';
 import { emptyMail, mailProblems, type Answers, type Errors, type MailAnswers, type MailSecurity } from './answers';
 
@@ -9,14 +9,14 @@ const securities: { value: MailSecurity; label: string }[] = [
 ];
 
 /** Asks for the mail server of the ILM; mail can be skipped. */
-export function MailPage({ answers, passwordSet, errors, onChange, onNext, onBack }: {
+export function MailPage({ answers, passwordSet, errors, onChange, onNext, onBack }: Readonly<{
   answers: Answers;
   passwordSet: boolean;
   errors: Errors;
   onChange: (patch: Partial<Answers>) => void;
   onNext: () => void;
   onBack: () => void;
-}) {
+}>) {
   const [problems, setProblems] = useState<Errors>({});
   const { mail } = answers;
   const shown = { ...errors, ...problems };
@@ -26,7 +26,7 @@ export function MailPage({ answers, passwordSet, errors, onChange, onNext, onBac
     onChange({ mail: { ...(mail ?? emptyMail), ...patch } });
   }
 
-  function submit(event: FormEvent) {
+  function submit(event: SubmitEvent) {
     event.preventDefault();
     const found = mail ? mailProblems(mail) : {};
     setProblems(found);

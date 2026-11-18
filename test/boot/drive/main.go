@@ -59,6 +59,10 @@ const (
 	certificateTimeout = 15 * time.Minute
 )
 
+// slirpNodeAddress is the address QEMU's user network gives the node, which the certificate of the first-boot
+// service is issued for.
+const slirpNodeAddress = "10.0.2.15"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -79,7 +83,7 @@ func main() {
 	fs.StringVar(&o.uiURL, "ui-url", "", "base URL of the ILM (check)")
 	fs.StringVar(&o.uiAddr, "ui-addr", "", "address to reach the ILM at, host:port (check)")
 	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1)")
-	fs.StringVar(&o.serverName, "server-name", "10.0.2.15",
+	fs.StringVar(&o.serverName, "server-name", slirpNodeAddress,
 		"node address the certificate of the first-boot service is issued for (part1)")
 	_ = fs.Parse(os.Args[2:])
 

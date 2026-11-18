@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import { Field } from '../components/Field';
 import { attempt, failureMessage, unreachable } from './failure';
@@ -11,7 +11,7 @@ function utc(time: string) {
 }
 
 /** Shows the authenticator secret once and checks the first code. The secret lives in this component only. */
-export function TotpPage({ onDone, onExpired }: { onDone: () => void; onExpired: () => void }) {
+export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; onExpired: () => void }>) {
   const [enrolment, setEnrolment] = useState<Enrolment>();
   const [code, setCode] = useState('');
   const [fieldError, setFieldError] = useState<string>();
@@ -33,7 +33,7 @@ export function TotpPage({ onDone, onExpired }: { onDone: () => void; onExpired:
     };
   }, [onExpired]);
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
     setError(undefined);
     setServerTime(undefined);

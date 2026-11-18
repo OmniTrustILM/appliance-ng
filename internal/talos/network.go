@@ -35,32 +35,8 @@ type Network struct {
 func (n *node) Network(ctx context.Context, addr netip.Addr) (Network, error) {
 	var nw Network
 
-	resolvers, ok, err := getOptional[*network.ResolverStatus](ctx, n.st, network.ResolverID)
-	if err != nil {
+	if err := n.readNameServices(ctx, &nw); err != nil {
 		return nw, err
-	}
-	if ok {
-		for _, ns := range resolvers.TypedSpec().NameServers {
-			if !ns.Addr.IsLinkLocalUnicast() {
-				nw.DNS = append(nw.DNS, ns.Addr)
-			}
-		}
-	}
-
-	times, ok, err := getOptional[*network.TimeServerStatus](ctx, n.st, network.TimeServerID)
-	if err != nil {
-		return nw, err
-	}
-	if ok {
-		nw.NTP = times.TypedSpec().NTPServers
-	}
-
-	host, ok, err := getOptional[*network.HostnameStatus](ctx, n.st, network.HostnameID)
-	if err != nil {
-		return nw, err
-	}
-	if ok && host.TypedSpec().Domainname != "" {
-		nw.HostName = host.TypedSpec().FQDN()
 	}
 
 	addrs, err := safe.StateListAll[*network.AddressStatus](ctx, n.st)
@@ -77,21 +53,64 @@ func (n *node) Network(ctx context.Context, addr netip.Addr) (Network, error) {
 		return nw, nil
 	}
 
+	gateway, err := n.defaultGateway(ctx, nw.Link)
+	if err != nil {
+		return nw, err
+	}
+	nw.Gateway = gateway
+
+	return nw, nil
+}
+
+// readNameServices fills the name servers, time servers and host name of nw.
+func (n *node) readNameServices(ctx context.Context, nw *Network) error {
+	resolvers, ok, err := getOptional[*network.ResolverStatus](ctx, n.st, network.ResolverID)
+	if err != nil {
+		return err
+	}
+	if ok {
+		for _, ns := range resolvers.TypedSpec().NameServers {
+			if !ns.Addr.IsLinkLocalUnicast() {
+				nw.DNS = append(nw.DNS, ns.Addr)
+			}
+		}
+	}
+
+	times, ok, err := getOptional[*network.TimeServerStatus](ctx, n.st, network.TimeServerID)
+	if err != nil {
+		return err
+	}
+	if ok {
+		nw.NTP = times.TypedSpec().NTPServers
+	}
+
+	host, ok, err := getOptional[*network.HostnameStatus](ctx, n.st, network.HostnameID)
+	if err != nil {
+		return err
+	}
+	if ok && host.TypedSpec().Domainname != "" {
+		nw.HostName = host.TypedSpec().FQDN()
+	}
+	return nil
+}
+
+// defaultGateway returns the IPv4 default gateway through link with the lowest priority, or the zero address.
+func (n *node) defaultGateway(ctx context.Context, link string) (netip.Addr, error) {
 	routes, err := safe.StateListAll[*network.RouteStatus](ctx, n.st)
 	if err != nil {
-		return nw, fmt.Errorf("read routes: %w", err)
+		return netip.Addr{}, fmt.Errorf("read routes: %w", err)
 	}
+	var gateway netip.Addr
 	var best uint32
 	for r := range routes.All() {
 		spec := r.TypedSpec()
 		isDefault := spec.Table == nethelpers.TableMain && spec.Family == nethelpers.FamilyInet4 &&
 			spec.Destination.Bits() <= 0 && spec.Gateway.Is4()
-		if isDefault && spec.OutLinkName == nw.Link && (!nw.Gateway.IsValid() || spec.Priority < best) {
-			nw.Gateway, best = spec.Gateway, spec.Priority
+		if isDefault && spec.OutLinkName == link && (!gateway.IsValid() || spec.Priority < best) {
+			gateway, best = spec.Gateway, spec.Priority
 		}
 	}
-
-	return nw, nil
+	return gateway, nil
 }
 
 // getOptional reads the network resource id of type T; a missing resource is the zero T.
