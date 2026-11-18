@@ -1,8 +1,7 @@
 # Traefik client-certificate login as in the ILM documentation ("Client Certificate
-# Authentication", Traefik section): optional verified client certificate, caller headers
-# cleared, then PassTLSClientCert (pem) -> X-Forwarded-Tls-Client-Cert. Client certificates
-# are verified against ca.crt of the Secret ca-keypair: the internal CA the operator creates
-# for the edge (tls.source: internal), which also signs the generated administrator certificate.
+# Authentication", Traefik section): caller headers cleared, then PassTLSClientCert (pem) ->
+# X-Forwarded-Tls-Client-Cert. The Appliance Manager applies the TLSOption ilm-mtls that asks for
+# and verifies the optional client certificate, because its CA depends on the edge's TLS source.
 apiVersion: v1
 kind: Namespace
 metadata: { name: ilm }
@@ -26,11 +25,3 @@ metadata: { name: forward-client-certificate, namespace: ilm }
 spec:
   passTLSClientCert:
     pem: true
----
-apiVersion: traefik.io/v1alpha1
-kind: TLSOption
-metadata: { name: ilm-mtls, namespace: ilm }
-spec:
-  clientAuth:
-    clientAuthType: VerifyClientCertIfGiven
-    secretNames: [ca-keypair]

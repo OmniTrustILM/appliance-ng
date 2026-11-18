@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	fieldManager = "appliance-firstboot"
+	firstbootFieldManager = "appliance-firstboot"
 	// mappingTimeout bounds the wait for a kind that a CRD in the same call has not yet made available.
 	mappingTimeout  = 30 * time.Second
 	mappingInterval = 500 * time.Millisecond
@@ -50,8 +50,9 @@ type Cluster interface {
 }
 
 type cluster struct {
-	dyn    dynamic.Interface
-	mapper *restmapper.DeferredDiscoveryRESTMapper
+	dyn          dynamic.Interface
+	mapper       *restmapper.DeferredDiscoveryRESTMapper
+	fieldManager string
 }
 
 // NewCluster connects to the cluster of the given kubeconfig.
@@ -60,20 +61,26 @@ func NewCluster(kubeconfig []byte) (Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
-	return newCluster(cfg)
+	return newCluster(cfg, firstbootFieldManager)
+}
+
+// NewConfigCluster connects with cfg and writes as fieldManager.
+func NewConfigCluster(cfg *rest.Config, fieldManager string) (Cluster, error) {
+	return newCluster(cfg, fieldManager)
 }
 
 // NewLocalCluster connects with the credentials of the given kubeconfig but always through KubePrism,
 // so the connection survives a change of the node's address.
 func NewLocalCluster(kubeconfig []byte) (Cluster, error) {
-	cfg, err := localRESTConfig(kubeconfig)
+	cfg, err := LocalRESTConfig(kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	return newCluster(cfg)
+	return newCluster(cfg, firstbootFieldManager)
 }
 
-func localRESTConfig(kubeconfig []byte) (*rest.Config, error) {
+// LocalRESTConfig returns the client configuration of the given kubeconfig with KubePrism as the server.
+func LocalRESTConfig(kubeconfig []byte) (*rest.Config, error) {
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
@@ -82,7 +89,7 @@ func localRESTConfig(kubeconfig []byte) (*rest.Config, error) {
 	return cfg, nil
 }
 
-func newCluster(cfg *rest.Config) (Cluster, error) {
+func newCluster(cfg *rest.Config, fieldManager string) (Cluster, error) {
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("create dynamic client: %w", err)
@@ -91,7 +98,8 @@ func newCluster(cfg *rest.Config) (Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create discovery client: %w", err)
 	}
-	return &cluster{dyn: dyn, mapper: restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disc))}, nil
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disc))
+	return &cluster{dyn: dyn, mapper: mapper, fieldManager: fieldManager}, nil
 }
 
 func (c *cluster) Apply(ctx context.Context, docs []byte) error {
@@ -152,7 +160,7 @@ func (c *cluster) applyObject(ctx context.Context, obj *unstructured.Unstructure
 	if err != nil {
 		return fmt.Errorf("apply %s: %w", describe(obj), err)
 	}
-	return patch(ctx, resource, obj)
+	return c.patch(ctx, resource, obj)
 }
 
 // createObject applies the object only when it is not found, so later changes to it survive a restart.
@@ -163,7 +171,7 @@ func (c *cluster) createObject(ctx context.Context, obj *unstructured.Unstructur
 	}
 	// A plain create is atomic: an object that already exists, even one created a moment ago by another
 	// client, is left untouched instead of being overwritten.
-	_, err = resource.Create(ctx, obj, metav1.CreateOptions{FieldManager: fieldManager})
+	_, err = resource.Create(ctx, obj, metav1.CreateOptions{FieldManager: c.fieldManager})
 	switch {
 	case apierrors.IsAlreadyExists(err):
 		slog.Debug("exists, left untouched", "kind", obj.GetKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())
@@ -175,14 +183,14 @@ func (c *cluster) createObject(ctx context.Context, obj *unstructured.Unstructur
 	return nil
 }
 
-func patch(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
+func (c *cluster) patch(ctx context.Context, resource dynamic.ResourceInterface, obj *unstructured.Unstructured) error {
 	data, err := obj.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("apply %s: %w", describe(obj), err)
 	}
 	force := true
 	if _, err := resource.Patch(ctx, obj.GetName(), types.ApplyPatchType, data,
-		metav1.PatchOptions{FieldManager: fieldManager, Force: &force}); err != nil {
+		metav1.PatchOptions{FieldManager: c.fieldManager, Force: &force}); err != nil {
 		return fmt.Errorf("apply %s: %w", describe(obj), err)
 	}
 	slog.Debug("applied", "kind", obj.GetKind(), "namespace", obj.GetNamespace(), "name", obj.GetName())
@@ -216,14 +224,14 @@ func (c *cluster) LabelNamespace(ctx context.Context, ns string, labels map[stri
 	if err != nil {
 		return fmt.Errorf("label namespace %s: %w", ns, err)
 	}
-	_, err = namespaces.Patch(ctx, ns, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: fieldManager})
+	_, err = namespaces.Patch(ctx, ns, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: c.fieldManager})
 	if apierrors.IsNotFound(err) {
 		obj := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Namespace",
 			"metadata":   map[string]any{"name": ns, "labels": toAny(labels)},
 		}}
-		_, err = namespaces.Create(ctx, obj, metav1.CreateOptions{FieldManager: fieldManager})
+		_, err = namespaces.Create(ctx, obj, metav1.CreateOptions{FieldManager: c.fieldManager})
 	}
 	if err != nil {
 		return fmt.Errorf("label namespace %s: %w", ns, err)

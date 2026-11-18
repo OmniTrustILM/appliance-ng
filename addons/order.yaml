@@ -1,6 +1,6 @@
 # Apply order and readiness waits of the add-ons. Each step's files are applied in order,
-# then its waits must pass before the next step starts. A createOnly step creates its objects when they are
-# missing and leaves existing ones alone, so changes made after setup survive a restart.
+# then its waits must pass before the next step starts. platform.yaml holds reference defaults and is applied by
+# no step.
 steps:
   - name: cilium
     files: [cilium.yaml]
@@ -43,12 +43,7 @@ steps:
       - { kind: CustomResourceDefinition, name: tlsoptions.traefik.io, for: Established }
       - { kind: Deployment, namespace: traefik, name: traefik, for: Available }
   - name: ilm-operator
-    files: [ilm-operator.yaml]
+    files: [ilm-operator.yaml, ilm-edge.yaml]
     wait:
       - { kind: CustomResourceDefinition, name: platforms.otilm.com, for: Established }
       - { kind: Deployment, namespace: ilm-operator-system, name: ilm-operator-controller-manager, for: Available }
-  - name: platform
-    files: [ilm-edge.yaml, platform.yaml]
-    createOnly: true
-    wait:
-      - { kind: Platform, namespace: ilm, name: ilm, for: Available }

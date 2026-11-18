@@ -1,0 +1,6 @@
+# The manager binary is built by build/manager.sh; the image only adds it to a static base (Apache-2.0).
+# gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+COPY manager /manager
+USER 65532:65532
+ENTRYPOINT ["/manager"]

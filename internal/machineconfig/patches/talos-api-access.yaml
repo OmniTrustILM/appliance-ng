@@ -1,0 +1,7 @@
+# The appliance manager in appliance-system reaches the Talos API with a talos.dev ServiceAccount.
+apiVersion: v1alpha1
+kind: KubeTalosAPIAccessConfig
+allowedRoles:
+  - os:admin
+allowedKubernetesNamespaces:
+  - appliance-system

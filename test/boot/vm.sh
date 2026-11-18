@@ -12,7 +12,8 @@
 #
 # Hosts: macOS on Apple silicon (arm64, HVF, edk2 from Homebrew's qemu); Linux with KVM (amd64 with OVMF from the
 # ovmf package, arm64 with AAVMF from qemu-efi-aarch64). The guest has no route out (restrict=on) and a
-# virtio-rng device. Host forwards, bound to 127.0.0.1: 18443->8443 (status), 10443->443 (UI), 15000->50000 (apid).
+# virtio-rng device. Host forwards, bound to 127.0.0.1: 18443->8443 (console), 18444->8444 (status), 10443->443 (UI),
+# 15000->50000 (apid).
 # CPUS, MEM and DISK override 4 / 12G / 50G (DISK applies when the disk is created). Serial log: <dir>/serial.log.
 set -euo pipefail
 
@@ -97,7 +98,8 @@ start() {
   esac
   [[ -f "$dir/vars.fd" ]] || cp "$VARS" "$dir/vars.fd"
 
-  local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
+  local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:18444-:8444"
+  fwd+=",hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
   : >"$dir/serial.log"
   "$QEMU" -name "appliance-$arch-$mode" "${MACHINE[@]}" -smp "${CPUS:-4}" -m "${MEM:-12G}" \
     -drive "if=pflash,format=raw,readonly=on,file=$CODE" \

@@ -1,7 +1,12 @@
 package addons
 
 import (
+	"bufio"
+	"bytes"
+	"errors"
+	"io"
 	"io/fs"
+	"os"
 	"slices"
 	"testing"
 
@@ -11,6 +16,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/block"
 	"k8s.io/apimachinery/pkg/api/resource"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
 
@@ -32,7 +38,7 @@ func loadSteps(t *testing.T) []kube.Step {
 }
 
 func TestOrderSteps(t *testing.T) {
-	want := []string{"cilium", "storage", "cert-manager", "cnpg", "rabbitmq", "keycloak", "traefik", "ilm-operator", "platform"}
+	want := []string{"cilium", "storage", "cert-manager", "cnpg", "rabbitmq", "keycloak", "traefik", "ilm-operator"}
 	var got []string
 	for _, step := range loadSteps(t) {
 		got = append(got, step.Name)
@@ -81,8 +87,13 @@ func TestOrderCoversEveryFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range files {
-		if file != "order.yaml" && applied[file] != 1 {
-			t.Errorf("%s is applied %d times, want once", file, applied[file])
+		want := 1
+		// The first-boot service applies manager.yaml; no step does.
+		if file == "order.yaml" || file == "platform.yaml" || file == "manager.yaml" {
+			want = 0
+		}
+		if applied[file] != want {
+			t.Errorf("%s is applied %d times, want %d", file, applied[file], want)
 		}
 	}
 }
@@ -112,14 +123,6 @@ func TestPlatformMatchesRelease(t *testing.T) {
 	}
 	if platform.Spec.Common.HostName != m.Platform.HostName {
 		t.Errorf("platform.yaml hostName = %q, release.yaml platform.hostName = %q", platform.Spec.Common.HostName, m.Platform.HostName)
-	}
-}
-
-func TestOnlyPlatformStepIsCreateOnly(t *testing.T) {
-	for _, step := range loadSteps(t) {
-		if want := step.Name == "platform"; step.CreateOnly != want {
-			t.Errorf("step %s: createOnly = %v, want %v", step.Name, step.CreateOnly, want)
-		}
 	}
 }
 
@@ -164,4 +167,55 @@ func TestPlatformStorageFitsDataVolume(t *testing.T) {
 		}
 	}
 	t.Fatal("data volume missing from the machine configuration")
+}
+
+func TestManagerManifest(t *testing.T) {
+	m, err := release.Load("../release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := fs.ReadFile(FS, "manager.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crd, err := os.ReadFile("../config/crd/appliance.otilm.com_appliances.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(data, crd) {
+		t.Error("manager.yaml does not end with the generated Appliance CRD; run make manifests")
+	}
+
+	var images []string
+	reader := k8syaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(data)))
+	for {
+		doc, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var obj struct {
+			Kind string `json:"kind"`
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Image string `json:"image"`
+						} `json:"containers"`
+					} `json:"spec"`
+				} `json:"template"`
+			} `json:"spec"`
+		}
+		if err := yaml.Unmarshal(doc, &obj); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range obj.Spec.Template.Spec.Containers {
+			images = append(images, c.Image)
+		}
+	}
+	if len(images) != 1 || images[0] != m.ManagerImage {
+		t.Errorf("manager.yaml images = %v, want only the placeholder %q", images, m.ManagerImage)
+	}
 }

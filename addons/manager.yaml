@@ -1,0 +1,534 @@
+# The Appliance Manager. make manifests writes addons/manager.yaml from this file and the Appliance CRD.
+# The first-boot service applies it after bootstrap and replaces the image placeholder (managerImage in
+# release.yaml) with the manager image built with the appliance.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: appliance-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+# The platform namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+---
+# Every kind the add-on manifests and the reconciler apply, read access for the readiness waits, and events.
+# The add-ons install ClusterRoles and bindings that grant permissions the manager does not hold itself, so it needs
+# escalate and bind on roles and clusterroles. With them this ServiceAccount is effectively cluster-admin, and with
+# the Talos os:admin role of its talosconfig it is effectively node-admin as well.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-manager
+rules:
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances]
+    verbs: [get, list, watch, update, patch]
+  # The reconciler's controller owner references set blockOwnerDeletion, which needs update on the owner's finalizers.
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances/finalizers]
+    verbs: [update]
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances/status]
+    verbs: [get, update, patch]
+  - apiGroups: [otilm.com]
+    resources: [platforms, connectors]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [otilm.com]
+    resources: [connectors]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [namespaces, configmaps, services, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, clusterrolebindings, roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, roles]
+    verbs: [escalate, bind]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingressclasses]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [traefik.io]
+    resources: [middlewares, tlsoptions]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: appliance-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# Copies of the referenced Secrets and the connector key Secrets in the platform namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: ilm
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: ilm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# Talos creates the Secret appliance-manager in appliance-system with a talosconfig for this role.
+apiVersion: talos.dev/v1alpha1
+kind: ServiceAccount
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+spec:
+  roles:
+    - os:admin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+  labels:
+    app.kubernetes.io/name: appliance-manager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: appliance-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: appliance-manager
+    spec:
+      serviceAccountName: appliance-manager
+      hostNetwork: true
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+        - key: node.cilium.io/agent-not-ready
+          operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: appliance.invalid/manager:release
+          env:
+            - name: KUBERNETES_SERVICE_HOST
+              value: 127.0.0.1
+            - name: KUBERNETES_SERVICE_PORT
+              value: "7445"
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: talos-secrets
+              mountPath: /var/run/secrets/talos.dev
+              readOnly: true
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/mnt/data/appliance
+            type: DirectoryOrCreate
+        - name: talos-secrets
+          secret:
+            secretName: appliance-manager
+            optional: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: appliances.appliance.otilm.com
+spec:
+  group: appliance.otilm.com
+  names:
+    kind: Appliance
+    listKind: ApplianceList
+    plural: appliances
+    singular: appliance
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Appliance is the single cluster-scoped resource that describes
+          the whole appliance.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ApplianceSpec is the desired configuration of the appliance.
+            properties:
+              dns:
+                description: DNSSpec lists the DNS servers.
+                properties:
+                  servers:
+                    items:
+                      maxLength: 45
+                      type: string
+                      x-kubernetes-validations:
+                      - message: dns.servers entries must be IP addresses
+                        rule: isIP(self)
+                    maxItems: 8
+                    type: array
+                type: object
+              mail:
+                description: MailSpec is the outbound SMTP configuration.
+                properties:
+                  credentialsRef:
+                    description: CredentialsRef names the Secret holding the SMTP
+                      credentials.
+                    type: string
+                  from:
+                    type: string
+                  host:
+                    type: string
+                  port:
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  security:
+                    enum:
+                    - none
+                    - starttls
+                    - tls
+                    type: string
+                required:
+                - from
+                - host
+                - port
+                - security
+                type: object
+              node:
+                description: NodeSpec is the network identity of the node.
+                properties:
+                  address:
+                    description: Address is the node address in CIDR notation; empty
+                      means DHCP.
+                    maxLength: 49
+                    type: string
+                    x-kubernetes-validations:
+                    - message: node.address must be empty or an IPv4 CIDR
+                      rule: self == '' || (isCIDR(self) && cidr(self).ip().family()
+                        == 4)
+                  gateway:
+                    maxLength: 45
+                    type: string
+                    x-kubernetes-validations:
+                    - message: node.gateway must be empty or an IPv4 address
+                      rule: self == '' || (isIP(self) && ip(self).family() == 4)
+                  hostName:
+                    description: HostName is the fully qualified host name of the
+                      appliance.
+                    maxLength: 253
+                    pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$
+                    type: string
+                required:
+                - hostName
+                type: object
+                x-kubernetes-validations:
+                - message: node.address cannot be changed once set
+                  rule: '!has(oldSelf.address) || size(oldSelf.address) == 0 || (has(self.address)
+                    && self.address == oldSelf.address)'
+              ntp:
+                description: NTPSpec lists the NTP servers.
+                properties:
+                  servers:
+                    items:
+                      type: string
+                    type: array
+                type: object
+              platform:
+                description: PlatformSpec selects the ILM platform to install.
+                properties:
+                  components:
+                    items:
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                  hostName:
+                    type: string
+                  ilmVersion:
+                    type: string
+                type: object
+              proxy:
+                description: ProxySpec is the outbound HTTP proxy configuration.
+                properties:
+                  http:
+                    type: string
+                  https:
+                    type: string
+                  noProxy:
+                    type: string
+                type: object
+              registries:
+                items:
+                  description: RegistrySpec is a container registry with optional
+                    credentials.
+                  properties:
+                    credentialsRef:
+                      description: CredentialsRef names the Secret holding the registry
+                        credentials.
+                      type: string
+                    host:
+                      type: string
+                  required:
+                  - host
+                  type: object
+                type: array
+              tls:
+                description: TLSSpec selects the certificate served by the platform.
+                properties:
+                  secretRef:
+                    description: SecretRef names the Secret holding the certificate
+                      when Source is secret.
+                    type: string
+                  source:
+                    default: builtin
+                    enum:
+                    - builtin
+                    - secret
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: tls.secretRef is required when tls.source is secret
+                  rule: self.source != 'secret' || (has(self.secretRef) && size(self.secretRef)
+                    > 0)
+              trust:
+                description: Trust references the Secret key holding the PEM bundle
+                  of additional trusted CAs.
+                properties:
+                  key:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - key
+                - name
+                type: object
+            required:
+            - node
+            type: object
+          status:
+            description: ApplianceStatus is the observed state of the appliance.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              nodeAddress:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              rebootRequired:
+                type: boolean
+              setup:
+                enum:
+                - part1
+                - part2
+                - complete
+                type: string
+              versions:
+                description: Versions are the component versions running on the appliance.
+                properties:
+                  appliance:
+                    type: string
+                  ilm:
+                    type: string
+                  kubernetes:
+                    type: string
+                  operator:
+                    type: string
+                  talos:
+                    type: string
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: the Appliance must be named appliance
+          rule: self.metadata.name == 'appliance'
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -25,7 +25,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: release validate [-f release.yaml] [--addons addons]")
-	fmt.Fprintln(os.Stderr, "       release images [-f release.yaml] --arch amd64|arm64 [--installer <ref>]")
+	fmt.Fprintln(os.Stderr, "       release images [-f release.yaml] --arch amd64|arm64 [--installer <ref>] [--manager <ref>]")
 	os.Exit(2)
 }
 
@@ -55,6 +55,7 @@ func images(args []string) int {
 	file := fs.String("f", "release.yaml", "release manifest")
 	arch := fs.String("arch", "", "target architecture, amd64 or arm64")
 	installer := fs.String("installer", "", "installer image reference to add")
+	manager := fs.String("manager", "", "manager image reference to add")
 	_ = fs.Parse(args)
 	if *arch != "amd64" && *arch != "arm64" {
 		fmt.Fprintln(os.Stderr, "--arch must be amd64 or arm64")
@@ -66,7 +67,7 @@ func images(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	for _, ref := range release.CacheList(m, *arch, *installer) {
+	for _, ref := range release.CacheList(m, *arch, *installer, *manager) {
 		fmt.Println(ref)
 	}
 	return 0

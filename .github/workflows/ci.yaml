@@ -18,13 +18,23 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
+      - name: Verify generated files are up to date
+        run: |
+          make generate manifests
+          git diff --exit-code api config addons/manager.yaml release.yaml
+          untracked="$(git status --porcelain -- api config addons/manager.yaml release.yaml)"
+          if [ -n "$untracked" ]; then
+            echo "::error::Regeneration produced files that are not committed:"
+            echo "$untracked"
+            exit 1
+          fi
       # make test downloads the envtest Kubernetes binaries through setup-envtest.
       - name: Run tests with coverage
         run: make test
-      # cmd/ only wires flags to internal/ and is excluded from coverage, as in sonar-project.properties.
+      # cmd/ only wires flags and the controller manager to internal/ and is excluded from coverage, as in sonar-project.properties; so is generated code.
       - name: Verify coverage threshold
         run: |
-          grep -v '/cmd/' coverage.out > coverage-internal.out
+          grep -v -e '/cmd/' -e '/zz_generated' coverage.out > coverage-internal.out
           total=$(go tool cover -func=coverage-internal.out | awk '/^total:/ {sub("%", "", $3); print $3}')
           echo "Total coverage: ${total}%"
           if [ "$(echo "$total < 80" | bc)" -eq 1 ]; then
@@ -94,6 +104,31 @@ jobs:
         run: >-
           go run sigs.k8s.io/kind@v0.33.0 create cluster --wait 2m
           --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      # Talos serves its ServiceAccount resource itself; kind gets a stand-in with the same schema for manager.yaml.
+      - name: Add the Talos ServiceAccount resource
+        run: |
+          kubectl apply --server-side -f - <<'YAML'
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: serviceaccounts.talos.dev
+          spec:
+            group: talos.dev
+            names: {kind: ServiceAccount, listKind: ServiceAccountList, plural: serviceaccounts, singular: serviceaccount}
+            scope: Namespaced
+            versions:
+              - name: v1alpha1
+                served: true
+                storage: true
+                schema:
+                  openAPIV3Schema:
+                    type: object
+                    properties:
+                      spec:
+                        type: object
+                        properties:
+                          roles: {type: array, items: {type: string}}
+          YAML
       # A client dry run validates no fields, so every file is dry-run on the server instead.
       # Namespaces and CRDs are created for real first, as the earlier steps would have.
       - name: Dry-run every add-on manifest

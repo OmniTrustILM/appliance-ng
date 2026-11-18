@@ -2,6 +2,7 @@ package machineconfig
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,32 @@ func TestGenerateSyncsImageLayers(t *testing.T) {
 	}
 
 	t.Error("CRICustomizationConfig missing")
+}
+
+func TestGenerateEnablesTalosAPIAccess(t *testing.T) {
+	out := mustGenerate(t, testInput())
+
+	if strings.Contains(string(out), "kubernetesTalosAPIAccess") {
+		t.Error("machine.features.kubernetesTalosAPIAccess conflicts with KubeTalosAPIAccessConfig")
+	}
+
+	cfg, err := configloader.NewFromBytes(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	access := cfg.K8sTalosAPIAccessConfig()
+	if access == nil {
+		t.Fatal("KubeTalosAPIAccessConfig missing")
+	}
+
+	if got := access.AllowedRoles(); !slices.Equal(got, []string{"os:admin"}) {
+		t.Errorf("allowed roles = %v", got)
+	}
+
+	if got := access.AllowedKubernetesNamespaces(); !slices.Equal(got, []string{"appliance-system"}) {
+		t.Errorf("allowed namespaces = %v", got)
+	}
 }
 
 func TestGenerateRejectsUnusableNodeIP(t *testing.T) {

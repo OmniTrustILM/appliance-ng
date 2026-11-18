@@ -24,7 +24,7 @@ current-context: admin
 `
 
 func TestLocalRESTConfigOverridesHostOnly(t *testing.T) {
-	cfg, err := localRESTConfig([]byte(staleKubeconfig))
+	cfg, err := LocalRESTConfig([]byte(staleKubeconfig))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestLocalRESTConfigOverridesHostOnly(t *testing.T) {
 }
 
 func TestLocalRESTConfigRejectsInvalidKubeconfig(t *testing.T) {
-	if _, err := localRESTConfig([]byte("not a kubeconfig")); err == nil {
+	if _, err := LocalRESTConfig([]byte("not a kubeconfig")); err == nil {
 		t.Fatal("expected an error")
 	}
 }

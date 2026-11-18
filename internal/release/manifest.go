@@ -17,8 +17,12 @@ type Manifest struct {
 	Talos          TalosPin         `json:"talos"`
 	Platform       PlatformDefaults `json:"platform"`
 	ImplicitImages []string         `json:"implicitImages,omitempty"`
-	Addons         []AddonFile      `json:"addons"`
-	Images         []Image          `json:"images"`
+	// ManagerImage is the placeholder reference the add-ons use for the Appliance Manager image, which is built
+	// with the appliance and has no fixed reference; the first-boot service replaces it with the built one.
+	ManagerImage string      `json:"managerImage,omitempty"`
+	Addons       []AddonFile `json:"addons"`
+	Images       []Image     `json:"images"`
+	Connectors   []Connector `json:"connectors,omitempty"`
 }
 
 // TalosPin pins the Talos release the appliance is built on.
@@ -36,6 +40,43 @@ type Image struct {
 	Digest string `json:"digest"`
 	// Arches limits the image to the listed architectures; empty means all.
 	Arches []string `json:"arches,omitempty"`
+}
+
+// Database kinds of Connector.Database.
+const (
+	// DatabaseJDBC passes the database as JDBC_URL, JDBC_USERNAME and JDBC_PASSWORD.
+	DatabaseJDBC = "jdbc"
+	// DatabaseEnv passes the database as DATABASE_HOST, _PORT, _NAME, _SCHEMA, _USER and _PASSWORD.
+	DatabaseEnv = "env"
+)
+
+// Connector settings of Connector.Settings: the Appliance areas a connector reads.
+const (
+	SettingProxy = "proxy"
+	SettingTrust = "trust"
+	SettingMail  = "mail"
+)
+
+// Connector is an ILM connector the appliance can install.
+type Connector struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	// Image is the reference with its tag; it must also be listed in Images.
+	Image  string `json:"image"`
+	Digest string `json:"digest"`
+	Port   int32  `json:"port"`
+	// Private images need registry credentials and are not cached.
+	Private bool `json:"private,omitempty"`
+	// HealthPath is the liveness path; a path ending in /liveness has a /readiness sibling.
+	HealthPath string            `json:"healthPath"`
+	Env        map[string]string `json:"env,omitempty"`
+	Settings   []string          `json:"settings,omitempty"`
+	// Database is DatabaseJDBC, DatabaseEnv or empty for none.
+	Database string `json:"database,omitempty"`
+	// Schema is the connector's database schema when the connector reads it from its environment.
+	Schema string `json:"schema,omitempty"`
+	// Keys names the variables that hold a random key generated on the device.
+	Keys []string `json:"keys,omitempty"`
 }
 
 // AddonFile is a manifest file applied to the cluster at install time.
@@ -60,13 +101,18 @@ func Load(path string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return Parse(data, path)
+}
+
+// Parse checks and returns the manifest in data; source names it in errors.
+func Parse(data []byte, source string) (*Manifest, error) {
 	var m Manifest
 	strict := func(d *json.Decoder) *json.Decoder {
 		d.DisallowUnknownFields()
 		return d
 	}
 	if err := yaml.Unmarshal(data, &m, strict); err != nil {
-		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
+		return nil, fmt.Errorf("parse manifest %s: %w", source, err)
 	}
 	for _, img := range m.Images {
 		if err := img.check(); err != nil {

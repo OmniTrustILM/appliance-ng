@@ -1,0 +1,241 @@
+# The Appliance Manager. make manifests writes addons/manager.yaml from this file and the Appliance CRD.
+# The first-boot service applies it after bootstrap and replaces the image placeholder (managerImage in
+# release.yaml) with the manager image built with the appliance.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: appliance-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+# The platform namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+---
+# Every kind the add-on manifests and the reconciler apply, read access for the readiness waits, and events.
+# The add-ons install ClusterRoles and bindings that grant permissions the manager does not hold itself, so it needs
+# escalate and bind on roles and clusterroles. With them this ServiceAccount is effectively cluster-admin, and with
+# the Talos os:admin role of its talosconfig it is effectively node-admin as well.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-manager
+rules:
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances]
+    verbs: [get, list, watch, update, patch]
+  # The reconciler's controller owner references set blockOwnerDeletion, which needs update on the owner's finalizers.
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances/finalizers]
+    verbs: [update]
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances/status]
+    verbs: [get, update, patch]
+  - apiGroups: [otilm.com]
+    resources: [platforms, connectors]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [otilm.com]
+    resources: [connectors]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [namespaces, configmaps, services, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, clusterrolebindings, roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, roles]
+    verbs: [escalate, bind]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingressclasses]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [traefik.io]
+    resources: [middlewares, tlsoptions]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: appliance-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# Copies of the referenced Secrets and the connector key Secrets in the platform namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: ilm
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: ilm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# Talos creates the Secret appliance-manager in appliance-system with a talosconfig for this role.
+apiVersion: talos.dev/v1alpha1
+kind: ServiceAccount
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+spec:
+  roles:
+    - os:admin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+  labels:
+    app.kubernetes.io/name: appliance-manager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: appliance-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: appliance-manager
+    spec:
+      serviceAccountName: appliance-manager
+      hostNetwork: true
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+        - key: node.cilium.io/agent-not-ready
+          operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: appliance.invalid/manager:release
+          env:
+            - name: KUBERNETES_SERVICE_HOST
+              value: 127.0.0.1
+            - name: KUBERNETES_SERVICE_PORT
+              value: "7445"
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: talos-secrets
+              mountPath: /var/run/secrets/talos.dev
+              readOnly: true
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/mnt/data/appliance
+            type: DirectoryOrCreate
+        - name: talos-secrets
+          secret:
+            secretName: appliance-manager
+            optional: true

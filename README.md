@@ -29,8 +29,8 @@ key material, and prints `PASS <seconds to ready>` or `FAIL <reason>`. The VM ge
 
 Hosts: macOS on Apple silicon for arm64 (QEMU from Homebrew, HVF), Linux with KVM for the host's architecture
 (`qemu-system-x86` and `ovmf` for amd64, `qemu-system-arm` and `qemu-efi-aarch64` for arm64). The VM forwards
-`127.0.0.1:18443` to the status endpoint, `127.0.0.1:10443` to the UI and `127.0.0.1:15000` to the Talos API. To run a
-VM by hand, use `test/boot/vm.sh start|stop|status`.
+`127.0.0.1:18443` to the console, `127.0.0.1:18444` to the status endpoint, `127.0.0.1:10443` to the UI and
+`127.0.0.1:15000` to the Talos API. To run a VM by hand, use `test/boot/vm.sh start|stop|status`.
 
 ## CI
 

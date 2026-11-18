@@ -5,7 +5,16 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net"
 	"net/netip"
 	"os"
@@ -20,6 +29,7 @@ import (
 	"github.com/cosi-project/runtime/pkg/state/impl/namespaced"
 	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
+	clientconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/container"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1"
 	"github.com/siderolabs/talos/pkg/machinery/meta"
@@ -30,7 +40,9 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/resources/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -53,9 +65,21 @@ type fakeMachine struct {
 	deadline     time.Time // deadline of the last Bootstrap call
 	meta         map[uint32]string
 	metaErr      error
+	applyErr     error
+	applyCalls   int
+	version      string
+	reboots      int
+	shutdowns    int
 }
 
+// authorize admits a caller with a verified client certificate, as apid does, or with the admin role metadata that
+// apid adds before it forwards a call to machined.
 func authorize(ctx context.Context) error {
+	if p, ok := peer.FromContext(ctx); ok {
+		if info, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(info.State.VerifiedChains) > 0 {
+			return nil
+		}
+	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	if v := md.Get("talos-role"); len(v) != 1 || v[0] != "os:admin" {
 		return status.Error(codes.PermissionDenied, "not authorized")
@@ -67,8 +91,32 @@ func (f *fakeMachine) ApplyConfiguration(ctx context.Context, req *machineapi.Ap
 	if err := authorize(ctx); err != nil {
 		return nil, err
 	}
+	f.applyCalls++
 	f.applied, f.applyMode = req.GetData(), req.GetMode()
-	return &machineapi.ApplyConfigurationResponse{}, nil
+	return &machineapi.ApplyConfigurationResponse{}, f.applyErr
+}
+
+func (f *fakeMachine) Version(ctx context.Context, _ *emptypb.Empty) (*machineapi.VersionResponse, error) {
+	if err := authorize(ctx); err != nil {
+		return nil, err
+	}
+	return &machineapi.VersionResponse{Messages: []*machineapi.Version{{Version: &machineapi.VersionInfo{Tag: f.version}}}}, nil
+}
+
+func (f *fakeMachine) Reboot(ctx context.Context, _ *machineapi.RebootRequest) (*machineapi.RebootResponse, error) {
+	if err := authorize(ctx); err != nil {
+		return nil, err
+	}
+	f.reboots++
+	return &machineapi.RebootResponse{}, nil
+}
+
+func (f *fakeMachine) Shutdown(ctx context.Context, _ *machineapi.ShutdownRequest) (*machineapi.ShutdownResponse, error) {
+	if err := authorize(ctx); err != nil {
+		return nil, err
+	}
+	f.shutdowns++
+	return &machineapi.ShutdownResponse{}, nil
 }
 
 func (f *fakeMachine) Bootstrap(ctx context.Context, _ *machineapi.BootstrapRequest) (*machineapi.BootstrapResponse, error) {
@@ -594,4 +642,202 @@ func TestStreamsGiveUpWhenTheNodeDoesNotAnswer(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Kubeconfig did not give up")
 	}
+}
+func TestVersions(t *testing.T) {
+	talosVersion, k8sVersion, err := dialConfigured(t, &fakeMachine{version: "v1.14.5"}).Versions(context.Background())
+	if err != nil || talosVersion != "v1.14.5" || k8sVersion != "v1.37.1" {
+		t.Fatalf("got %q, %q, %v; want v1.14.5, v1.37.1", talosVersion, k8sVersion, err)
+	}
+}
+
+func TestVersionsWithoutTalosVersion(t *testing.T) {
+	if _, _, err := dialConfigured(t, &fakeMachine{}).Versions(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestVersionsWithoutRunningConfiguration(t *testing.T) {
+	n := dialFake(t, &fakeMachine{version: "v1.14.5"})
+	n.st = newState(t)
+	if _, _, err := n.Versions(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestImageTag(t *testing.T) {
+	for ref, want := range map[string]string{
+		"ghcr.io/siderolabs/kubelet:v1.37.1":                 "v1.37.1",
+		"ghcr.io/siderolabs/kubelet:v1.37.1@sha256:0123abcd": "v1.37.1",
+		"registry.local:5000/kubelet:v1.37.1":                "v1.37.1",
+		"registry.local:5000/kubelet":                        "",
+		"ghcr.io/siderolabs/kubelet@sha256:0123abcd":         "",
+	} {
+		if got := imageTag(ref); got != want {
+			t.Errorf("imageTag(%q) = %q, want %q", ref, got, want)
+		}
+	}
+}
+
+func TestRebootAndShutdown(t *testing.T) {
+	fake := &fakeMachine{}
+	n := dialFake(t, fake)
+	if err := n.Reboot(context.Background()); err != nil || fake.reboots != 1 {
+		t.Fatalf("Reboot: %v, %d calls", err, fake.reboots)
+	}
+	if err := n.Shutdown(context.Background()); err != nil || fake.shutdowns != 1 {
+		t.Fatalf("Shutdown: %v, %d calls", err, fake.shutdowns)
+	}
+}
+
+func TestRebootAndShutdownErrors(t *testing.T) {
+	n := dialFake(t, &fakeMachine{})
+	_ = n.Close()
+	if err := n.Reboot(context.Background()); err == nil {
+		t.Error("Reboot: expected error")
+	}
+	if err := n.Shutdown(context.Background()); err == nil {
+		t.Error("Shutdown: expected error")
+	}
+}
+
+// pki is a CA with a certificate and key it issued, PEM encoded.
+type pki struct {
+	ca, crt, key []byte
+}
+
+// newPKI issues a certificate for 127.0.0.1 that serves both as a server and as a client certificate.
+func newPKI(t *testing.T) pki {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCrt, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "os:admin"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCrt, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pki{
+		ca:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		crt: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		key: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	}
+}
+
+// serveTLS starts the fake service on 127.0.0.1 behind TLS that requires a client certificate issued by the CA
+// of server, and returns its endpoint.
+func serveTLS(t *testing.T, fake *fakeMachine, server pki) string {
+	t.Helper()
+	crt, err := tls.X509KeyPair(server.crt, server.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients := x509.NewCertPool()
+	clients.AppendCertsFromPEM(server.ca)
+	creds := credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{crt},
+		ClientCAs:    clients,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS13,
+	})
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := grpc.NewServer(grpc.Creds(creds))
+	machineapi.RegisterMachineServiceServer(srv, fake)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+	return lis.Addr().String()
+}
+
+// talosconfig returns a talosconfig that trusts ca and authenticates with the certificate and key of client.
+func talosconfig(t *testing.T, ca []byte, client *pki) []byte {
+	t.Helper()
+	tc := &clientconfig.Context{Endpoints: []string{"talos.invalid"}, CA: base64.StdEncoding.EncodeToString(ca)}
+	if client != nil {
+		tc.Crt = base64.StdEncoding.EncodeToString(client.crt)
+		tc.Key = base64.StdEncoding.EncodeToString(client.key)
+	}
+	out, err := (&clientconfig.Config{Context: "manager", Contexts: map[string]*clientconfig.Context{"manager": tc}}).Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestDialAPIRequiresClientCert(t *testing.T) {
+	server := newPKI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	t.Run("trusted client certificate", func(t *testing.T) {
+		fake := &fakeMachine{}
+		n, err := DialAPI(ctx, serveTLS(t, fake, server), talosconfig(t, server.ca, &server))
+		if err != nil {
+			t.Fatalf("DialAPI: %v", err)
+		}
+		t.Cleanup(func() { _ = n.(*node).Close() })
+		if err := n.Reboot(ctx); err != nil || fake.reboots != 1 {
+			t.Fatalf("Reboot over mutual TLS: %v, %d calls", err, fake.reboots)
+		}
+	})
+
+	t.Run("untrusted client certificate", func(t *testing.T) {
+		fake := &fakeMachine{}
+		stranger := newPKI(t)
+		n, err := DialAPI(ctx, serveTLS(t, fake, server), talosconfig(t, server.ca, &stranger))
+		if err != nil {
+			t.Fatalf("DialAPI: %v", err)
+		}
+		t.Cleanup(func() { _ = n.(*node).Close() })
+		if err := n.Reboot(ctx); err == nil || fake.reboots != 0 {
+			t.Fatalf("Reboot with an untrusted certificate: %v, %d calls", err, fake.reboots)
+		}
+	})
+
+	t.Run("no client certificate", func(t *testing.T) {
+		if _, err := DialAPI(ctx, serveTLS(t, &fakeMachine{}, server), talosconfig(t, server.ca, nil)); err == nil {
+			t.Fatal("DialAPI accepted a talosconfig without a client certificate")
+		}
+	})
+
+	t.Run("invalid talosconfig", func(t *testing.T) {
+		for name, cfg := range map[string][]byte{
+			"not yaml":   []byte("context: ["),
+			"no context": []byte("context: manager\n"),
+		} {
+			if _, err := DialAPI(ctx, "127.0.0.1:50000", cfg); err == nil {
+				t.Errorf("%s: expected error", name)
+			}
+		}
+	})
 }

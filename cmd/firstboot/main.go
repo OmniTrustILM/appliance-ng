@@ -1,5 +1,5 @@
 // Command firstboot runs on the appliance as a Talos system extension service. It configures the node,
-// bootstraps it, applies the add-ons and serves the setup status on GET /status.
+// bootstraps it, hands the setup over to the Appliance Manager and serves the setup status on GET /status.
 package main
 
 import (
@@ -15,25 +15,24 @@ import (
 	"syscall"
 	"time"
 
+	appliance "github.com/OmniTrustILM/appliance-ng"
 	"github.com/OmniTrustILM/appliance-ng/addons"
 	"github.com/OmniTrustILM/appliance-ng/internal/firstboot"
-	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
-// Set at build time with -ldflags "-X main.version=... -X main.installerImage=...".
+// Set at build time with -ldflags "-X main.version=... -X main.installerImage=... -X main.managerImage=...".
 var (
 	version        = "dev"
 	installerImage = ""
+	managerImage   = ""
 )
-
-// hostName is the name the appliance is reached under; it matches platform.hostName in release.yaml.
-const hostName = "ilm.appliance.internal"
 
 func main() {
 	socket := flag.String("socket", "/system/run/machined/machine.sock", "machined API socket")
-	listen := flag.String("listen", ":8443", "status server address")
+	listen := flag.String("listen", ":8444", "status server address")
 	clusterName := flag.String("cluster-name", "ilm", "Kubernetes cluster name")
 	flag.Parse()
 
@@ -49,15 +48,18 @@ func run(log *slog.Logger, socket, listen, clusterName string) error {
 	if installerImage == "" {
 		return errors.New("installer image not set at build time")
 	}
-	log.Info("first boot starting", "version", version, "installer", installerImage)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-	defer stop()
-
-	steps, err := kube.LoadSteps(addons.FS)
+	rel, err := release.Parse(appliance.ReleaseManifest, "release.yaml")
 	if err != nil {
 		return err
 	}
+	manager, err := firstboot.ManagerManifest(addons.FS, rel.ManagerImage, managerImage)
+	if err != nil {
+		return err
+	}
+	log.Info("first boot starting", "version", version, "installer", installerImage, "manager", managerImage)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
 	node, err := talos.Dial(ctx, socket)
 	if err != nil {
 		return err
@@ -79,15 +81,15 @@ func run(log *slog.Logger, socket, listen, clusterName string) error {
 
 	err = firstboot.Run(ctx, firstboot.Deps{
 		Node:           node,
-		NewCluster:     kube.NewLocalCluster,
-		Steps:          steps,
-		Addons:         addons.FS,
+		NewCluster:     firstboot.NewLocalCluster,
+		Manager:        manager,
 		Generate:       machineconfig.Generate,
 		Console:        openConsole(log),
 		Log:            log,
 		Retry:          5 * time.Second,
 		InstallerImage: installerImage,
-		HostName:       hostName,
+		HostName:       rel.Platform.HostName,
+		ILMVersion:     rel.Platform.ILMVersion,
 		ClusterName:    clusterName,
 		Version:        version,
 	}, store)
