@@ -248,6 +248,9 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	if err := r.createKeySecrets(ctx, connectors); err != nil {
 		return false, "", err
 	}
+	if _, err := r.apply(ctx, a, platform.TLSOption(p)); err != nil {
+		return false, "", err
+	}
 	applied, err := r.apply(ctx, a, p)
 	if err != nil {
 		return false, "", err

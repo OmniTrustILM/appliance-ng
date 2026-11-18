@@ -22,7 +22,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -47,6 +49,8 @@ var (
 	testRelease *release.Manifest
 	// operatorCRDs is the directory holding the CRDs of the ILM operator.
 	operatorCRDs string
+	// traefikCRDs is the directory holding the CRDs of Traefik.
+	traefikCRDs string
 )
 
 func TestMain(m *testing.M) {
@@ -69,8 +73,18 @@ func run(m *testing.M) int {
 		println("extract operator CRDs:", err.Error())
 		return 1
 	}
+	traefikCRDs, err = os.MkdirTemp("", "traefik-crds")
+	if err != nil {
+		println("create CRD dir:", err.Error())
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(traefikCRDs) }()
+	if err := extractCRDs(filepath.Join("..", "..", "addons", "traefik-crds.yaml"), traefikCRDs); err != nil {
+		println("extract Traefik CRDs:", err.Error())
+		return 1
+	}
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd"), crdDir},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd"), crdDir, traefikCRDs},
 		ErrorIfCRDPathMissing: true,
 	}
 	testConfig, err = env.Start()
@@ -200,6 +214,7 @@ func createAppliance(t *testing.T, spec v1alpha1.ApplianceSpec) {
 		_ = testClient.DeleteAllOf(ctx, &otilm.Platform{}, in)
 		_ = testClient.DeleteAllOf(ctx, &otilm.Connector{}, in)
 		_ = testClient.DeleteAllOf(ctx, &corev1.Secret{}, in)
+		_ = testClient.DeleteAllOf(ctx, tlsOption(), in)
 		_ = testClient.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(SystemNamespace))
 	})
 }
@@ -685,6 +700,12 @@ func setAvailable(t *testing.T, status metav1.ConditionStatus, generation int64)
 	}
 }
 
+func tlsOption() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "TLSOption"})
+	return u
+}
+
 func secret(t *testing.T, name string) *corev1.Secret {
 	t.Helper()
 	s := &corev1.Secret{}
@@ -701,6 +722,52 @@ func managedBy(obj metav1.Object, manager string) bool {
 		}
 	}
 	return false
+}
+
+func TestReconcileAppliesTheTLSOption(t *testing.T) {
+	ctx := context.Background()
+	tls := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "ilm-tls"},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: []byte("crt"), corev1.TLSPrivateKeyKey: []byte("key")},
+	}
+	if err := testClient.Create(ctx, tls); err != nil {
+		t.Fatal(err)
+	}
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec()})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	if got := tlsOptionCA(t); got != "ca-keypair" {
+		t.Errorf("TLSOption trusts %q, want ca-keypair with the edge's internal CA", got)
+	}
+
+	a := getAppliance(t)
+	opt := tlsOption()
+	if err := testClient.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.TLSOptionName}, opt); err != nil {
+		t.Fatal(err)
+	}
+	if !metav1.IsControlledBy(opt, a) || !managedBy(opt, fieldManager) {
+		t.Errorf("TLSOption owners %+v managers %+v, want the Appliance and %s", opt.GetOwnerReferences(), opt.GetManagedFields(), fieldManager)
+	}
+
+	a.Spec.TLS = v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceSecret, SecretRef: "ilm-tls"}
+	if err := testClient.Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	runReconcile(t, r)
+	if got := tlsOptionCA(t); got != "admin-ca-keypair" {
+		t.Errorf("TLSOption trusts %q, want admin-ca-keypair once the edge serves a Secret", got)
+	}
+}
+
+func tlsOptionCA(t *testing.T) string {
+	t.Helper()
+	opt := tlsOption()
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: platform.TLSOptionName}, opt); err != nil {
+		t.Fatal(err)
+	}
+	names, _, _ := unstructured.NestedStringSlice(opt.Object, "spec", "clientAuth", "secretNames")
+	return strings.Join(names, ",")
 }
 
 func TestReconcileWritesThePullSecret(t *testing.T) {

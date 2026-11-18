@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
@@ -276,5 +277,34 @@ func TestSplitTag(t *testing.T) {
 		if repository, tag := splitTag(ref); repository != want[0] || tag != want[1] {
 			t.Errorf("splitTag(%q) = %q, %q, want %q, %q", ref, repository, tag, want[0], want[1])
 		}
+	}
+}
+
+func TestTLSOptionTrustsTheAdministratorCA(t *testing.T) {
+	tests := map[string]struct {
+		secrets SecretNames
+		want    string
+	}{
+		"internal TLS": {SecretNames{}, "ca-keypair"},
+		"secret TLS":   {SecretNames{TLS: TLSSecretName}, "admin-ca-keypair"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			p, _, err := Render(defaultAppliance(), loadManifest(t), tt.secrets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := TLSOption(p)
+			if got.GetKind() != "TLSOption" || got.GetAPIVersion() != "traefik.io/v1alpha1" || got.GetNamespace() != Namespace || got.GetName() != TLSOptionName {
+				t.Errorf("identity %s %s %s/%s", got.GetAPIVersion(), got.GetKind(), got.GetNamespace(), got.GetName())
+			}
+			if ref := p.Spec.Edge.Annotations["traefik.ingress.kubernetes.io/router.tls.options"]; ref != Namespace+"-"+TLSOptionName+"@kubernetescrd" {
+				t.Errorf("the Ingress selects %q, not the rendered TLSOption", ref)
+			}
+			auth, _, _ := unstructured.NestedMap(got.Object, "spec", "clientAuth")
+			if !reflect.DeepEqual(auth, map[string]any{"clientAuthType": "VerifyClientCertIfGiven", "secretNames": []any{tt.want}}) {
+				t.Errorf("clientAuth = %v, want VerifyClientCertIfGiven against %s", auth, tt.want)
+			}
+		})
 	}
 }

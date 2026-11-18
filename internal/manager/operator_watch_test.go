@@ -34,10 +34,10 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 // TestManagerStartsBeforeTheOperatorIsInstalled runs the manager on a cluster without the operator's CRDs, as on a
-// fresh appliance where the manager installs the operator itself.
+// fresh appliance where the manager installs the operator itself after Traefik.
 func TestManagerStartsBeforeTheOperatorIsInstalled(t *testing.T) {
 	env := &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd")},
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd"), traefikCRDs},
 		ErrorIfCRDPathMissing: true,
 	}
 	cfg, err := env.Start()

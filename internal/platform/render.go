@@ -10,6 +10,7 @@ import (
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
@@ -38,6 +39,16 @@ const TLSSecretName = "appliance-tls"
 // TrustKey is the key of the trust Secret holding the CA bundle, the operator's default
 // for trustedCertificates.
 const TrustKey = "ca.crt"
+
+// TLSOptionName is the Traefik TLSOption of the edge's client-certificate login; the edge's Ingress selects it.
+const TLSOptionName = "ilm-mtls"
+
+// The Secrets holding the CA operator v1.1.0 issues the generated administrator certificate from: the edge's
+// internal CA when the edge provisions it, a dedicated administrator CA otherwise.
+const (
+	edgeCASecret  = "ca-keypair"
+	adminCASecret = "admin-ca-keypair"
+)
 
 // SecretNames names the Secrets already written in the ilm namespace; empty means not present.
 type SecretNames struct {
@@ -93,6 +104,29 @@ func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNa
 		p.Spec.Common.Image.PullSecrets = []string{secrets.PullSecret}
 	}
 	return p, nil
+}
+
+// TLSOption returns the Traefik TLSOption that asks for an optional client certificate and verifies it against
+// the CA the operator issues the generated administrator certificate of p from.
+func TLSOption(p *otilm.Platform) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "traefik.io/v1alpha1",
+		"kind":       "TLSOption",
+		"metadata":   map[string]any{"name": TLSOptionName, "namespace": p.Namespace},
+		"spec": map[string]any{"clientAuth": map[string]any{
+			"clientAuthType": "VerifyClientCertIfGiven",
+			"secretNames":    []any{adminCA(p.Spec.Edge)},
+		}},
+	}}
+}
+
+// adminCA mirrors the operator: the edge provisions the internal CA when it is enabled with tls.source internal,
+// the default.
+func adminCA(edge *otilm.EdgeSpec) string {
+	if edge != nil && edge.Enabled && (edge.TLS == nil || edge.TLS.Source == "" || edge.TLS.Source == "internal") {
+		return edgeCASecret
+	}
+	return adminCASecret
 }
 
 // edgeTLS serves the TLS Secret once one exists and the edge's internal certificate before.
