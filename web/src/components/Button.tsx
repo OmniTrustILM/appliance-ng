@@ -20,7 +20,7 @@ const variants = {
   ghost:
     'h-10 rounded-md border-transparent bg-transparent px-[18px] text-content-muted hover:bg-surface-hover hover:text-content',
   'on-brand':
-    'h-8 rounded-md border-white/55 bg-transparent px-3 text-[13px] text-white hover:bg-white/12 focus-visible:outline-white',
+    'h-8 rounded-md border-white/55 bg-transparent px-3 text-[13px] text-white hover:bg-blue-700 dark:hover:bg-white/12 focus-visible:outline-white',
 };
 
 type Variant = keyof typeof variants;
