@@ -6,6 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -109,5 +110,36 @@ current-context: admin
 	}
 	if _, err := NewLocalCluster([]byte("not a kubeconfig")); err == nil {
 		t.Error("invalid kubeconfig accepted")
+	}
+}
+
+func TestApplianceStateIgnoresStaleConditions(t *testing.T) {
+	const generation = 3
+	cond := func(kind string, observed int64, message string) metav1.Condition {
+		return metav1.Condition{Type: kind, Status: metav1.ConditionTrue, ObservedGeneration: observed, Message: message}
+	}
+	addons := cond(v1alpha1.ConditionAddonsReady, generation, "all add-ons are ready")
+	platform := cond(v1alpha1.ConditionPlatformReady, generation, "the Platform is available")
+	staleAddons := cond(v1alpha1.ConditionAddonsReady, generation-1, "all add-ons are ready")
+	stalePlatform := cond(v1alpha1.ConditionPlatformReady, generation-1, "the Platform is available")
+
+	tests := map[string]struct {
+		conditions  []metav1.Condition
+		wantState   State
+		wantMessage string
+	}{
+		"current":        {[]metav1.Condition{addons, platform}, StateReady, "ILM Platform is ready"},
+		"stale add-ons":  {[]metav1.Condition{staleAddons, platform}, StateAddons, "waiting for the Appliance Manager"},
+		"stale platform": {[]metav1.Condition{addons, stalePlatform}, StatePlatform, "waiting for the ILM Platform"},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			a := &v1alpha1.Appliance{ObjectMeta: metav1.ObjectMeta{Generation: generation}}
+			a.Status.Conditions = tt.conditions
+			state, message := applianceState(a)
+			if state != tt.wantState || message != tt.wantMessage {
+				t.Errorf("state %q %q, want %q %q", state, message, tt.wantState, tt.wantMessage)
+			}
+		})
 	}
 }

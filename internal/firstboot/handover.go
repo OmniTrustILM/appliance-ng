@@ -164,21 +164,27 @@ func (r *runner) mirrorPass(ctx context.Context, cluster Cluster) error {
 }
 
 // applianceState maps the Appliance conditions to the setup state: the add-ons until they are ready, then the
-// platform until it is ready.
+// platform until it is ready. A condition counts as ready only for the Appliance's current generation.
 func applianceState(a *v1alpha1.Appliance) (State, string) {
 	addons := meta.FindStatusCondition(a.Status.Conditions, v1alpha1.ConditionAddonsReady)
-	if addons == nil || addons.Status != metav1.ConditionTrue {
-		return StateAddons, conditionMessage(addons, "waiting for the Appliance Manager")
+	if !currentlyTrue(addons, a.Generation) {
+		return StateAddons, conditionMessage(addons, a.Generation, "waiting for the Appliance Manager")
 	}
 	platform := meta.FindStatusCondition(a.Status.Conditions, v1alpha1.ConditionPlatformReady)
-	if platform == nil || platform.Status != metav1.ConditionTrue {
-		return StatePlatform, conditionMessage(platform, "waiting for the ILM Platform")
+	if !currentlyTrue(platform, a.Generation) {
+		return StatePlatform, conditionMessage(platform, a.Generation, "waiting for the ILM Platform")
 	}
 	return StateReady, "ILM Platform is ready"
 }
 
-func conditionMessage(c *metav1.Condition, fallback string) string {
-	if c == nil || c.Message == "" {
+func currentlyTrue(c *metav1.Condition, generation int64) bool {
+	return c != nil && c.Status == metav1.ConditionTrue && c.ObservedGeneration == generation
+}
+
+// conditionMessage returns the condition's message, or fallback when there is none or it describes an older
+// generation of the Appliance.
+func conditionMessage(c *metav1.Condition, generation int64, fallback string) string {
+	if c == nil || c.Message == "" || c.ObservedGeneration != generation {
 		return fallback
 	}
 	return c.Message
