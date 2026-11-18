@@ -33,13 +33,32 @@ var patchFS embed.FS
 
 var patchTemplates = template.Must(template.ParseFS(patchFS, "patches/*.yaml"))
 
-// Input describes the node to generate the configuration for.
+// Input describes the node to generate the configuration for. Handover carries secrets: an Input is never logged.
 type Input struct {
 	ClusterName    string
 	NodeIP         string
 	InstallerImage string
-	// HostName is not part of the generated configuration: the node keeps the name it gets from DHCP.
+	// HostName is the fully qualified host name of the node; empty keeps the name Talos chooses.
 	HostName string
+	// Link is the interface that holds the node address; it gets the static address.
+	Link string
+	// Address is the static node address; the zero Prefix keeps the address DHCP delivers. NodeIP must be its address.
+	Address netip.Prefix
+	// Gateway is the default gateway of the static address.
+	Gateway netip.Addr
+	// DNS lists the name servers; empty keeps the ones Talos uses.
+	DNS []netip.Addr
+	// NTP lists the time servers, host names or addresses; empty keeps the Talos default.
+	NTP []string
+	// Proxy is the outbound HTTP proxy, if any.
+	Proxy *Proxy
+	// Handover is the content of the hand-over file mounted into the firstboot service, if any.
+	Handover []byte
+}
+
+// Proxy is the outbound HTTP proxy of the node and its services.
+type Proxy struct {
+	HTTP, HTTPS, NoProxy string
 }
 
 // metalMode is the validation mode of a bare-metal node that installs itself to disk.
@@ -58,6 +77,10 @@ func Generate(in Input) ([]byte, error) {
 
 	if in.InstallerImage == "" {
 		return nil, errors.New("installer image is required")
+	}
+
+	if err := checkNetwork(in, addr); err != nil {
+		return nil, err
 	}
 
 	bundle, err := secrets.NewBundle(secrets.NewClock(), config.TalosVersionCurrent)
@@ -82,6 +105,13 @@ func Generate(in Input) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	nodePatches, err := nodePatches(in)
+	if err != nil {
+		return nil, err
+	}
+
+	patches = append(patches, nodePatches...)
 
 	patched, err := configpatcher.Apply(configpatcher.WithConfig(base), patches)
 	if err != nil {

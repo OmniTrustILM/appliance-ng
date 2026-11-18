@@ -291,14 +291,15 @@ func TestMetalMode(t *testing.T) {
 	}
 }
 
-// TestWriteSample writes one generated configuration for validation with talosctl, only when asked to.
+// TestWriteSample writes one generated configuration with a static network for validation with talosctl, only
+// when asked to.
 func TestWriteSample(t *testing.T) {
 	path := os.Getenv("MACHINECONFIG_OUT")
 	if path == "" {
 		t.Skip("MACHINECONFIG_OUT not set")
 	}
 
-	if err := os.WriteFile(path, mustGenerate(t, testInput()), 0o600); err != nil {
+	if err := os.WriteFile(path, mustGenerate(t, staticInput()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

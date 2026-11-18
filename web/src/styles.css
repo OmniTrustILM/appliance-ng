@@ -1,0 +1,110 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1b1f24;
+  background: #f5f6f8;
+  --accent: #0b5cad;
+  --error: #b42318;
+  --muted: #6b7280;
+}
+
+body {
+  margin: 0;
+}
+
+.layout-header {
+  padding: 0.75rem 1.5rem;
+  background: #1b1f24;
+  color: #fff;
+  font-weight: 600;
+}
+
+.layout-main {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+}
+
+.field input {
+  padding: 0.5rem;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.field input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 0.875rem;
+}
+
+.steps {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+
+.steps .done {
+  color: inherit;
+}
+
+.steps [aria-current='step'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.form-error {
+  color: var(--error);
+}
+
+.form-warning {
+  display: block;
+  margin: 1em 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid #b54708;
+  background: #fffaeb;
+}
+
+fieldset {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+}
+
+fieldset label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.qr {
+  display: block;
+  width: 14rem;
+  height: 14rem;
+}
+
+dt {
+  font-weight: 600;
+}
+
+dd {
+  margin: 0 0 0.5rem;
+}
+
+button {
+  margin-right: 0.5rem;
+  padding: 0.5rem 1rem;
+  font: inherit;
+}

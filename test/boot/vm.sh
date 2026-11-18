@@ -14,7 +14,8 @@
 # ovmf package, arm64 with AAVMF from qemu-efi-aarch64). The guest has no route out (restrict=on) and a
 # virtio-rng device. Host forwards, bound to 127.0.0.1: 18443->8443 (console), 18444->8444 (status), 10443->443 (UI),
 # 15000->50000 (apid).
-# CPUS, MEM and DISK override 4 / 12G / 50G (DISK applies when the disk is created). Serial log: <dir>/serial.log.
+# CPUS, MEM and DISK override 4 / 12G / 50G (DISK applies when the disk is created). SMBIOS_OEM, when set, is passed
+# to the guest as an SMBIOS type 11 OEM string (no commas). Serial log: <dir>/serial.log.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -100,6 +101,8 @@ start() {
 
   local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:18444-:8444"
   fwd+=",hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
+  local smbios=()
+  if [[ -n "${SMBIOS_OEM:-}" ]]; then smbios=(-smbios "type=11,value=$SMBIOS_OEM"); fi
   : >"$dir/serial.log"
   "$QEMU" -name "appliance-$arch-$mode" "${MACHINE[@]}" -smp "${CPUS:-4}" -m "${MEM:-12G}" \
     -drive "if=pflash,format=raw,readonly=on,file=$CODE" \
@@ -107,6 +110,7 @@ start() {
     "${drives[@]}" \
     -netdev "user,id=n0,restrict=on,$fwd" -device virtio-net-pci,netdev=n0 \
     -device virtio-rng-pci \
+    "${smbios[@]}" \
     -display none \
     -serial "file:$dir/serial.log" \
     -pidfile "$dir/qemu.pid" -daemonize

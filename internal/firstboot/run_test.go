@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -16,7 +17,9 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
@@ -64,6 +67,10 @@ type fakeNode struct {
 	marked       bool // the ready marker, which survives reboots and resets
 	markedErr    error
 	markFail     error // fails every MarkReady call while set
+	network      talos.Network
+	networkErr   error
+	handover     []byte // the hand-over file in the machine configuration
+	handoverErr  error
 
 	stageCalls, addrCalls, bootstrapCalls, kubeCalls, brokenCalls int
 	applied                                                       [][]byte
@@ -141,9 +148,18 @@ var errNotUsed = errors.New("not used by the first-boot service")
 
 func (*fakeNode) PatchConfig(context.Context, []byte) error                   { return errNotUsed }
 func (*fakeNode) RemoveExtensionConfig(context.Context, string, string) error { return errNotUsed }
-func (*fakeNode) Versions(context.Context) (string, string, error)            { return "", "", errNotUsed }
-func (*fakeNode) Reboot(context.Context) error                                { return errNotUsed }
-func (*fakeNode) Shutdown(context.Context) error                              { return errNotUsed }
+
+func (n *fakeNode) ExtensionConfigFile(_ context.Context, name, file string) ([]byte, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if name != machineconfig.HandoverService || file != machineconfig.HandoverPath {
+		return nil, nil
+	}
+	return n.handover, n.handoverErr
+}
+func (*fakeNode) Versions(context.Context) (string, string, error) { return "", "", errNotUsed }
+func (*fakeNode) Reboot(context.Context) error                     { return errNotUsed }
+func (*fakeNode) Shutdown(context.Context) error                   { return errNotUsed }
 
 func (n *fakeNode) setMarkFail(err error) {
 	n.mu.Lock()
@@ -232,6 +248,12 @@ func (n *fakeNode) Addresses(context.Context) ([]netip.Prefix, error) {
 	return addrs, nil
 }
 
+func (n *fakeNode) Network(context.Context, netip.Addr) (talos.Network, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.network, n.networkErr
+}
+
 func (n *fakeNode) snapshot() fakeNode {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -251,7 +273,9 @@ type fakeCluster struct {
 	created   [][]byte
 	appliance *v1alpha1.Appliance // the spec as created or as it existed before
 	status    v1alpha1.ApplianceStatus
+	secrets   []*corev1.Secret // the Secrets created
 	applyErrs []error
+	createErr error
 	readErr   error
 	reads     int
 }
@@ -280,6 +304,13 @@ func (c *fakeCluster) Apply(_ context.Context, docs []byte) error {
 func (c *fakeCluster) Create(_ context.Context, docs []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.createErr != nil {
+		return c.createErr
+	}
+	if s := (&corev1.Secret{}); json.Unmarshal(docs, s) == nil && s.Kind == "Secret" {
+		c.secrets = append(c.secrets, s)
+		return nil
+	}
 	c.created = append(c.created, docs)
 	if c.appliance != nil {
 		return nil
@@ -300,11 +331,17 @@ func (c *fakeCluster) Appliance(context.Context) (*v1alpha1.Appliance, error) {
 	case c.readErr != nil:
 		return nil, c.readErr
 	case c.appliance == nil:
-		return nil, errors.New("appliance not found")
+		return nil, apierrors.NewNotFound(applianceResource.GroupResource(), v1alpha1.ApplianceName)
 	}
 	a := c.appliance.DeepCopy()
 	c.status.DeepCopyInto(&a.Status)
 	return a, nil
+}
+
+func (c *fakeCluster) createdSecrets() []*corev1.Secret {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.secrets)
 }
 
 func (c *fakeCluster) setConditions(conditions ...metav1.Condition) {
@@ -337,7 +374,36 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
+// fakeWizard answers wizard part 1 at once with in, or blocks until ctx is done when block is set.
+type fakeWizard struct {
+	mu    sync.Mutex
+	in    machineconfig.Input
+	block bool
+	ips   []netip.Addr
+}
+
+var wizardLines = []string{"ILM appliance v-test setup", "Open https://10.0.2.15:8443/setup/"}
+
+func (w *fakeWizard) Run(ctx context.Context, ip netip.Addr, show func([]string)) (machineconfig.Input, error) {
+	w.mu.Lock()
+	w.ips = append(w.ips, ip)
+	block := w.block
+	w.mu.Unlock()
+	show(wizardLines)
+	if block {
+		<-ctx.Done()
+		return machineconfig.Input{}, ctx.Err()
+	}
+	return w.in, nil
+}
+
+// wizardAnswers is what the fake wizard answers: a host name and a name server, keeping DHCP.
+func wizardAnswers() machineconfig.Input {
+	return machineconfig.Input{HostName: "ilm.example.com", DNS: []netip.Addr{netip.MustParseAddr("10.0.2.3")}, Handover: []byte(`{"version":1}`)}
+}
+
 type harness struct {
+	wizard  *fakeWizard
 	node    *fakeNode
 	cluster *fakeCluster
 	deps    Deps
@@ -355,9 +421,11 @@ func newHarness(node *fakeNode, cluster *fakeCluster) *harness {
 	if cluster == nil {
 		cluster = &fakeCluster{}
 	}
-	h := &harness{node: node, cluster: cluster, store: NewStatusStore(), log: &syncBuffer{}, console: &syncBuffer{}}
+	h := &harness{node: node, cluster: cluster, store: NewStatusStore(), log: &syncBuffer{}, console: &syncBuffer{},
+		wizard: &fakeWizard{in: wizardAnswers()}}
 	h.deps = Deps{
-		Node: node,
+		Node:   node,
+		Wizard: h.wizard,
 		NewCluster: func(kc []byte) (Cluster, error) {
 			if !bytes.Equal(kc, node.kubeconfig) {
 				return nil, errors.New("unexpected kubeconfig")
@@ -450,9 +518,13 @@ func TestRunConfiguresFromMaintenance(t *testing.T) {
 	if len(s.applied) != 1 || string(s.applied[0]) != "generated-config" {
 		t.Fatalf("applied %q, want the generated configuration once", s.applied)
 	}
-	want := machineconfig.Input{ClusterName: "ilm", NodeIP: "10.0.2.15", InstallerImage: testInstaller, HostName: testHostName}
-	if len(h.inputs) != 1 || h.inputs[0] != want {
+	want := wizardAnswers()
+	want.ClusterName, want.NodeIP, want.InstallerImage = "ilm", "10.0.2.15", testInstaller
+	if len(h.inputs) != 1 || !reflect.DeepEqual(h.inputs[0], want) {
 		t.Errorf("Generate inputs %+v, want [%+v]", h.inputs, want)
+	}
+	if ips := h.wizard.ips; len(ips) != 1 || ips[0] != netip.MustParseAddr("10.0.2.15") {
+		t.Errorf("wizard ran for %v, want once for 10.0.2.15", ips)
 	}
 	if got := h.store.Get().State; got != StateInstalling {
 		t.Errorf("state %q, want %q", got, StateInstalling)
@@ -743,6 +815,27 @@ func TestRunReportsAFailedApplianceRead(t *testing.T) {
 	h.waitState(t, StateReady)
 }
 
+func TestRunAsksAgainWhenTheNodeRefusesTheConfiguration(t *testing.T) {
+	node := &fakeNode{
+		stage: talos.StageMaintenance, stageAfter: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr},
+		kubeconfig: []byte("kubeconfig"),
+		applyErrs: []error{
+			status.Error(codes.Unavailable, "connection reset"),
+			status.Error(codes.InvalidArgument, "invalid configuration"),
+		},
+	}
+	h := newHarness(node, newReadyCluster())
+	h.start(t)
+
+	h.waitState(t, StateReady)
+	h.wizard.mu.Lock()
+	defer h.wizard.mu.Unlock()
+	// A lost answer retries the same answers; a refused configuration asks the administrator again.
+	if len(h.wizard.ips) != 2 {
+		t.Errorf("wizard ran %d times, want 2", len(h.wizard.ips))
+	}
+}
+
 func TestRunNeverLogsSecrets(t *testing.T) {
 	const secret, kubeSecret = "SECRET-MARKER", "KUBE-MARKER"
 	node := &fakeNode{
@@ -754,7 +847,14 @@ func TestRunNeverLogsSecrets(t *testing.T) {
 		kubeErrs:   []error{fmt.Errorf("fetch kubeconfig: truncated %q", kubeSecret)},
 	}
 	h := newHarness(node, newReadyCluster())
-	h.deps.Generate = func(machineconfig.Input) ([]byte, error) { return []byte("ca: " + secret), nil }
+	generated := false
+	h.deps.Generate = func(machineconfig.Input) ([]byte, error) {
+		if !generated {
+			generated = true
+			return nil, fmt.Errorf("generate: cannot encode the hand-over %q", secret)
+		}
+		return []byte("ca: " + secret), nil
+	}
 	newCluster := h.deps.NewCluster
 	failed := false
 	h.deps.NewCluster = func(kc []byte) (Cluster, error) {

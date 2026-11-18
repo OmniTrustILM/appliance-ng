@@ -1,0 +1,76 @@
+import { useCallback, useEffect, useState } from 'react';
+import { api, setCsrfToken } from '../api/client';
+import { StepIndicator } from '../components/StepIndicator';
+import { AdminPage } from './AdminPage';
+import { ApplyingPage } from './ApplyingPage';
+import { CodePage } from './CodePage';
+import { attempt, unreachable } from './failure';
+import { NodePage } from './NodePage';
+import { ReviewPage, type Answers } from './ReviewPage';
+import { TotpPage } from './TotpPage';
+
+type Step = 'code' | 'admin' | 'totp' | 'node' | 'apply' | 'applying';
+
+const steps: { step: Step; label: string }[] = [
+  { step: 'code', label: 'Code' },
+  { step: 'admin', label: 'Administrator' },
+  { step: 'totp', label: 'Authenticator' },
+  { step: 'node', label: 'Node' },
+  { step: 'apply', label: 'Review' },
+  { step: 'applying', label: 'Installing' },
+];
+
+/** Wizard part 1. The server keeps the answers; this page keeps only what the summary needs, in memory. */
+export function SetupFlow() {
+  const [step, setStep] = useState<Step>();
+  const [error, setError] = useState<string>();
+  const [user, setUser] = useState<string>();
+  const [node, setNode] = useState<Answers['node']>();
+  const [address, setAddress] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    void attempt(() => api.GET('/api/v1/setup/state')).then((result) => {
+      if (!active) return;
+      if (!result?.data) return setError(unreachable);
+      setCsrfToken(result.data.csrfToken);
+      setStep(result.data.step);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const expired = useCallback(() => {
+    setCsrfToken(undefined);
+    setStep('code');
+  }, []);
+
+  if (error) return <p className="form-error" role="alert">{error}</p>;
+  if (!step) return <p>Loading…</p>;
+
+  return (
+    <>
+      <StepIndicator steps={steps.map(({ label }) => label)} current={steps.findIndex((s) => s.step === step)} />
+      {step === 'code' && <CodePage onDone={() => setStep('admin')} />}
+      {step === 'admin' && <AdminPage onDone={(name) => { setUser(name); setStep('totp'); }} onExpired={expired} />}
+      {step === 'totp' && <TotpPage onDone={() => setStep('node')} onExpired={expired} />}
+      {step === 'node' && (
+        <NodePage
+          initial={node}
+          onDone={(saved, newAddress) => { setNode(saved); setAddress(newAddress); setStep('apply'); }}
+          onExpired={expired}
+        />
+      )}
+      {step === 'apply' && (
+        <ReviewPage
+          answers={user && node ? { user, node } : undefined}
+          onBack={() => setStep('node')}
+          onDone={() => setStep('applying')}
+          onExpired={expired}
+        />
+      )}
+      {step === 'applying' && <ApplyingPage address={address} />}
+    </>
+  );
+}

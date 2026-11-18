@@ -10,6 +10,12 @@ container:
       destination: /system/run/machined
       type: bind
       options: [rbind, rshared, rw]
+    # The parent, not the DMI tables: a machine without SMBIOS has no tables, and a missing mount source fails the
+    # container. A missing table then means no preset setup code.
+    - source: /sys/firmware
+      destination: /sys/firmware
+      type: bind
+      options: [rbind, ro]
   security:
     maskedPaths: []
     readonlyPaths: []

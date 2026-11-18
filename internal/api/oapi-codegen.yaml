@@ -1,0 +1,8 @@
+# The Appliance Manager's server: every operation of api/openapi.yaml except wizard part 1.
+package: api
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+output-options:
+  exclude-tags: [setup]

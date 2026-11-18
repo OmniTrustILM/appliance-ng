@@ -50,6 +50,8 @@ type Node interface {
 	IsBootstrapped(ctx context.Context) (bool, error)
 	Kubeconfig(ctx context.Context) ([]byte, error)
 	Addresses(ctx context.Context) ([]netip.Prefix, error)
+	// Network reports the network setup of the node for addr: its link, gateway, name and time servers, host name.
+	Network(ctx context.Context, addr netip.Addr) (Network, error)
 	// Configured reports whether the node holds a machine configuration (the active MachineConfig resource).
 	Configured(ctx context.Context) (bool, error)
 	// BrokenSystemImages returns the images of system services that fail because their binary cannot be executed.
@@ -70,6 +72,10 @@ type Node interface {
 	// PatchConfig applies a strategic merge patch to the running machine configuration; the result is persisted and
 	// applied in no-reboot mode. A failed apply returns an error that names the changed documents.
 	PatchConfig(ctx context.Context, patch []byte) error
+	// ExtensionConfigFile returns the content of the file mounted at file by the ExtensionServiceConfig name of the
+	// running machine configuration, or nil when there is none. Talos mounts such a file only into a service started
+	// after the configuration was loaded.
+	ExtensionConfigFile(ctx context.Context, name, file string) ([]byte, error)
 	// RemoveExtensionConfig removes the file mounted at file from the ExtensionServiceConfig name, in no-reboot mode.
 	RemoveExtensionConfig(ctx context.Context, name, file string) error
 	// Versions returns the Talos version of the node and the Kubernetes version of its machine configuration.
@@ -117,7 +123,8 @@ func Dial(ctx context.Context, socket string) (Node, error) {
 func DialAPI(ctx context.Context, endpoint string, talosconfig []byte) (Node, error) {
 	cfg, err := clientconfig.FromBytes(talosconfig)
 	if err != nil {
-		return nil, fmt.Errorf("parse talosconfig: %w", err)
+		// The parser quotes the offending value, which may be the private key.
+		return nil, errors.New("parse talosconfig: not a valid talosconfig")
 	}
 	current, ok := cfg.Contexts[cfg.Context]
 	if !ok || current == nil {

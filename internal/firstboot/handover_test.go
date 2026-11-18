@@ -2,6 +2,10 @@ package firstboot
 
 import (
 	"context"
+	"errors"
+	"maps"
+	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -13,6 +17,8 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/setup"
+	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
 const (
@@ -142,4 +148,137 @@ func TestApplianceStateIgnoresStaleConditions(t *testing.T) {
 			}
 		})
 	}
+}
+
+const handoverContent = `{"version":1,"admin":{"user":"admin","totpSeed":"SEED-MARKER"}}`
+
+func handoverCondition(status metav1.ConditionStatus, message string) metav1.Condition {
+	return metav1.Condition{Type: v1alpha1.ConditionHandoverComplete, Status: status, Reason: "Test", Message: message}
+}
+
+// TestFirstbootRecreatesHandoverSecretWhileFileExists starts first-boot with the hand-over file in the machine
+// configuration, as after each restart until the manager removed it: it creates the hand-over Secret until an
+// Appliance reports the hand-over complete, and never the default Appliance.
+func TestFirstbootRecreatesHandoverSecretWhileFileExists(t *testing.T) {
+	tests := []struct {
+		name       string
+		appliance  bool
+		handover   *metav1.Condition
+		wantSecret bool
+	}{
+		{name: "no Appliance yet", wantSecret: true},
+		{name: "import under way", appliance: true, handover: &metav1.Condition{Status: metav1.ConditionFalse}, wantSecret: true},
+		{name: "Appliance without hand-over", appliance: true, wantSecret: true},
+		{name: "hand-over complete", appliance: true, handover: &metav1.Condition{Status: metav1.ConditionTrue}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+			cluster := &fakeCluster{}
+			if tt.appliance {
+				cluster.appliance = existingAppliance()
+			}
+			if tt.handover != nil {
+				cluster.setConditions(handoverCondition(tt.handover.Status, "importing"))
+			}
+			node.handover = []byte(handoverContent)
+			h := newHarness(node, cluster)
+			h.start(t)
+
+			eventually(t, "the Appliance read", func() bool { _, _, reads := cluster.snapshot(); return reads >= 2 })
+			h.stop(t)
+
+			_, created, _ := cluster.snapshot()
+			if len(created) != 0 {
+				t.Errorf("created %q, want no default Appliance on a node with a hand-over file", created)
+			}
+			secrets := cluster.createdSecrets()
+			if !tt.wantSecret {
+				if len(secrets) != 0 {
+					t.Errorf("created %d Secrets, want none once the hand-over is complete", len(secrets))
+				}
+				return
+			}
+			if len(secrets) != 1 {
+				t.Fatalf("created %d Secrets, want the hand-over Secret once", len(secrets))
+			}
+			s := secrets[0]
+			if s.Namespace != setup.HandoverSecretNamespace || s.Name != setup.HandoverSecretName ||
+				string(s.Data[setup.HandoverSecretKey]) != handoverContent {
+				t.Errorf("Secret %s/%s with keys %v, want the hand-over file in %s/%s", s.Namespace, s.Name,
+					slices.Collect(maps.Keys(s.Data)), setup.HandoverSecretNamespace, setup.HandoverSecretName)
+			}
+			for name, out := range map[string]string{"log": h.log.String(), "status": h.store.Get().Message} {
+				if strings.Contains(out, "SEED-MARKER") {
+					t.Errorf("%s quotes the hand-over file:\n%s", name, out)
+				}
+			}
+		})
+	}
+}
+
+func TestRunWaitsForTheImportedAppliance(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := &fakeCluster{}
+	node.handover = []byte(handoverContent)
+	h := newHarness(node, cluster)
+	h.start(t)
+
+	eventually(t, "waiting for the import", func() bool {
+		st := h.store.Get()
+		return st.State == StateHandover && st.Message == "waiting for the Appliance Manager to import the setup"
+	})
+	cluster.mu.Lock()
+	cluster.appliance = existingAppliance()
+	cluster.mu.Unlock()
+	cluster.setConditions(handoverCondition(metav1.ConditionFalse, "waiting for access to the Talos API"))
+	eventually(t, "the import condition", func() bool {
+		st := h.store.Get()
+		return st.State == StateHandover && st.Message == "waiting for access to the Talos API"
+	})
+	cluster.setConditions(handoverCondition(metav1.ConditionTrue, "the setup answers are imported"))
+	h.waitState(t, StateAddons)
+}
+
+func TestRunReportsAFailedHandoverWithoutDetails(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := &fakeCluster{createErr: errors.New("create Secret: invalid value SEED-MARKER")}
+	node.handover = []byte(handoverContent)
+	h := newHarness(node, cluster)
+	h.start(t)
+
+	eventually(t, "the failure in the status", func() bool {
+		return strings.HasPrefix(h.store.Get().Message, "create the hand-over Secret failed")
+	})
+	h.stop(t)
+	if out := h.log.String() + h.store.Get().Message; strings.Contains(out, "SEED-MARKER") {
+		t.Errorf("log or status quotes the error:\n%s", out)
+	}
+}
+
+func TestRunReportsAnUnreadableHandoverFile(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	// The machine configuration holds the hand-over, so the error of reading it is reported by its code only.
+	node.handoverErr = errors.New("read machine configuration: cannot parse SEED-MARKER")
+	h := newHarness(node, &fakeCluster{})
+	h.start(t)
+
+	eventually(t, "the failure in the status", func() bool {
+		return h.store.Get().Message == "read the hand-over file failed (Unknown)"
+	})
+	h.stop(t)
+	if out := h.log.String(); strings.Contains(out, "SEED-MARKER") {
+		t.Errorf("log quotes the error:\n%s", out)
+	}
+}
+
+func TestRunShowsTheApplianceHostName(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig"), addrs: [][]netip.Prefix{globalAddr}}
+	cluster := newReadyCluster()
+	cluster.appliance = existingAppliance()
+	h := newHarness(node, cluster)
+	h.start(t)
+
+	want := "ILM appliance v-test: https://" + existingHostName + " (node 10.0.2.15), state ready\n"
+	eventually(t, "the Appliance host name on the console", func() bool { return strings.Contains(h.console.String(), want) })
 }

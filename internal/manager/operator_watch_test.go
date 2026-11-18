@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -103,7 +102,7 @@ func TestManagerStartsBeforeTheOperatorIsInstalled(t *testing.T) {
 	waitFor(t, "the reconcile without the operator", func() bool {
 		got := read()
 		p := meta.FindStatusCondition(got.Status.Conditions, v1alpha1.ConditionPlatformReady)
-		return got.Status.Setup == v1alpha1.SetupPart2 && p != nil && strings.Contains(p.Message, "does not serve Platform")
+		return got.Status.Setup == v1alpha1.SetupPart2 && p != nil && p.Reason == reasonWaitingForOperator
 	})
 	select {
 	case err := <-done:

@@ -1,14 +1,17 @@
-// Command firstboot runs on the appliance as a Talos system extension service. It configures the node,
-// bootstraps it, hands the setup over to the Appliance Manager and serves the setup status on GET /status.
+// Command firstboot runs on the appliance as a Talos system extension service. It serves wizard part 1 in
+// maintenance mode, configures the node from its answers, bootstraps it, hands the setup over to the Appliance
+// Manager and serves the setup status on GET /status.
 package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,9 +20,11 @@ import (
 
 	appliance "github.com/OmniTrustILM/appliance-ng"
 	"github.com/OmniTrustILM/appliance-ng/addons"
+	"github.com/OmniTrustILM/appliance-ng/internal/console"
 	"github.com/OmniTrustILM/appliance-ng/internal/firstboot"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
@@ -33,18 +38,19 @@ var (
 func main() {
 	socket := flag.String("socket", "/system/run/machined/machine.sock", "machined API socket")
 	listen := flag.String("listen", ":8444", "status server address")
+	setupListen := flag.String("setup-listen", ":"+setup.Port, "wizard part 1 address")
 	clusterName := flag.String("cluster-name", "ilm", "Kubernetes cluster name")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(log)
-	if err := run(log, *socket, *listen, *clusterName); err != nil {
+	if err := run(log, *socket, *listen, *setupListen, *clusterName); err != nil {
 		log.Error("first boot failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, socket, listen, clusterName string) error {
+func run(log *slog.Logger, socket, listen, setupListen, clusterName string) error {
 	if installerImage == "" {
 		return errors.New("installer image not set at build time")
 	}
@@ -68,6 +74,17 @@ func run(log *slog.Logger, socket, listen, clusterName string) error {
 		defer func() { _ = c.Close() }()
 	}
 
+	code, display := setup.LoadCode(setup.DMIPath, rand.Reader, log)
+	wizard := &setup.Wizard{
+		Code:    code,
+		Display: display,
+		Version: version,
+		Listen:  func() (net.Listener, error) { return net.Listen("tcp", setupListen) },
+		Console: console.Files(),
+		Network: node.Network,
+		Log:     log,
+	}
+
 	store := firstboot.NewStatusStore()
 	srv := firstboot.NewServer(listen, store)
 	serveErr := make(chan error, 1)
@@ -81,6 +98,7 @@ func run(log *slog.Logger, socket, listen, clusterName string) error {
 
 	err = firstboot.Run(ctx, firstboot.Deps{
 		Node:           node,
+		Wizard:         wizard,
 		NewCluster:     firstboot.NewLocalCluster,
 		Manager:        manager,
 		Generate:       machineconfig.Generate,
@@ -105,8 +123,8 @@ func run(log *slog.Logger, socket, listen, clusterName string) error {
 	}
 }
 
-// openConsole opens the first virtual terminal for the status line. The dashboard owns tty2 and the kernel log is
-// readable over the network, so tty1 is the only target. Without it the line is dropped.
+// openConsole opens the first virtual terminal for the status line and the setup code. The dashboard owns tty2 and
+// the kernel log is readable over the network, so tty1 is the only target. Without it the line is dropped.
 func openConsole(log *slog.Logger) io.Writer {
 	f, err := os.OpenFile("/dev/tty1", os.O_WRONLY|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0)
 	if err != nil {

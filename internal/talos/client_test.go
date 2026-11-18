@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -838,6 +839,13 @@ func TestDialAPIRequiresClientCert(t *testing.T) {
 			if _, err := DialAPI(ctx, "127.0.0.1:50000", cfg); err == nil {
 				t.Errorf("%s: expected error", name)
 			}
+		}
+	})
+
+	t.Run("error does not quote the talosconfig", func(t *testing.T) {
+		_, err := DialAPI(ctx, "127.0.0.1:50000", []byte("contexts:\n  manager: KEY-MARKER\n"))
+		if err == nil || strings.Contains(err.Error(), "KEY-MARKER") {
+			t.Errorf("error %v, want one that does not quote the talosconfig", err)
 		}
 	})
 }

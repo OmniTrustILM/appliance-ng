@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
+	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
@@ -25,11 +27,19 @@ const (
 	defaultConsoleInterval = 60 * time.Second
 )
 
+// Wizard is wizard part 1, which collects the node settings and the administrator in maintenance mode.
+type Wizard interface {
+	// Run serves the wizard for the node address ip, shows its console lines through show, and returns the machine
+	// configuration input once the administrator applied it. It stops serving before it returns.
+	Run(ctx context.Context, ip netip.Addr, show func(lines []string)) (machineconfig.Input, error)
+}
+
 // Deps is what Run needs. Console and Log must not be nil; ConsoleInterval defaults to defaultConsoleInterval.
 // Manager is the Appliance Manager manifest with its image set; HostName and ILMVersion are the release defaults
-// of the default Appliance.
+// of the default Appliance, which a node without a hand-over file gets.
 type Deps struct {
 	Node            talos.Node
+	Wizard          Wizard
 	NewCluster      func([]byte) (Cluster, error)
 	Manager         []byte
 	Generate        func(machineconfig.Input) ([]byte, error)
@@ -46,8 +56,8 @@ type Deps struct {
 
 func (d Deps) validate() error {
 	switch {
-	case d.Node == nil || d.NewCluster == nil || d.Generate == nil || len(d.Manager) == 0:
-		return errors.New("first boot: node, cluster, generator and manager manifest are required")
+	case d.Node == nil || d.Wizard == nil || d.NewCluster == nil || d.Generate == nil || len(d.Manager) == 0:
+		return errors.New("first boot: node, wizard, cluster, generator and manager manifest are required")
 	case d.Console == nil || d.Log == nil:
 		return errors.New("first boot: console and logger are required")
 	case d.Retry <= 0:
@@ -82,6 +92,8 @@ type runner struct {
 	s       *StatusStore
 	nodeIP  string
 	applied bool // a configuration was applied by this process; never apply a second one
+	// answers are the settings of wizard part 1, kept until a configuration generated from them is applied.
+	answers *machineconfig.Input
 	// resetting is set once a reset to recover system images was requested at resetAt; the reset ends this
 	// process. Talos runs the reset after it answered, so a reset that fails leaves the process running.
 	resetting bool
@@ -313,8 +325,9 @@ func (r *runner) booting(ctx context.Context, stage talos.Stage) (bool, error) {
 	return r.bootstrap(ctx)
 }
 
-// maintenance configures a node in maintenance mode unless it already has a configuration: the node stays in
-// maintenance while it installs, so a restarted service must not generate and apply a second one.
+// maintenance configures a node in maintenance mode from the answers of wizard part 1 unless it already has a
+// configuration: the node stays in maintenance while it installs, so a restarted service must not generate and apply
+// a second one. It waits in the wizard until the administrator applies it.
 func (r *runner) maintenance(ctx context.Context, addr string, addrErr error) error {
 	// applied covers the gap between ApplyConfig returning and the node reporting its configuration.
 	if r.applied {
@@ -337,7 +350,21 @@ func (r *runner) maintenance(ctx context.Context, addr string, addrErr error) er
 		r.set(StateWaitingForAddress, "", "no global IPv4 address yet")
 		return nil
 	}
-	return r.configure(ctx, addr)
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		return err
+	}
+	if r.answers == nil {
+		in, err := r.d.Wizard.Run(ctx, ip, func(lines []string) {
+			r.s.setConsole(StateSetup, lines)
+			r.set(StateSetup, "", "waiting for wizard part 1")
+		})
+		if err != nil {
+			return err
+		}
+		r.answers = &in
+	}
+	return r.configure(ctx, ip)
 }
 
 // refreshAddress reads the node addresses and returns the first global unicast IPv4 address, or "" if none.
@@ -358,22 +385,38 @@ func (r *runner) refreshAddress(ctx context.Context) (string, error) {
 	return r.nodeIP, nil
 }
 
-// configure generates the machine configuration for addr and applies it; the node then installs and reboots.
-func (r *runner) configure(ctx context.Context, addr string) error {
+// configure generates the machine configuration from the wizard answers for the node at ip and applies it; the node
+// then installs and reboots. A static address goes on the link that holds ip. Answers the generator or the node
+// refuses are dropped, so the wizard runs again.
+func (r *runner) configure(ctx context.Context, ip netip.Addr) error {
 	r.set(StateConfiguring, "", "generating the machine configuration")
-	cfg, err := r.d.Generate(machineconfig.Input{
-		ClusterName:    r.d.ClusterName,
-		NodeIP:         addr,
-		InstallerImage: r.d.InstallerImage,
-		HostName:       r.d.HostName,
-	})
+	in := *r.answers
+	in.ClusterName, in.InstallerImage, in.NodeIP = r.d.ClusterName, r.d.InstallerImage, ip.String()
+	if in.Address.IsValid() {
+		nw, err := r.d.Node.Network(ctx, ip)
+		if err != nil {
+			return err
+		}
+		if nw.Link == "" {
+			return fmt.Errorf("no link holds the address %s", ip)
+		}
+		in.NodeIP, in.Link = in.Address.Addr().String(), nw.Link
+	}
+	cfg, err := r.d.Generate(in)
 	if err != nil {
-		return fmt.Errorf("generate machine configuration: %w", err)
+		// The error may quote the input, which holds the hand-over with the password hash and TOTP seed.
+		r.answers = nil
+		return errors.New("generate machine configuration failed: the answers were refused, the setup runs again")
 	}
 	if err := r.d.Node.ApplyConfig(ctx, cfg); err != nil {
+		if status.Code(err) == codes.InvalidArgument {
+			// Applying the same answers again would be refused again.
+			r.answers = nil
+		}
 		return redacted("apply machine configuration", err)
 	}
 	r.applied = true
+	r.s.setConsole(StateInstalling, []string{"Installing, the console moves to https://" + in.NodeIP + ":" + setup.Port + "/"})
 	r.set(StateInstalling, "", "configuration applied, the node installs and reboots")
 	return nil
 }

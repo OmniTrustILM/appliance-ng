@@ -1,0 +1,8 @@
+# The first-boot service's server: the wizard part 1 operations of api/openapi.yaml.
+package: setupapi
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+output-options:
+  include-tags: [setup]

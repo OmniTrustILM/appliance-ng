@@ -44,6 +44,12 @@
   ],
   "packageRules": [
     {
+      "description": "Update the console dependencies together",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["web/package.json"],
+      "groupName": "web"
+    },
+    {
       "description": "Update the Talos release with the imager and the Kubernetes images",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["github-releases"],
