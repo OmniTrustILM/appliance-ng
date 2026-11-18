@@ -43,6 +43,7 @@ export CPUS=4 MEM=12G DISK=50G
 dir="$REPO/out/boot/$arch-$media"
 drive="$dir/drive"
 seed_file="$dir/totp.seed"
+setup_cert="$dir/setup-cert.pem"
 status=""
 code="" code_hash="" password="" seed=""
 
@@ -113,13 +114,28 @@ preset_hidden() {
   fi
 }
 
+# capture_setup_certificate saves the self-signed certificate the first-boot service presents, for drive part1 to
+# trust. It is trusted on first use, as a user does who has no way to compare the fingerprint tty1 shows.
+capture_setup_certificate() {
+  local _
+  for _ in $(seq 36); do
+    if openssl s_client -connect "${CONSOLE_URL#https://}" </dev/null 2>/dev/null |
+      openssl x509 -out "$setup_cert" 2>/dev/null; then
+      return
+    fi
+    sleep 5
+  done
+  fail "could not read the certificate of the first-boot service"
+}
+
 drive_wizard() { # drive_wizard <part1|part2|check>
   local args=(--url "$CONSOLE_URL" --user "$ADMIN" --password "$password" --seed-file "$seed_file"
-    --insecure-skip-tls-verify) # the setup certificate is self-signed
+    --host-name "$UI_HOST")
   case "$1" in
-    # QEMU's user network with restrict=on offers no router or DNS server by DHCP.
-    part1) args+=(--code "$code" --host-name "$UI_HOST" --gateway 10.0.2.2 --dns 10.0.2.3) ;;
-    part2) args+=(--host-name "$UI_HOST" --component "$COMPONENT") ;;
+    # QEMU's user network with restrict=on offers no router or DNS server by DHCP; the node address is 10.0.2.15,
+    # drive's default --server-name.
+    part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway 10.0.2.2 --dns 10.0.2.3) ;;
+    part2) args+=(--component "$COMPONENT") ;;
     check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$UI_HOST:10443" --ui-addr "$UI_ADDR") ;;
   esac
   "$drive" "$1" "${args[@]}" >&2 || fail "drive $1 failed"
@@ -144,6 +160,7 @@ while :; do
       setup)
         if ! $part1; then
           preset_hidden
+          capture_setup_certificate
           drive_wizard part1
           seed="$(cat "$seed_file")" part1=true
           log "$((SECONDS - start))s wizard part 1 applied"

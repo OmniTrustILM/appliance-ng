@@ -1,11 +1,11 @@
 // Command drive runs the onboarding wizard of the appliance through its API for the boot test.
 //
 //	drive part1 --url <console> --code <code> --user <user> --password <password> --seed-file <file>
-//	            --host-name <fqdn> [--gateway <ip>] [--dns <ip>[,<ip>...]]
+//	            --host-name <fqdn> --ca-file <pem> [--server-name <ip>] [--gateway <ip>] [--dns <ip>[,<ip>...]]
 //	drive part2 --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--component <name>]
 //	drive check --url <console> --user <user> --password <password> --seed-file <file>
-//	            [--connector <display name> --ui-url <url> --ui-addr <host:port>]
+//	            --host-name <fqdn> [--connector <display name> --ui-url <url> --ui-addr <host:port>]
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
@@ -15,9 +15,11 @@
 // the sign-in and the wizard. With --connector it downloads the ILM administrator's credential and checks, through
 // the ILM Core API at --ui-url reached at --ui-addr, that the connector registered.
 //
-// The console's certificate is self-signed until the built-in CA issues one, so drive trusts it without
-// verification and pins nothing. It prints step names and the outcome only, never the code, the password, the seed
-// or a TOTP code: the boot test log is public.
+// Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
+// --ca-file for --server-name, the node address it is issued for. part2 and check wait until the console serves a
+// certificate of the built-in CA for --host-name and then trust only the root CA of the built-in CA. drive prints
+// step names and the outcome only, never the code, the password, the seed or a TOTP code: the boot test log is
+// public.
 package main
 
 import (
@@ -53,6 +55,8 @@ const (
 	waitTimeout    = 3 * time.Minute
 	// registerTimeout bounds the wait for the connector to start and register with Core after the setup.
 	registerTimeout = 15 * time.Minute
+	// certificateTimeout bounds the wait for the built-in CA to issue the console's certificate after hand-over.
+	certificateTimeout = 15 * time.Minute
 )
 
 func main() {
@@ -74,11 +78,12 @@ func main() {
 	fs.StringVar(&o.connector, "connector", "", "display name of a connector that must register with Core (check)")
 	fs.StringVar(&o.uiURL, "ui-url", "", "base URL of the ILM (check)")
 	fs.StringVar(&o.uiAddr, "ui-addr", "", "address to reach the ILM at, host:port (check)")
-	fs.BoolVar(&o.insecureSkipVerify, "insecure-skip-tls-verify", false,
-		"trust the self-signed certificate of the setup console (required)")
+	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1)")
+	fs.StringVar(&o.serverName, "server-name", "10.0.2.15",
+		"node address the certificate of the first-boot service is issued for (part1)")
 	_ = fs.Parse(os.Args[2:])
 
-	run, ok := map[string]func(context.Context, *client, options) error{
+	run, ok := map[string]func(context.Context, options) error{
 		"part1": part1, "part2": part2, "check": check,
 	}[cmd]
 	if !ok {
@@ -90,7 +95,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	if err := run(ctx, newClient(o.url, o.insecureSkipVerify), o); err != nil {
+	if err := run(ctx, o); err != nil {
 		fmt.Printf("drive %s: FAIL %v\n", cmd, err)
 		os.Exit(1)
 	}
@@ -104,21 +109,17 @@ func usage() {
 
 type options struct {
 	url, code, user, password, seedFile, hostName, gateway, dns string
-	component, connector, uiURL, uiAddr                         string
-	insecureSkipVerify                                          bool
+	component, connector, uiURL, uiAddr, caFile, serverName     string
 }
 
 func (o options) validate(cmd string) error {
-	if !o.insecureSkipVerify {
-		return errors.New("--insecure-skip-tls-verify is required: the setup console serves a self-signed certificate")
-	}
 	missing := o.user == "" || o.password == "" || o.seedFile == ""
 	switch {
 	case missing:
 		return errors.New("--user, --password and --seed-file are required")
-	case cmd == "part1" && o.code == "":
-		return errors.New("--code is required")
-	case cmd != "check" && o.hostName == "":
+	case cmd == "part1" && (o.code == "" || o.caFile == ""):
+		return errors.New("--code and --ca-file are required")
+	case o.hostName == "":
 		return errors.New("--host-name is required")
 	case o.connector != "" && (o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--connector needs --ui-url and --ui-addr")
@@ -129,7 +130,12 @@ func (o options) validate(cmd string) error {
 func step(name string) { fmt.Printf("drive: %s\n", name) }
 
 // part1 answers wizard part 1 and applies it.
-func part1(ctx context.Context, c *client, o options) error {
+func part1(ctx context.Context, o options) error {
+	roots, err := loadRoots(o.caFile)
+	if err != nil {
+		return err
+	}
+	c := newClient(o.url, roots, o.serverName)
 	step("waiting for wizard part 1")
 	if err := waitFor(ctx, func() error { return c.call(ctx, http.MethodGet, "/api/v1/setup/state", nil, nil) }); err != nil {
 		return err
@@ -200,7 +206,11 @@ func (c *client) nodeSettings(ctx context.Context, o options) (map[string]any, e
 }
 
 // part2 signs in to the Appliance Manager and answers wizard part 2.
-func part2(ctx context.Context, c *client, o options) error {
+func part2(ctx context.Context, o options) error {
+	c, err := managerClient(ctx, o)
+	if err != nil {
+		return err
+	}
 	if err := c.signIn(ctx, o); err != nil {
 		return err
 	}
@@ -214,7 +224,11 @@ func part2(ctx context.Context, c *client, o options) error {
 }
 
 // check signs in and checks the outcome of the setup.
-func check(ctx context.Context, c *client, o options) error {
+func check(ctx context.Context, o options) error {
+	c, err := managerClient(ctx, o)
+	if err != nil {
+		return err
+	}
 	if err := c.signIn(ctx, o); err != nil {
 		return err
 	}
@@ -429,6 +443,70 @@ func (c *client) servesBuiltinCertificate(ctx context.Context) error {
 	return nil
 }
 
+// managerClient waits until the console serves a certificate of the built-in CA for o.hostName and returns a
+// client that verifies the console against the root CA of the built-in CA.
+func managerClient(ctx context.Context, o options) (*client, error) {
+	step("waiting for the built-in certificate")
+	var c *client
+	err := waitUntil(ctx, certificateTimeout, func() error {
+		var err error
+		c, err = trustBuiltinCA(ctx, o.url, o.hostName)
+		return err
+	})
+	return c, err
+}
+
+// trustBuiltinCA returns a client of the console at base that trusts the root CA of the built-in CA for host. The
+// root CA comes from the console itself, so it is trusted on first use: the certificate the console presents for
+// host is pinned, the root CA is fetched over a connection verified against that pin and is accepted only when it
+// issued the pinned certificate.
+func trustBuiltinCA(ctx context.Context, base, host string) (*client, error) {
+	presented, err := servedChain(ctx, base, host)
+	if err != nil {
+		return nil, err
+	}
+	pinned := x509.NewCertPool()
+	pinned.AddCert(presented[0])
+	root, _, err := newClient(base, pinned, host).fetchRootCA(ctx)
+	if err != nil {
+		return nil, err
+	}
+	roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
+	roots.AddCert(root)
+	for _, cert := range presented[1:] {
+		intermediates.AddCert(cert)
+	}
+	opts := x509.VerifyOptions{DNSName: host, Roots: roots, Intermediates: intermediates}
+	if _, err := presented[0].Verify(opts); err != nil {
+		return nil, fmt.Errorf("the console's certificate does not chain to the built-in CA: %w", err)
+	}
+	return newClient(base, roots, host), nil
+}
+
+// servedChain returns the certificates the console at base presents for host. They are not verified against any
+// root: the caller decides whether to trust them.
+func servedChain(ctx context.Context, base, host string) ([]*x509.Certificate, error) {
+	u, err := url.Parse(base)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: 10 * time.Second},
+		Config:    &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", u.Host)
+	var unverified *tls.CertificateVerificationError
+	switch {
+	case errors.As(err, &unverified):
+		// The handshake stops at the unknown issuer and hands over what the console presented.
+		return unverified.UnverifiedCertificates, nil
+	case err != nil:
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	return conn.(*tls.Conn).ConnectionState().PeerCertificates, nil
+}
+
 // signIn signs in with the password and a TOTP code of a step not used before, which the manager would refuse as a
 // replay. The seed file's modification time records the last step used. Failures are retried a few times, each
 // with a fresh step, as the administrator may not be imported yet.
@@ -555,7 +633,22 @@ type client struct {
 	csrf string
 }
 
-func newClient(base string, insecureSkipVerify bool) *client {
+// loadRoots returns a pool of the PEM certificates in the file at path.
+func loadRoots(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("%s holds no PEM certificate", path)
+	}
+	return roots, nil
+}
+
+// newClient returns a client of the console at base that verifies the console's certificate against roots for
+// serverName.
+func newClient(base string, roots *x509.CertPool, serverName string) *client {
 	jar, _ := cookiejar.New(nil) // never fails without options
 	return &client{
 		base: strings.TrimSuffix(base, "/"),
@@ -563,9 +656,7 @@ func newClient(base string, insecureSkipVerify bool) *client {
 			Jar:     jar,
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				// The setup certificate is self-signed and tty1 is the only out-of-band channel, so trust is an explicit
-				// opt-in. check verifies the issued certificate against the built-in CA.
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify}, //nolint:gosec // opt-in flag
+				TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: serverName, MinVersion: tls.VersionTLS12},
 			},
 		},
 	}

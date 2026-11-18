@@ -38,7 +38,7 @@ api-gen:
 
 # Build the console into web/dist/app, which the binaries embed.
 web:
-	cd web && npm ci && npm run build
+	cd web && npm ci --ignore-scripts && npm run build
 
 test:
 	KUBEBUILDER_ASSETS="$$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260125163108-a19ec76a3c5d use $(ENVTEST_K8S_VERSION) -p path)" \

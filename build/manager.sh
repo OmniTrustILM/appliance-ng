@@ -9,7 +9,7 @@ mkdir -p "$ctx"
 
 # The binary embeds web/dist/app, so the console is built first.
 log "building the console"
-(cd web && npm ci && npm run build)
+(cd web && npm ci --ignore-scripts && npm run build)
 
 log "building manager $VERSION for $ARCH"
 CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
