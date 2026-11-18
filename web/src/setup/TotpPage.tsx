@@ -1,4 +1,4 @@
-import { useEffect, useState, type SubmitEvent } from 'react';
+import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import { Field } from '../components/Field';
 import { attempt, failureMessage, unreachable } from './failure';
@@ -19,18 +19,18 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
   const [serverTime, setServerTime] = useState<string>();
   const [busy, setBusy] = useState(false);
 
+  // Every enrolment discards the seed of the one before, so a mount asks for one only, also when StrictMode runs the
+  // effect twice.
+  const requested = useRef(false);
   useEffect(() => {
-    let active = true;
+    if (requested.current) return;
+    requested.current = true;
     void attempt(() => api.POST('/api/v1/setup/totp')).then((result) => {
-      if (!active) return;
       if (!result) return setError(unreachable);
       if (result.data) return setEnrolment(result.data);
       if (result.response.status === 401) return onExpired();
       setError(failureMessage(result.response.status));
     });
-    return () => {
-      active = false;
-    };
   }, [onExpired]);
 
   async function submit(event: SubmitEvent) {

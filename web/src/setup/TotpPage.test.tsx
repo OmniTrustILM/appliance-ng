@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -21,6 +22,17 @@ describe('TotpPage', () => {
     expect(localStorage.length + sessionStorage.length).toBe(0);
     expect(location.href).not.toContain('JBSWY3DPEHPK3PXP');
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it('asks for one enrolment only when StrictMode runs the effect twice', async () => {
+    const { sent } = stubApi({ 'POST /api/v1/setup/totp': [200, enrolment] });
+    render(
+      <StrictMode>
+        <TotpPage onDone={vi.fn()} onExpired={vi.fn()} />
+      </StrictMode>,
+    );
+    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+    expect(sent['POST /api/v1/setup/totp']).toHaveLength(1);
   });
 
   it('confirms the code and moves on', async () => {
