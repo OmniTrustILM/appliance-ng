@@ -260,12 +260,37 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 			return false, "", err
 		}
 	}
+	if err := r.deleteRemovedConnectors(ctx, a, connectors); err != nil {
+		return false, "", err
+	}
 	current := &otilm.Platform{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, current); err != nil {
 		return false, "", fmt.Errorf("read the applied Platform: %w", err)
 	}
 	ready, message := platformReady(current)
 	return ready, message, nil
+}
+
+// deleteRemovedConnectors deletes the Connectors the Appliance controls that are no longer among its components.
+// Their key Secrets have no owner and stay. The list is read from the API server: the Connector cache exists only
+// once the operator's CRDs are served.
+func (r *ApplianceReconciler) deleteRemovedConnectors(ctx context.Context, a *v1alpha1.Appliance, desired []otilm.Connector) error {
+	current := &otilm.ConnectorList{}
+	if err := r.APIReader.List(ctx, current, client.InNamespace(platform.Namespace)); err != nil {
+		return fmt.Errorf("list connectors in %s: %w", platform.Namespace, err)
+	}
+	for i := range current.Items {
+		c := &current.Items[i]
+		wanted := slices.ContainsFunc(desired, func(d otilm.Connector) bool { return d.Name == c.Name })
+		if wanted || !metav1.IsControlledBy(c, a) {
+			continue
+		}
+		if err := r.Client.Delete(ctx, c, client.Preconditions{UID: &c.UID}); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete connector %s/%s: %w", c.Namespace, c.Name, err)
+		}
+		log.FromContext(ctx).Info("deleted a connector no longer among the components", "connector", c.Namespace+"/"+c.Name)
+	}
+	return nil
 }
 
 // copySecrets copies the certificate and key of the TLS Secret, the referenced key of the trust Secret and the

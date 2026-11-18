@@ -831,3 +831,40 @@ func TestReconcileRejectsIncompleteRegistryCredentials(t *testing.T) {
 		t.Errorf("err = %v, want one naming the Secret and the missing key without a value", err)
 	}
 }
+
+func TestReconcileDeletesRemovedConnectors(t *testing.T) {
+	ctx := context.Background()
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec("software-cryptography-provider", "x509-compliance-provider")})
+	foreign := &otilm.Connector{
+		ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: "foreign"},
+		Spec:       otilm.ConnectorSpec{Image: otilm.ImageSpec{Repository: "registry.example/foreign", Tag: "1"}, Service: otilm.ServiceSpec{Port: 8080}},
+	}
+	if err := testClient.Create(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+
+	a := getAppliance(t)
+	a.Spec.Platform.Components = []string{"x509-compliance-provider"}
+	if err := testClient.Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	runReconcile(t, r)
+
+	var connectors otilm.ConnectorList
+	if err := testClient.List(ctx, &connectors, client.InNamespace(platform.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, c := range connectors.Items {
+		if c.DeletionTimestamp == nil {
+			names = append(names, c.Name)
+		}
+	}
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"foreign", "x509-compliance-provider"}) {
+		t.Errorf("connectors = %v, want the removed component deleted and the foreign one kept", names)
+	}
+	secret(t, "software-cryptography-provider-keys")
+}

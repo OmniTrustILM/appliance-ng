@@ -24,7 +24,7 @@ addons:
   - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "e6abf0691d5bde2a7b70ccb72cd99b603403d95164b6d28f4fb32e75e140bfd6" }
   - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
   - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "285f95e4430587e27891a5fe49d7d480f220cde49151e563466dfbde37efd4e6" }
-  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "42b82fdecccf8ee067616b097619faaee892c8b7a1de6ac257f68bc6bbd3bc57" }
+  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "ff188f4cada19a42f12ecd375d2cd9c486e5fb84019c283a21587e00bf79bba1" }
   - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "c85bb9f48bb14f757bbe0666bd98d0b203e718dc4965ff3065c28a63b2d16231" }
 images:
   - { ref: "ghcr.io/siderolabs/installer-base:v1.14.5", digest: "sha256:1644fe7ddfe3deb4b81487c3c7e49fce830eca862b608b32f577b866c8d36b48" }
