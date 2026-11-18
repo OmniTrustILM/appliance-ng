@@ -148,7 +148,7 @@ func defaultPlatform(version, hostName string) *otilm.Platform {
 				},
 			},
 			// Talos' default pod network; Traefik and the node reach Kong from it.
-			Gateway: otilm.GatewaySpec{TrustedIPs: []string{"10.244.0.0/16"}},
+			Gateway: otilm.GatewaySpec{TrustedIPs: []string{"10.244.0.0/16"}}, // NOSONAR: a private pod network range, not an address to connect to
 		},
 	}
 }

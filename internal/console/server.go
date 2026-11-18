@@ -68,7 +68,7 @@ func serve(ctx context.Context, log *slog.Logger, srv *http.Server, ln net.Liste
 		return fmt.Errorf("console server: %w", err)
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("stop the console server: %w", err)
