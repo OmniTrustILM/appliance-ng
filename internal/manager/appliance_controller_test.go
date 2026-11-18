@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -700,4 +701,66 @@ func managedBy(obj metav1.Object, manager string) bool {
 		}
 	}
 	return false
+}
+
+func TestReconcileWritesThePullSecret(t *testing.T) {
+	ctx := context.Background()
+	const host = "hub.omnitrustregistry.com"
+	creds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "registry-creds"},
+		Data:       map[string][]byte{RegistryUsernameKey: []byte("robot"), RegistryPasswordKey: []byte("s3cret")},
+	}
+	if err := testClient.Create(ctx, creds); err != nil {
+		t.Fatal(err)
+	}
+	createAppliance(t, v1alpha1.ApplianceSpec{
+		Registries: []v1alpha1.RegistrySpec{{Host: "mirror.example.com"}, {Host: host, CredentialsRef: "registry-creds"}},
+		Platform:   platformSpec("cryptosense-discovery-provider"),
+	})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+
+	pull := secret(t, PullSecretName)
+	if pull.Type != corev1.SecretTypeDockerConfigJson || !metav1.IsControlledBy(pull, getAppliance(t)) {
+		t.Errorf("pull Secret type %s owners %+v, want %s owned by the Appliance", pull.Type, pull.OwnerReferences, corev1.SecretTypeDockerConfigJson)
+	}
+	var config struct {
+		Auths map[string]dockerAuth `json:"auths"`
+	}
+	if err := json.Unmarshal(pull.Data[corev1.DockerConfigJsonKey], &config); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]dockerAuth{host: {Username: "robot", Password: "s3cret", Auth: base64.StdEncoding.EncodeToString([]byte("robot:s3cret"))}}
+	if !maps.Equal(config.Auths, want) {
+		t.Errorf("auths for hosts %v, want only %s with its credentials", slices.Collect(maps.Keys(config.Auths)), host)
+	}
+
+	c := &otilm.Connector{}
+	if err := testClient.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: "cryptosense-discovery-provider"}, c); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(c.Spec.Image.PullSecrets, []string{PullSecretName}) {
+		t.Errorf("connector pull secrets %v, want %s", c.Spec.Image.PullSecrets, PullSecretName)
+	}
+}
+
+func TestReconcileRejectsIncompleteRegistryCredentials(t *testing.T) {
+	ctx := context.Background()
+	creds := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "registry-creds"},
+		Data:       map[string][]byte{RegistryUsernameKey: []byte("robot")},
+	}
+	if err := testClient.Create(ctx, creds); err != nil {
+		t.Fatal(err)
+	}
+	createAppliance(t, v1alpha1.ApplianceSpec{
+		Registries: []v1alpha1.RegistrySpec{{Host: "hub.omnitrustregistry.com", CredentialsRef: "registry-creds"}},
+		Platform:   platformSpec(),
+	})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+
+	_, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKey{Name: v1alpha1.ApplianceName}})
+	if err == nil || !strings.Contains(err.Error(), "registry-creds") || !strings.Contains(err.Error(), RegistryPasswordKey) || strings.Contains(err.Error(), "robot") {
+		t.Errorf("err = %v, want one naming the Secret and the missing key without a value", err)
+	}
 }

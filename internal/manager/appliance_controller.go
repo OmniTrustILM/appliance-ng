@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -58,6 +59,14 @@ const (
 const (
 	TLSSecretName   = platform.TLSSecretName
 	TrustSecretName = "appliance-trust"
+	// PullSecretName is the dockerconfigjson Secret with the credentials of every registry that has some.
+	PullSecretName = "appliance-registry-credentials"
+)
+
+// Keys of a registry credentials Secret in the system namespace.
+const (
+	RegistryUsernameKey = "username"
+	RegistryPasswordKey = "password"
 )
 
 // ApplianceReconciler applies the add-ons and the ILM Platform and Connectors the Appliance describes.
@@ -256,8 +265,9 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	return ready, message, nil
 }
 
-// copySecrets copies the certificate and key of the TLS Secret and the referenced key of the trust Secret the
-// spec references into the platform namespace, and returns the names of the copies. Built-in TLS has no Secret.
+// copySecrets copies the certificate and key of the TLS Secret, the referenced key of the trust Secret and the
+// registry credentials the spec references into the platform namespace, and returns the names of the copies.
+// Built-in TLS has no Secret.
 func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appliance) (platform.SecretNames, error) {
 	var names platform.SecretNames
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
@@ -279,16 +289,76 @@ func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appli
 		if err != nil {
 			return names, err
 		}
-		bundle, ok := src.Data[ref.Key]
-		if !ok {
-			return names, fmt.Errorf("secret %s/%s has no key %s", SystemNamespace, ref.Name, ref.Key)
+		bundle, err := secretValue(src, ref.Key)
+		if err != nil {
+			return names, err
 		}
 		if err := r.applySecret(ctx, a, TrustSecretName, corev1.SecretTypeOpaque, map[string][]byte{platform.TrustKey: bundle}); err != nil {
 			return names, err
 		}
 		names.Trust = TrustSecretName
 	}
+	pull, err := r.copyRegistryCredentials(ctx, a)
+	if err != nil {
+		return names, err
+	}
+	names.PullSecret = pull
 	return names, nil
+}
+
+// dockerAuth is an entry of the auths of a dockerconfigjson Secret.
+type dockerAuth struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Auth     string `json:"auth"`
+}
+
+// copyRegistryCredentials writes the credentials of every registry that references some into one pull Secret in
+// the platform namespace, and returns its name, or "" when no registry has credentials.
+func (r *ApplianceReconciler) copyRegistryCredentials(ctx context.Context, a *v1alpha1.Appliance) (string, error) {
+	auths := map[string]dockerAuth{}
+	for _, registry := range a.Spec.Registries {
+		if registry.CredentialsRef == "" {
+			continue
+		}
+		src, err := r.systemSecret(ctx, registry.CredentialsRef)
+		if err != nil {
+			return "", err
+		}
+		username, err := secretValue(src, RegistryUsernameKey)
+		if err != nil {
+			return "", err
+		}
+		password, err := secretValue(src, RegistryPasswordKey)
+		if err != nil {
+			return "", err
+		}
+		auths[registry.Host] = dockerAuth{
+			Username: string(username),
+			Password: string(password),
+			Auth:     base64.StdEncoding.EncodeToString([]byte(string(username) + ":" + string(password))),
+		}
+	}
+	if len(auths) == 0 {
+		return "", nil
+	}
+	config, err := json.Marshal(map[string]map[string]dockerAuth{"auths": auths})
+	if err != nil {
+		return "", fmt.Errorf("encode the registry credentials: %w", err)
+	}
+	if err := r.applySecret(ctx, a, PullSecretName, corev1.SecretTypeDockerConfigJson, map[string][]byte{corev1.DockerConfigJsonKey: config}); err != nil {
+		return "", err
+	}
+	return PullSecretName, nil
+}
+
+// secretValue returns the value of a key of a Secret; an error names the Secret and the key, never a value.
+func secretValue(s *corev1.Secret, key string) ([]byte, error) {
+	value, ok := s.Data[key]
+	if !ok {
+		return nil, fmt.Errorf("secret %s/%s has no key %s", s.Namespace, s.Name, key)
+	}
+	return value, nil
 }
 
 func (r *ApplianceReconciler) systemSecret(ctx context.Context, name string) (*corev1.Secret, error) {
