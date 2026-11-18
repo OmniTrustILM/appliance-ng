@@ -1,4 +1,8 @@
 import { useEffect } from 'react';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { PageHeading } from '../components/PageHeading';
 import { ConditionList } from '../console/status/ConditionList';
 import { useStatus } from '../console/status/useStatus';
 import { RootCaLink } from './RootCaLink';
@@ -15,15 +19,17 @@ export function ProgressPage({ onBack, onComplete }: Readonly<{ onBack: () => vo
   }, [complete, onComplete]);
 
   return (
-    <div>
-      <h1>Installing the platform</h1>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {status?.addonStep && <p>Installing add-on: {status.addonStep}</p>}
-      {status && conditions.length === 0 && <p>The platform has not reported anything yet.</p>}
-      <ConditionList conditions={conditions} />
-      {certificateIssued && <p><RootCaLink /></p>}
-      <p>This page refreshes every five seconds. You can change the answers until the setup is complete.</p>
-      <button type="button" onClick={onBack}>Change the answers</button>
-    </div>
+    <Card back={<Button variant="secondary" onClick={onBack}>Change the answers</Button>}>
+      <PageHeading
+        eyebrow="Platform"
+        title="Installing the platform"
+        lead="This page refreshes every five seconds. You can change the answers until the setup is complete."
+      />
+      {error && <Alert tone="error">{error}</Alert>}
+      {status?.addonStep && <Alert tone="info" busy>Installing add-on: {status.addonStep}</Alert>}
+      {status && conditions.length === 0 && <p className="text-content-muted">The platform has not reported anything yet.</p>}
+      <ConditionList conditions={conditions} markers />
+      {certificateIssued && <p className="mt-4"><RootCaLink /></p>}
+    </Card>
   );
 }

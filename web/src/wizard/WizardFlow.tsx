@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router';
 import { api } from '../api/client';
+import { Alert } from '../components/Alert';
+import { PageWidth } from '../components/PageWidth';
+import { Loading } from '../components/Spinner';
 import { StepIndicator } from '../components/StepIndicator';
-import { SignOutButton } from '../signin/SignOutButton';
 import { attempt, unreachable } from '../setup/failure';
 import { answersOf, keepsStoredPassword, stepOfField, type Answers, type CatalogueItem, type Errors, type MailAnswers, type Step } from './answers';
 import { CertificatePage } from './CertificatePage';
@@ -72,9 +74,9 @@ export function WizardFlow() {
 
   const finished = useCallback(() => navigate('/wizard/done'), [navigate]);
 
-  if (failed) return <p className="form-error" role="alert">{unreachable}</p>;
+  if (failed) return <PageWidth><Alert tone="error">{unreachable}</Alert></PageWidth>;
   if (loaded === 'complete') return <Navigate to="/" replace />;
-  if (!loaded || !answers) return <p>Loading…</p>;
+  if (!loaded || !answers) return <PageWidth><Loading /></PageWidth>;
 
   function change(patch: Partial<Answers>) {
     setErrors({});
@@ -95,9 +97,8 @@ export function WizardFlow() {
   }
 
   return (
-    <>
+    <PageWidth>
       <StepIndicator steps={steps.map(({ label }) => label)} current={steps.findIndex((s) => s.step === step)} />
-      <SignOutButton />
       {step === 'host' && <HostPage answers={answers} errors={errors} onChange={change} onNext={() => setStep('certificate')} />}
       {step === 'certificate' && <CertificatePage onBack={() => setStep('host')} onNext={() => setStep('components')} />}
       {step === 'components' && (
@@ -124,6 +125,6 @@ export function WizardFlow() {
         />
       )}
       {step === 'progress' && <ProgressPage onBack={() => setStep('host')} onComplete={finished} />}
-    </>
+    </PageWidth>
   );
 }

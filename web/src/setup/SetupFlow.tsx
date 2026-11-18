@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, setCsrfToken } from '../api/client';
+import { Alert } from '../components/Alert';
+import { PageWidth } from '../components/PageWidth';
+import { Loading } from '../components/Spinner';
 import { StepIndicator } from '../components/StepIndicator';
 import { AdminPage } from './AdminPage';
 import { ApplyingPage } from './ApplyingPage';
@@ -46,11 +49,11 @@ export function SetupFlow() {
     setStep('code');
   }, []);
 
-  if (error) return <p className="form-error" role="alert">{error}</p>;
-  if (!step) return <p>Loading…</p>;
+  if (error) return <PageWidth><Alert tone="error">{error}</Alert></PageWidth>;
+  if (!step) return <PageWidth><Loading /></PageWidth>;
 
   return (
-    <>
+    <PageWidth>
       <StepIndicator steps={steps.map(({ label }) => label)} current={steps.findIndex((s) => s.step === step)} />
       {step === 'code' && <CodePage onDone={() => setStep('admin')} />}
       {step === 'admin' && <AdminPage onDone={(name) => { setUser(name); setStep('totp'); }} onExpired={expired} />}
@@ -71,6 +74,6 @@ export function SetupFlow() {
         />
       )}
       {step === 'applying' && <ApplyingPage address={address} />}
-    </>
+    </PageWidth>
   );
 }

@@ -38,6 +38,46 @@ describe('StatusPage', () => {
     expect(screen.getByRole('link', { name: /administrator credential/i })).toHaveAttribute('href', '/wizard/done');
   });
 
+  it('shows the node address and refresh note', async () => {
+    stubApi({ 'GET /api/v1/status': [200, { ...status, nodeAddress: '10.0.0.5' }] });
+    renderPage();
+    expect(await screen.findByText('10.0.0.5')).toBeInTheDocument();
+    expect(screen.getByText(/Refreshed every five seconds/)).toBeInTheDocument();
+  });
+
+  it('shows the setup badge', async () => {
+    stubApi({ 'GET /api/v1/status': [200, status] });
+    const { unmount } = renderPage();
+    expect(await screen.findByText('Setup complete')).toBeInTheDocument();
+    unmount();
+    stubApi({ 'GET /api/v1/status': [200, { ...status, setup: 'part2' }] });
+    renderPage();
+    expect(await screen.findByText('Setup in progress')).toBeInTheDocument();
+  });
+
+  it('counts ready conditions', async () => {
+    const conditions = [
+      { type: 'A', status: 'True' },
+      { type: 'B', status: 'True' },
+      { type: 'C', status: 'False' },
+    ];
+    stubApi({ 'GET /api/v1/status': [200, { ...status, conditions }] });
+    renderPage();
+    expect(await screen.findByText('2 of 3 ready')).toBeInTheDocument();
+  });
+
+  it('shows a loading status before the first status', () => {
+    stubApi({ 'GET /api/v1/status': [200, status] });
+    renderPage();
+    expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+  });
+
+  it('shows an error alert when the first read fails', async () => {
+    stubApi({ 'GET /api/v1/status': [500, { code: 'internal', message: 'x' }] });
+    renderPage();
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
+  });
+
   it('marks its reads as background refreshes, which do not keep the session alive', async () => {
     const { mock } = stubApi({ 'GET /api/v1/status': [200, status] });
     renderPage();

@@ -16,7 +16,7 @@ export function QrCode({ value, label }: Readonly<{ value: string; label: string
     }
   }
   return (
-    <svg role="img" aria-label={label} viewBox={`0 0 ${size} ${size}`} className="qr" shapeRendering="crispEdges">
+    <svg role="img" aria-label={label} viewBox={`0 0 ${size} ${size}`} className="mx-auto size-[200px] rounded-lg border border-divider bg-white sm:mx-0" shapeRendering="crispEdges">
       <rect width={size} height={size} fill="#fff" />
       <path d={path} fill="#000" />
     </svg>

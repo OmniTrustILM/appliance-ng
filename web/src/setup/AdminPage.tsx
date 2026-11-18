@@ -1,6 +1,10 @@
 import { useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Field } from '../components/Field';
+import { PageHeading } from '../components/PageHeading';
 import { attempt, failureMessage, unreachable } from './failure';
 import { adminProblems } from './validate';
 
@@ -34,12 +38,13 @@ export function AdminPage({ onDone, onExpired }: Readonly<{ onDone: (user: strin
 
   return (
     <form onSubmit={submit} noValidate>
-      <h1>Administrator</h1>
-      <Field label="User name" name="user" value={user} onChange={(e) => setUser(e.target.value)} error={errors.user} autoComplete="username" />
-      <Field label="Password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} error={errors.password} autoComplete="new-password" />
-      <Field label="Confirm password" name="confirmation" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} error={errors.confirmation} autoComplete="new-password" />
-      {errors.form && <p className="form-error" role="alert">{errors.form}</p>}
-      <button type="submit" disabled={busy}>Continue</button>
+      <Card actions={<Button type="submit" busy={busy}>Continue</Button>}>
+        <PageHeading eyebrow="Setup" title="Administrator" lead="The account that signs in to this console." />
+        <Field label="User name" name="user" value={user} onChange={(e) => setUser(e.target.value)} error={errors.user} autoComplete="username" />
+        <Field label="Password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} error={errors.password} autoComplete="new-password" />
+        <Field label="Confirm password" name="confirmation" type="password" value={confirmation} onChange={(e) => setConfirmation(e.target.value)} error={errors.confirmation} autoComplete="new-password" />
+        {errors.form && <Alert tone="error">{errors.form}</Alert>}
+      </Card>
     </form>
   );
 }

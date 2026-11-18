@@ -1,13 +1,16 @@
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     // dist/index.html is the placeholder the Go build embeds when the console is not built; the build goes
     // beside it so that it never changes a tracked file.
     outDir: 'dist/app',
     emptyOutDir: true,
+    // The console is served under CSP default-src 'self': no data: URIs, so assets stay files.
+    assetsInlineLimit: 0,
   },
   test: {
     environment: 'jsdom',

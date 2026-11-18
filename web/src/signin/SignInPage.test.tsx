@@ -32,6 +32,11 @@ async function fill(totp = '123 456') {
 }
 
 describe('SignInPage', () => {
+  it('shows the sign-in heading', () => {
+    renderPage();
+    expect(screen.getByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
+  });
+
   it('signs in with user, password and code and opens the wizard while setup is open', async () => {
     const { sent } = stubApi({
       'POST /api/v1/session': [200, { csrfToken: 'token-1' }],

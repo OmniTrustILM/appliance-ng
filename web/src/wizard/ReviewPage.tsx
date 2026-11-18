@@ -1,5 +1,10 @@
 import { useState } from 'react';
 import { api } from '../api/client';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { PageHeading } from '../components/PageHeading';
+import { SummaryRow } from '../components/SummaryRow';
 import { attempt, failureMessage, unreachable } from '../setup/failure';
 import { toRequest, type Answers, type CatalogueItem } from './answers';
 
@@ -31,21 +36,18 @@ export function ReviewPage({ answers, catalogue, onBack, onSent, onRefused, onCo
   }
 
   return (
-    <div>
-      <h1>Review</h1>
-      <dl>
-        <dt>ILM host name</dt>
-        <dd>{answers.hostName}</dd>
-        <dt>Certificate</dt>
-        <dd>Built-in certificate authority</dd>
-        <dt>Components</dt>
-        <dd>{titles.length > 0 ? titles.join(', ') : 'None'}</dd>
-        <dt>Mail</dt>
-        <dd>{mail ? `${mail.host}:${mail.port} (${mail.security}), from ${mail.from}` : 'No mail'}</dd>
+    <Card
+      back={<Button variant="ghost" onClick={onBack} disabled={busy}>Back</Button>}
+      actions={<Button onClick={install} busy={busy}>Install</Button>}
+    >
+      <PageHeading eyebrow="Platform" title="Review" />
+      <dl className="m-0">
+        <SummaryRow term="ILM host name">{answers.hostName}</SummaryRow>
+        <SummaryRow term="Certificate">Built-in certificate authority</SummaryRow>
+        <SummaryRow term="Components">{titles.length > 0 ? titles.join(', ') : 'None'}</SummaryRow>
+        <SummaryRow term="Mail">{mail ? `${mail.host}:${mail.port} (${mail.security}), from ${mail.from}` : 'No mail'}</SummaryRow>
       </dl>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <button type="button" onClick={onBack} disabled={busy}>Back</button>
-      <button type="button" onClick={install} disabled={busy}>Install</button>
-    </div>
+      {error && <div className="mt-4"><Alert tone="error">{error}</Alert></div>}
+    </Card>
   );
 }

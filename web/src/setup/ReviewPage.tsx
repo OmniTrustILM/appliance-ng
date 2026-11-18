@@ -1,18 +1,14 @@
 import { useState } from 'react';
 import { api } from '../api/client';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { PageHeading } from '../components/PageHeading';
+import { SummaryRow } from '../components/SummaryRow';
 import { attempt, failureMessage, unreachable } from './failure';
 import type { NodeSettings } from './NodePage';
 
 export type Answers = { user: string; node: NodeSettings };
-
-function Row({ term, children }: Readonly<{ term: string; children: string }>) {
-  return (
-    <>
-      <dt>{term}</dt>
-      <dd>{children}</dd>
-    </>
-  );
-}
 
 /** Summarises the answers and applies them; the password and the authenticator secret are never shown. */
 export function ReviewPage({ answers, onBack, onDone, onExpired }: Readonly<{
@@ -37,26 +33,27 @@ export function ReviewPage({ answers, onBack, onDone, onExpired }: Readonly<{
 
   const node = answers?.node;
   return (
-    <div>
-      <h1>Review</h1>
+    <Card
+      back={<Button variant="secondary" onClick={onBack}>Change the settings</Button>}
+      actions={<Button busy={busy} onClick={apply}>Apply</Button>}
+    >
+      <PageHeading eyebrow="Setup" title="Review" lead="Check the settings. The node installs and reboots when you apply them." />
       {answers && node ? (
-        <dl>
-          <Row term="Administrator">{answers.user}</Row>
-          <Row term="Host name">{node.hostName}</Row>
-          <Row term="Address">{node.address || 'Address from DHCP'}</Row>
-          {node.gateway && <Row term="Gateway">{node.gateway}</Row>}
-          <Row term="DNS servers">{node.dns.join(', ')}</Row>
-          {node.ntp.length > 0 && <Row term="NTP servers">{node.ntp.join(', ')}</Row>}
-          {node.proxy?.http && <Row term="HTTP proxy">{node.proxy.http}</Row>}
-          {node.proxy?.https && <Row term="HTTPS proxy">{node.proxy.https}</Row>}
-          {node.proxy?.noProxy && <Row term="No proxy">{node.proxy.noProxy}</Row>}
+        <dl className="m-0">
+          <SummaryRow term="Administrator">{answers.user}</SummaryRow>
+          <SummaryRow term="Host name">{node.hostName}</SummaryRow>
+          <SummaryRow term="Address" mono={Boolean(node.address)}>{node.address || 'Address from DHCP'}</SummaryRow>
+          {node.gateway && <SummaryRow term="Gateway" mono>{node.gateway}</SummaryRow>}
+          <SummaryRow term="DNS servers" mono>{node.dns.join(', ')}</SummaryRow>
+          {node.ntp.length > 0 && <SummaryRow term="NTP servers" mono>{node.ntp.join(', ')}</SummaryRow>}
+          {node.proxy?.http && <SummaryRow term="HTTP proxy" mono>{node.proxy.http}</SummaryRow>}
+          {node.proxy?.https && <SummaryRow term="HTTPS proxy" mono>{node.proxy.https}</SummaryRow>}
+          {node.proxy?.noProxy && <SummaryRow term="No proxy" mono>{node.proxy.noProxy}</SummaryRow>}
         </dl>
       ) : (
         <p>Your answers were saved before the page was reloaded. Change the settings to see them again.</p>
       )}
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <button type="button" onClick={onBack}>Change the settings</button>
-      <button type="button" onClick={apply} disabled={busy}>Apply</button>
-    </div>
+      {error && <div className="mt-4"><Alert tone="error">{error}</Alert></div>}
+    </Card>
   );
 }

@@ -1,4 +1,12 @@
+import { Alert } from '../components/Alert';
+import { Badge } from '../components/Badge';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { ChoiceField } from '../components/ChoiceField';
+import { PageHeading } from '../components/PageHeading';
 import type { Answers, CatalogueItem } from './answers';
+
+const legend = 'Install these components with the ILM';
 
 /** Offers the components of the catalogue; those that need registry credentials cannot be chosen yet. */
 export function ComponentsPage({ catalogue, answers, error, onChange, onNext, onBack }: Readonly<{
@@ -15,27 +23,27 @@ export function ComponentsPage({ catalogue, answers, error, onChange, onNext, on
   }
 
   return (
-    <div>
-      <h1>Components</h1>
-      <fieldset>
-        <legend>Install these components with the ILM</legend>
+    <Card
+      back={<Button variant="ghost" onClick={onBack}>Back</Button>}
+      actions={<Button onClick={onNext}>Continue</Button>}
+    >
+      <PageHeading eyebrow="Platform" title="Components" lead={`${legend}. You can add more later.`} />
+      <fieldset className="mb-[18px]">
+        <legend className="sr-only">{legend}</legend>
         {catalogue.map(({ name, title, description, private: isPrivate }) => (
-          <label key={name}>
-            <input
-              type="checkbox"
-              checked={answers.components.includes(name)}
-              disabled={isPrivate}
-              onChange={(e) => toggle(name, e.target.checked)}
-            />{' '}
-            {title}
-            {description && <> – {description}</>}
-            {isPrivate && <> (needs registry credentials, available later)</>}
-          </label>
+          <ChoiceField
+            key={name}
+            type="checkbox"
+            label={title}
+            description={description}
+            checked={answers.components.includes(name)}
+            disabled={isPrivate}
+            onChange={(e) => toggle(name, e.target.checked)}
+            badge={isPrivate && <Badge tone="muted">needs registry credentials, available later</Badge>}
+          />
         ))}
       </fieldset>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <button type="button" onClick={onBack}>Back</button>
-      <button type="button" onClick={onNext}>Continue</button>
-    </div>
+      {error && <Alert tone="error">{error}</Alert>}
+    </Card>
   );
 }

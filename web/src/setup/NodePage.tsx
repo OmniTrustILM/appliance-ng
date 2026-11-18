@@ -1,7 +1,13 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import type { components } from '../api/schema';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { ChoiceField } from '../components/ChoiceField';
 import { Field } from '../components/Field';
+import { PageHeading } from '../components/PageHeading';
+import { Loading } from '../components/Spinner';
 import { attempt, failureMessage, unreachable } from './failure';
 import { isFqdn, isHostOrAddress, isIpAddress, isIpv4, isIpv4Cidr, isProxyUrl, splitList } from './validate';
 
@@ -16,6 +22,9 @@ type Props = {
   onDone: (node: NodeSettings, address?: string) => void;
   onExpired: () => void;
 };
+
+const MONO = 'font-mono';
+const PAIR = 'grid gap-x-4 sm:grid-cols-2';
 
 const withoutPrefix = (cidr?: string) => cidr?.split('/')[0];
 
@@ -117,45 +126,44 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
     setErrors({ form: failureMessage(response.status) });
   }
 
-  if (!loaded) return <p>Loading…</p>;
+  if (!loaded) return <Loading />;
 
   return (
     <form onSubmit={submit} noValidate>
-      <h1>Node settings</h1>
-      <Field label="Host name" name="hostName" value={hostName} onChange={(e) => setHostName(e.target.value)} error={errors.hostName} />
-      <fieldset>
-        <legend>Address</legend>
-        <label>
-          <input type="radio" name="mode" checked={mode === 'dhcp'} onChange={() => chooseMode('dhcp')} />
-          <span>Keep the address from DHCP</span>
-        </label>
-        <label>
-          <input type="radio" name="mode" checked={mode === 'static'} onChange={() => chooseMode('static')} />
-          <span>Use a static address</span>
-        </label>
-        {mode === 'dhcp' && (
-          <output className="form-warning">
-            Reserve {dhcp.address ?? 'the address of the node'} for the node in the DHCP server. If the address
-            changes after the installation, the console is no longer reachable at the address shown here.
-          </output>
-        )}
-        {mode === 'static' && (
-          <>
-            <Field label="Address (CIDR)" name="address" value={address} onChange={(e) => setAddress(e.target.value)} error={errors.address} placeholder="192.0.2.10/24" />
-            <Field label="Gateway" name="gateway" value={gateway} onChange={(e) => setGateway(e.target.value)} error={errors.gateway} />
-          </>
-        )}
-      </fieldset>
-      <Field label="DNS servers" name="dns" value={dns} onChange={(e) => setDns(e.target.value)} error={errors.dns} placeholder="comma-separated" />
-      <Field label="NTP servers" name="ntp" value={ntp} onChange={(e) => setNtp(e.target.value)} error={errors.ntp} placeholder="comma-separated; empty uses the default" />
-      <fieldset>
-        <legend>Proxy (optional)</legend>
-        <Field label="HTTP proxy" name="http" value={http} onChange={(e) => setHttp(e.target.value)} error={errors.proxy} placeholder="http://proxy.example.com:3128" />
-        <Field label="HTTPS proxy" name="https" value={https} onChange={(e) => setHttps(e.target.value)} />
-        <Field label="Hosts that bypass the proxy" name="noProxy" value={noProxy} onChange={(e) => setNoProxy(e.target.value)} placeholder="comma-separated" />
-      </fieldset>
-      {errors.form && <p className="form-error" role="alert">{errors.form}</p>}
-      <button type="submit" disabled={busy}>Continue</button>
+      <Card actions={<Button type="submit" busy={busy}>Continue</Button>}>
+        <PageHeading eyebrow="Setup" title="Node settings" lead="How this appliance is named and reached on your network." />
+        <Field label="Host name" name="hostName" value={hostName} onChange={(e) => setHostName(e.target.value)} error={errors.hostName} />
+        <fieldset className="mb-[18px]">
+          <legend className="mb-2 text-sm font-medium">Address</legend>
+          <ChoiceField type="radio" name="mode" label="Keep the address from DHCP" checked={mode === 'dhcp'} onChange={() => chooseMode('dhcp')} />
+          <ChoiceField type="radio" name="mode" label="Use a static address" checked={mode === 'static'} onChange={() => chooseMode('static')} />
+          {mode === 'dhcp' && (
+            <output className="mt-3 block rounded-md border border-warning/35 bg-warning-surface px-3.5 py-3 text-sm text-content">
+              Reserve {dhcp.address ?? 'the address of the node'} for the node in the DHCP server. If the address
+              changes after the installation, the console is no longer reachable at the address shown here.
+            </output>
+          )}
+          {mode === 'static' && (
+            <div className={PAIR}>
+              <Field label="Address (CIDR)" name="address" className={MONO} value={address} onChange={(e) => setAddress(e.target.value)} error={errors.address} placeholder="192.0.2.10/24" />
+              <Field label="Gateway" name="gateway" className={MONO} value={gateway} onChange={(e) => setGateway(e.target.value)} error={errors.gateway} />
+            </div>
+          )}
+        </fieldset>
+        <div className={PAIR}>
+          <Field label="DNS servers" name="dns" className={MONO} value={dns} onChange={(e) => setDns(e.target.value)} error={errors.dns} placeholder="comma-separated" />
+          <Field label="NTP servers" name="ntp" className={MONO} value={ntp} onChange={(e) => setNtp(e.target.value)} error={errors.ntp} placeholder="comma-separated; empty uses the default" />
+        </div>
+        <fieldset className="mt-7 border-t border-divider pt-5">
+          <legend className="float-left mb-3.5 w-full text-sm font-semibold">Proxy (optional)</legend>
+          <div className={`clear-both ${PAIR}`}>
+            <Field label="HTTP proxy" name="http" className={MONO} value={http} onChange={(e) => setHttp(e.target.value)} error={errors.proxy} placeholder="http://proxy.example.com:3128" />
+            <Field label="HTTPS proxy" name="https" className={MONO} value={https} onChange={(e) => setHttps(e.target.value)} />
+          </div>
+          <Field label="Hosts that bypass the proxy" name="noProxy" className={MONO} value={noProxy} onChange={(e) => setNoProxy(e.target.value)} placeholder="comma-separated" />
+        </fieldset>
+        {errors.form && <Alert tone="error">{errors.form}</Alert>}
+      </Card>
     </form>
   );
 }

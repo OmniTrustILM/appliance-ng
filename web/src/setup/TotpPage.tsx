@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Field } from '../components/Field';
+import { PageHeading } from '../components/PageHeading';
 import { attempt, failureMessage, unreachable } from './failure';
 import { QrCode } from './QrCode';
 
@@ -55,18 +59,42 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
 
   return (
     <form onSubmit={submit} noValidate>
-      <h1>Authenticator</h1>
-      {enrolment && (
-        <>
-          <p>Scan the QR code with an authenticator app, or enter the secret by hand. It is shown only now.</p>
-          <QrCode value={enrolment.otpauthUrl} label="QR code of the authenticator secret" />
-          <p>Secret: <code>{enrolment.seed}</code></p>
-        </>
-      )}
-      <Field label="Code from the authenticator" name="code" value={code} onChange={(e) => setCode(e.target.value.trim())} error={fieldError} inputMode="numeric" autoComplete="one-time-code" maxLength={6} />
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {serverTime && <p>Appliance time: {utc(serverTime)}. Your device time: {utc(new Date().toISOString())}.</p>}
-      <button type="submit" disabled={busy || !enrolment}>Continue</button>
+      <Card actions={<Button type="submit" busy={busy} disabled={!enrolment}>Continue</Button>}>
+        <PageHeading
+          eyebrow="Setup"
+          title="Authenticator"
+          lead="Scan the QR code with an authenticator app, or enter the secret by hand. It is shown only now."
+        />
+        <div className={enrolment ? 'grid items-start gap-6 sm:grid-cols-[200px_1fr]' : undefined}>
+          {enrolment && <QrCode value={enrolment.otpauthUrl} label="QR code of the authenticator secret" />}
+          <div>
+            <ol className="mb-4 list-decimal space-y-1 pl-5 text-sm text-content-muted">
+              <li>Open your authenticator app and add an account.</li>
+              <li>Scan the code, or type the secret below.</li>
+              <li>Enter the six-digit code the app shows.</li>
+            </ol>
+            {enrolment && (
+              <>
+                <p className="mb-1.5 text-sm font-medium">Secret</p>
+                <p className="mb-[18px] select-all break-all rounded-md bg-surface-sunken px-3 py-2.5 font-mono text-sm">{enrolment.seed}</p>
+              </>
+            )}
+            <Field
+              label="Code from the authenticator"
+              name="code"
+              variant="code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.trim())}
+              error={fieldError}
+              hint={serverTime && `Appliance time: ${utc(serverTime)}. Your device time: ${utc(new Date().toISOString())}.`}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+            />
+          </div>
+        </div>
+        {error && <Alert tone="error">{error}</Alert>}
+      </Card>
     </form>
   );
 }
