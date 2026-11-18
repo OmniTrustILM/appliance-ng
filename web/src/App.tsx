@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Navigate, Outlet, Route, Routes } from 'react-router';
 import { Layout } from './components/Layout';
 import { StatusPage } from './console/status/StatusPage';
@@ -15,19 +16,25 @@ function ManagerRoutes() {
   );
 }
 
+function ConsolePage({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <Layout variant="console">
+      <RequireSession>{children}</RequireSession>
+    </Layout>
+  );
+}
+
 export default function App() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/setup/*" element={<SetupFlow />} />
-        <Route element={<ManagerRoutes />}>
-          <Route path="/signin" element={<SignInPage />} />
-          <Route path="/wizard/done" element={<RequireSession><DonePage /></RequireSession>} />
-          <Route path="/wizard/*" element={<RequireSession><WizardFlow /></RequireSession>} />
-          <Route path="/" element={<RequireSession><StatusPage /></RequireSession>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </Layout>
+    <Routes>
+      <Route path="/setup/*" element={<Layout variant="setup"><SetupFlow /></Layout>} />
+      <Route element={<ManagerRoutes />}>
+        <Route path="/signin" element={<Layout variant="auth"><SignInPage /></Layout>} />
+        <Route path="/wizard/done" element={<ConsolePage><DonePage /></ConsolePage>} />
+        <Route path="/wizard/*" element={<ConsolePage><WizardFlow /></ConsolePage>} />
+        <Route path="/" element={<ConsolePage><StatusPage /></ConsolePage>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }

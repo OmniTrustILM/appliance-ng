@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Navigate, useNavigate } from 'react-router';
+import { Loading } from './components/Spinner';
 import { api, setCsrfToken, setUnauthorizedHandler } from './api/client';
 import { attempt } from './setup/failure';
 
@@ -81,7 +82,7 @@ export function useSessionControl() {
 /** Shows children to a signed-in user and sends anyone else to sign-in. */
 export function RequireSession({ children }: Readonly<{ children: ReactNode }>) {
   const session = useSession();
-  if (session.state === 'loading') return <p>Loading…</p>;
+  if (session.state === 'loading') return <Loading />;
   if (session.state === 'signedOut') return <Navigate to="/signin" replace />;
   return children;
 }

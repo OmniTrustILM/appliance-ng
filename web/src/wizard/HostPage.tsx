@@ -1,5 +1,8 @@
 import { useState, type SubmitEvent } from 'react';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Field } from '../components/Field';
+import { PageHeading } from '../components/PageHeading';
 import type { Answers, Errors } from './answers';
 
 /** Asks for the name the ILM is reached by. */
@@ -20,16 +23,20 @@ export function HostPage({ answers, errors, onChange, onNext }: Readonly<{
 
   return (
     <form onSubmit={submit} noValidate>
-      <h1>ILM host name</h1>
-      <p>The name that users and clients use to reach the ILM, for example ilm.example.com. It defaults to the host name of this node.</p>
-      <Field
-        label="ILM host name"
-        name="hostName"
-        value={answers.hostName}
-        onChange={(e) => { setProblem(undefined); onChange({ hostName: e.target.value }); }}
-        error={problem ?? errors.hostName}
-      />
-      <button type="submit">Continue</button>
+      <Card actions={<Button type="submit">Continue</Button>}>
+        <PageHeading
+          eyebrow="Platform"
+          title="ILM host name"
+          lead="The name that users and clients use to reach the ILM, for example ilm.example.com. It defaults to the host name of this node."
+        />
+        <Field
+          label="ILM host name"
+          name="hostName"
+          value={answers.hostName}
+          onChange={(e) => { setProblem(undefined); onChange({ hostName: e.target.value }); }}
+          error={problem ?? errors.hostName}
+        />
+      </Card>
     </form>
   );
 }

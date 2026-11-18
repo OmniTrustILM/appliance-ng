@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,12 +42,34 @@ describe('App routing', () => {
 
   it('sends an unauthenticated visitor of / to sign-in', async () => {
     renderAt('/');
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
   });
 
   it('sends an unauthenticated visitor of the wizard to sign-in', async () => {
     renderAt('/wizard/');
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
+  });
+
+  it('shows the setup shell banner under /setup/', async () => {
+    vi.stubGlobal('fetch', respond({ '/api/v1/setup/state': [200, { step: 'code' }] }));
+    renderAt('/setup/');
+    expect(await screen.findByRole('banner')).toHaveTextContent('Appliance setup');
+  });
+
+  it('shows the user name and a sign-out button in the banner of the status page', async () => {
+    vi.stubGlobal('fetch', respond({ ...signedIn, '/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }] }));
+    renderAt('/');
+    const banner = await screen.findByRole('banner');
+    expect(await within(banner).findByText('admin')).toBeInTheDocument();
+    expect(within(banner).getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(1);
+  });
+
+  it('shows the sign-in page without a banner and with the theme toggle', async () => {
+    renderAt('/signin');
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Theme:/ })).toBeInTheDocument();
   });
 
   it('shows the setup code page under /setup/ without asking for the console session', async () => {
@@ -81,7 +103,7 @@ describe('App routing', () => {
     renderAt('/');
     await screen.findByRole('heading', { name: 'Appliance' });
     await act(() => api.GET('/api/v1/status'));
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
   });
 
   it('shows the done page of the wizard to a signed-in user', async () => {
@@ -112,7 +134,7 @@ describe('App routing', () => {
     renderAt('/');
     await screen.findByRole('heading', { name: 'Appliance' });
     await act(() => api.GET('/api/v1/status'));
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
     const sessionReads = fetchMock.mock.calls.filter(([request]) => new URL(request.url).pathname === '/api/v1/session');
     expect(sessionReads).toHaveLength(1);
   });
@@ -122,11 +144,11 @@ describe('App routing', () => {
       throw new TypeError('Failed to fetch');
     }));
     renderAt('/');
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
   });
 
   it('sends unknown paths to the console', async () => {
     renderAt('/nowhere');
-    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
   });
 });

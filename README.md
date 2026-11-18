@@ -44,4 +44,5 @@ needs at least 40 GB of free disk after the runner clean-up and fails with a cle
 
 ## License
 
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+Licensed under the Apache License 2.0. See [LICENSE](LICENSE). The OmniTrust and ILM logos in the console are not
+covered by that licence; see [web/src/assets/brand/TRADEMARKS.md](web/src/assets/brand/TRADEMARKS.md).

@@ -1,6 +1,10 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { api, setCsrfToken } from '../api/client';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Field } from '../components/Field';
+import { PageHeading } from '../components/PageHeading';
 import { attempt, failureMessage, unreachable } from './failure';
 import { normaliseCode } from './validate';
 
@@ -45,20 +49,21 @@ export function CodePage({ onDone }: Readonly<{ onDone: () => void }>) {
 
   return (
     <form onSubmit={submit} noValidate>
-      <h1>Enter the setup code</h1>
-      <p>The code is shown on the console of the appliance.</p>
-      <Field
-        label="Setup code"
-        name="code"
-        value={code}
-        onChange={(event) => setCode(normaliseCode(event.target.value))}
-        autoComplete="off"
-        autoCapitalize="characters"
-        spellCheck={false}
-      />
-      {error && <p className="form-error" role="alert">{error}</p>}
-      {lockedFor > 0 && <p>Too many attempts. Try again in {seconds(lockedFor)}.</p>}
-      <button type="submit" disabled={busy || lockedFor > 0 || code.length === 0}>Continue</button>
+      <Card actions={<Button type="submit" busy={busy} disabled={lockedFor > 0 || code.length === 0}>Continue</Button>}>
+        <PageHeading eyebrow="Setup" title="Enter the setup code" lead="The code is shown on the console of the appliance." />
+        <Field
+          label="Setup code"
+          name="code"
+          variant="code"
+          value={code}
+          onChange={(event) => setCode(normaliseCode(event.target.value))}
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+        />
+        {error && <Alert tone="error">{error}</Alert>}
+        {lockedFor > 0 && <Alert tone="warning">Too many attempts. Try again in {seconds(lockedFor)}.</Alert>}
+      </Card>
     </form>
   );
 }

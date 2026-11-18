@@ -1,26 +1,56 @@
 import { useId, type InputHTMLAttributes } from 'react';
+import { cx } from './cx';
 
-type FieldProps = InputHTMLAttributes<HTMLInputElement> & {
-  label: string;
-  name: string;
-  error?: string;
-};
+export const INPUT = cx(
+  'h-10 w-full rounded-md border border-outline bg-surface-raised px-3 text-content placeholder:text-content-subtle transition-colors',
+  'hover:border-content-subtle focus:border-brand aria-invalid:border-danger',
+);
 
-/** A labelled input that shows its validation error below it. */
-export function Field({ label, error, ...input }: FieldProps) {
+type FieldProps = Readonly<
+  InputHTMLAttributes<HTMLInputElement> & {
+    label: string;
+    name: string;
+    error?: string;
+    hint?: string;
+    variant?: 'text' | 'code';
+  }
+>;
+
+/** A labelled input with an optional hint, showing its validation error below it. */
+export function Field({ label, error, hint, variant = 'text', className, ...input }: FieldProps) {
   const id = useId();
+  const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
+  const describedBy = [hint && hintId, error && errorId].filter(Boolean).join(' ') || undefined;
   return (
-    <div className="field">
-      <label htmlFor={id}>{label}</label>
+    <div className="mb-[18px]">
+      <label htmlFor={id} className="mb-1.5 block text-sm font-medium">
+        {label}
+      </label>
       <input
         id={id}
         {...input}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={describedBy}
+        className={cx(
+          INPUT,
+          variant === 'code' && 'font-mono text-lg uppercase tracking-[0.3em]',
+          className,
+        )}
       />
+      {hint && (
+        <p id={hintId} className="mt-1 text-[13px] text-content-subtle">
+          {hint}
+        </p>
+      )}
       {error && (
-        <p id={errorId} className="field-error" role="alert">
+        <p id={errorId} className="mt-1.5 flex items-start gap-1.5 text-[13px] text-danger" role="alert">
+          <span
+            aria-hidden="true"
+            className="mt-px grid size-4 flex-none place-items-center rounded-full bg-danger text-[11px] font-bold text-surface-raised"
+          >
+            !
+          </span>
           {error}
         </p>
       )}

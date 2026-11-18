@@ -1,6 +1,11 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '../api/client';
+import ilmColor from '../assets/brand/ilm-color.svg';
+import ilmWhite from '../assets/brand/ilm-white.svg';
+import { Alert } from '../components/Alert';
+import { Button } from '../components/Button';
+import { Card } from '../components/Card';
 import { Field } from '../components/Field';
 import { useSessionControl } from '../session';
 import { attempt, failureMessage, unreachable } from '../setup/failure';
@@ -51,21 +56,25 @@ export function SignInPage() {
   }
 
   return (
-    <form onSubmit={submit} noValidate>
-      <h1>Sign in</h1>
-      <Field label="User name" name="user" value={user} onChange={(e) => setUser(e.target.value)} autoComplete="username" />
-      <Field label="Password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-      <Field label="Authenticator code" name="totp" value={totp} onChange={(e) => setTotp(e.target.value)} autoComplete="one-time-code" inputMode="numeric" />
-      {failure && (
-        <p className="form-error" role="alert">
-          {failure.message}
-          {failure.serverTime && <> The appliance time is {failure.serverTime}; a code needs a correct clock.</>}
-        </p>
-      )}
-      {remaining !== undefined && (
-        <p className="form-error" role="alert">Too many failed attempts. Try again in {remaining} seconds.</p>
-      )}
-      <button type="submit" disabled={busy || remaining !== undefined}>Sign in</button>
-    </form>
+    <div className="w-full min-w-0 max-w-[400px]">
+      <Card>
+        <form onSubmit={submit} noValidate>
+          <img src={ilmColor} alt="ILM" className="mb-5 h-8 dark:hidden" />
+          <img src={ilmWhite} alt="ILM" className="mb-5 hidden h-8 dark:block" />
+          <h1 className="mb-5 text-xl font-semibold">Sign in to the appliance</h1>
+          <Field label="User name" name="user" value={user} onChange={(e) => setUser(e.target.value)} autoComplete="username" />
+          <Field label="Password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+          <Field label="Authenticator code" name="totp" variant="code" value={totp} onChange={(e) => setTotp(e.target.value)} autoComplete="one-time-code" inputMode="numeric" />
+          {failure && (
+            <Alert tone="error">
+              {failure.message}
+              {failure.serverTime && <> The appliance time is {failure.serverTime}; a code needs a correct clock.</>}
+            </Alert>
+          )}
+          {remaining !== undefined && <Alert tone="error">Too many failed attempts. Try again in {remaining} seconds.</Alert>}
+          <Button type="submit" block busy={busy} disabled={remaining !== undefined}>Sign in</Button>
+        </form>
+      </Card>
+    </div>
   );
 }
