@@ -23,11 +23,13 @@ export function ChoiceField({ label, description, badge, className, ...input }: 
       )}
     >
       <input {...input} className="mt-[3px] size-4 accent-brand" />
-      <span className="flex-1">
-        <span className="block font-medium">{label}</span>
-        {description && <span className="block text-[13px] text-content-muted">{description}</span>}
+      <span className="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+        <span className="min-w-0 flex-1 basis-48">
+          <span className="block font-medium">{label}</span>
+          {description && <span className="block text-[13px] text-content-muted">{description}</span>}
+        </span>
+        {badge}
       </span>
-      {badge}
     </label>
   );
 }

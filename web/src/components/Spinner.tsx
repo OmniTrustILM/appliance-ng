@@ -8,7 +8,7 @@ export function Spinner({ size = 'sm', onBrand = false }: SpinnerProps) {
     <span
       aria-hidden="true"
       className={cx(
-        'inline-block shrink-0 animate-spin rounded-full',
+        'inline-block shrink-0 animate-spin rounded-full motion-reduce:[animation-duration:3s]',
         size === 'lg' ? 'size-8 border-[3px]' : 'size-4 border-2',
         onBrand ? 'border-white/40 border-t-white' : 'border-divider border-t-brand',
       )}

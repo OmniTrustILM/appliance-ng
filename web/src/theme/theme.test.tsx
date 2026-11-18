@@ -57,7 +57,8 @@ describe('theme mode', () => {
       throw new Error('blocked');
     });
     expect(readThemeMode()).toBe('system');
-    expect(() => storeThemeMode('dark')).not.toThrow();
+    expect(() => storeThemeMode('dark')).not.toThrow();    expect(readThemeMode()).toBe('dark');
+    storeThemeMode('system');
   });
 
   it('applies dark and light', () => {
