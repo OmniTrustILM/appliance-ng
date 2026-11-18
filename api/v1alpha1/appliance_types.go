@@ -63,7 +63,7 @@ type ApplianceSpec struct {
 type NodeSpec struct {
 	// HostName is the fully qualified host name of the appliance.
 	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$`
 	HostName string `json:"hostName"`
 	// Address is the node address in CIDR notation; empty means DHCP.
 	// +optional

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -118,9 +119,11 @@ func TestApplianceHostNameMustBeFQDN(t *testing.T) {
 	a := newAppliance(v1alpha1.ApplianceName)
 	a.Spec.Node.HostName = "ilm"
 	wantInvalid(t, create(t, a))
-	a.Spec.Node.HostName = "ilm.example.com"
+	a.Spec.Node.HostName = strings.Repeat("a", 64) + ".example.com"
+	wantInvalid(t, create(t, a))
+	a.Spec.Node.HostName = strings.Repeat("a", 63) + ".example.com"
 	if err := create(t, a); err != nil {
-		t.Fatalf("an FQDN must be accepted: %v", err)
+		t.Fatalf("an FQDN with 63-character labels must be accepted: %v", err)
 	}
 }
 
