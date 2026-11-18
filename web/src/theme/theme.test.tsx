@@ -58,7 +58,21 @@ describe('theme mode', () => {
     });
     expect(readThemeMode()).toBe('system');
     expect(() => storeThemeMode('dark')).not.toThrow();    expect(readThemeMode()).toBe('dark');
+    vi.restoreAllMocks();
     storeThemeMode('system');
+  });
+
+  it('keeps a choice that could not be written while storage is readable', () => {
+    localStorage.setItem('theme-mode', 'light');
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    storeThemeMode('dark');
+    expect(readThemeMode()).toBe('dark');
+    vi.restoreAllMocks();
+    storeThemeMode('dark');
+    expect(localStorage.getItem('theme-mode')).toBe('dark');
+    expect(readThemeMode()).toBe('dark');
   });
 
   it('applies dark and light', () => {
