@@ -75,7 +75,10 @@ func TestManagerStartsBeforeTheOperatorIsInstalled(t *testing.T) {
 	}
 	mgrCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
-	go func() { done <- mgr.Start(mgrCtx) }()
+	go func() {
+		done <- mgr.Start(mgrCtx)
+		close(done)
+	}()
 	t.Cleanup(func() {
 		cancel()
 		if err := <-done; err != nil {

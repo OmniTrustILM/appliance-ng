@@ -195,6 +195,8 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, secrets Sec
 			return otilm.Connector{}, fmt.Errorf("component %s is private and needs registry credentials", c.Name)
 		}
 		image.PullSecrets = []string{secrets.PullSecret}
+		// Private images are not in the offline cache, so pin what is pulled; the operator ignores the tag.
+		image.Digest = c.Digest
 	}
 
 	env := plainEnv(c.Env)

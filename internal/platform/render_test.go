@@ -233,6 +233,12 @@ func TestRenderPrivateNeedsPullSecret(t *testing.T) {
 	if !reflect.DeepEqual(connectors[1].Spec.Image.PullSecrets, []string{"ilm-registry"}) {
 		t.Errorf("pull secrets %v", connectors[1].Spec.Image.PullSecrets)
 	}
+	if connectors[0].Spec.Image.Digest != "" {
+		t.Errorf("public connector digest %q, want none", connectors[0].Spec.Image.Digest)
+	}
+	if got := connectors[1].Spec.Image.Digest; !strings.HasPrefix(got, "sha256:") {
+		t.Errorf("private connector digest %q, want a sha256 digest", got)
+	}
 }
 
 func TestRenderUnknownComponent(t *testing.T) {
