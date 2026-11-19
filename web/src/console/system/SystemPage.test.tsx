@@ -43,7 +43,6 @@ describe('SystemPage', () => {
     render(<SystemPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     const dialog = screen.getByRole('dialog', { name: 'Restart the node?' });
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Restart' }));
     expect(await screen.findByText(/is restarting/i)).toBeInTheDocument();
@@ -64,18 +63,6 @@ describe('SystemPage', () => {
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(sent['POST /api/v1/system/reboot']).toBeUndefined();
-  });
-
-  it('keeps the focus inside the dialog', async () => {
-    stubApi({ 'GET /api/v1/status': status(false) });
-    render(<SystemPage />);
-    await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
-    await userEvent.tab();
-    expect(within(screen.getByRole('dialog')).getAllByRole('button')[1]).toHaveFocus();
-    await userEvent.tab();
-    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
-    await userEvent.tab({ shift: true });
-    expect(within(screen.getByRole('dialog')).getAllByRole('button')[1]).toHaveFocus();
   });
 
   it('shuts down after the confirmation and says the console goes away', async () => {

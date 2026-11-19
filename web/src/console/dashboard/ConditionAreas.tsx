@@ -10,13 +10,13 @@ const areas = [
   { name: 'Certificate', types: ['CertificateReady'] },
 ] as const;
 
-const known: readonly string[] = areas.flatMap((area) => area.types);
+const known: ReadonlySet<string> = new Set(areas.flatMap((area) => area.types));
 
 /** The conditions grouped by area; areas without a condition are left out, unknown conditions come last. */
 export function ConditionAreas({ conditions }: Readonly<{ conditions: Status['conditions'] }>) {
   const groups = [
     ...areas.map(({ name, types }) => ({ name, conditions: conditions.filter((c) => (types as readonly string[]).includes(c.type)) })),
-    { name: 'Other', conditions: conditions.filter((c) => !known.includes(c.type)) },
+    { name: 'Other', conditions: conditions.filter((c) => !known.has(c.type)) },
   ].filter((group) => group.conditions.length > 0);
 
   return (

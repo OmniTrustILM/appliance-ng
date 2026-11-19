@@ -16,7 +16,7 @@ type RegistryFormProps = Readonly<{
   onCancel: () => void;
 }>;
 
-const fields: readonly string[] = ['host', 'username', 'password'];
+const fields: ReadonlySet<string> = new Set(['host', 'username', 'password']);
 
 /** Adds a registry or, when `editing`, changes the credentials of one; the server's field errors show at their field. */
 export function RegistryForm({ editing, onSaved, onCancel }: RegistryFormProps) {
@@ -41,7 +41,7 @@ export function RegistryForm({ editing, onSaved, onCancel }: RegistryFormProps) 
     if (result.response.ok) return onSaved();
     const failure = result.error;
     const message = failure?.message ?? 'The appliance could not process the request.';
-    if (failure?.field && fields.includes(failure.field)) return setFieldErrors({ [failure.field]: message });
+    if (failure?.field && fields.has(failure.field)) return setFieldErrors({ [failure.field]: message });
     setError(message);
   }
 
