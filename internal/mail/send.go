@@ -88,7 +88,7 @@ func sendTest(ctx context.Context, m v1alpha1.MailSpec, user, password, to strin
 		return err
 	}
 	defer context.AfterFunc(ctx, func() { _ = conn.Close() })()
-	c, err := smtp.NewClient(conn, m.Host)
+	c, err := smtp.NewClient(conn, m.Host) // NOSONAR: security none is an admin choice for an internal relay; credentials are refused with it
 	if err != nil {
 		_ = conn.Close()
 		return failure(ctx, StageConnect, err)
