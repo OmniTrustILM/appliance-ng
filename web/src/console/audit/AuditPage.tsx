@@ -6,7 +6,7 @@ import { Card } from '../../components/Card';
 import { PageHeading } from '../../components/PageHeading';
 import { PageWidth } from '../../components/PageWidth';
 import { Loading } from '../../components/Spinner';
-import { useAuditPage, type AuditEntry } from './useAuditPage';
+import { pageOf, useAuditSnapshot, type AuditEntry } from './useAuditPage';
 
 const results = {
   success: { tone: 'ok', label: 'Success' },
@@ -53,22 +53,33 @@ function EntryTable({ entries }: Readonly<{ entries: readonly AuditEntry[] }>) {
 /** The audit log, newest first, a page at a time; read-only. */
 export function AuditPage() {
   const [page, setPage] = useState(0);
-  const { loaded, error } = useAuditPage(page);
-  const empty = loaded?.entries.length === 0 && page === 0;
+  const { items, error, loading, refresh } = useAuditSnapshot();
+  const current = items && pageOf(items, page);
+  const empty = items?.length === 0;
+
+  function reload() {
+    setPage(0);
+    refresh();
+  }
 
   return (
     <PageWidth wide>
       <Card
         back={<Button variant="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>}
-        actions={<Button variant="secondary" disabled={!loaded?.hasNext} onClick={() => setPage(page + 1)}>Next</Button>}
+        actions={(
+          <>
+            <Button variant="secondary" busy={loading && !!items} onClick={reload}>Refresh</Button>
+            <Button variant="secondary" disabled={!current?.hasNext} onClick={() => setPage(page + 1)}>Next</Button>
+          </>
+        )}
       >
         <PageHeading eyebrow="Platform" title="Audit log" lead="Sign-ins and changes made in this console, newest first." />
         {error && <Alert tone="error">{error}</Alert>}
-        {!loaded && !error && <Loading />}
+        {!items && !error && <Loading />}
         {empty && <p className="text-content-muted">Nothing has been recorded yet.</p>}
-        {loaded && !empty && (
+        {current && !empty && (
           <>
-            <EntryTable entries={loaded.entries} />
+            <EntryTable entries={current.entries} />
             <p className="mt-3 text-sm text-content-muted">Page {page + 1}</p>
           </>
         )}
