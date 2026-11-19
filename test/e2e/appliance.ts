@@ -133,9 +133,10 @@ function spki(certificate: X509Certificate): string {
 async function trustBuiltinCA(): Promise<string[]> {
   const { address, port, host } = consoleOrigin();
   const deadline = Date.now() + CERTIFICATE_TIMEOUT;
+  let root = '';
   for (;;) {
     try {
-      const root = await fetchRootCA();
+      root ||= await fetchRootCA();
       const leaf = await verifiedCertificate(address, port, host, root);
       console.log(`console certificate for ${host} issued by ${leaf.issuer.replaceAll('\n', ', ')}`);
       return [spki(new X509Certificate(root)), spki(leaf)];
