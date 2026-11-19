@@ -49,7 +49,12 @@ export function FileDropField({ label, hint, required = false, file, onChange }:
           className="sr-only"
           required={required}
           aria-describedby={hint ? hintId : undefined}
-          onChange={(event) => onChange(event.target.files?.[0])}
+          onChange={(event) => {
+            const chosen = event.currentTarget.files?.[0];
+            // Cleared so that choosing the same file again, after the form emptied itself, fires a change.
+            event.currentTarget.value = '';
+            onChange(chosen);
+          }}
         />
       </label>
       {hint && <p id={hintId} className="mt-1 text-[13px] text-content-subtle">{hint}</p>}

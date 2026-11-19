@@ -8,6 +8,7 @@ import { Card } from './Card';
 import { ChoiceField } from './ChoiceField';
 import { cx } from './cx';
 import { Field } from './Field';
+import { FileDropField } from './FileDropField';
 import { Layout } from './Layout';
 import { PageHeading } from './PageHeading';
 import { Loading } from './Spinner';
@@ -176,5 +177,17 @@ describe('Loading', () => {
   it('is a status with Loading…', () => {
     render(<Loading />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+  });
+});
+
+describe('FileDropField', () => {
+  it('reports the same file each time it is chosen', async () => {
+    const onChange = vi.fn();
+    render(<FileDropField label="Bundle" file={undefined} onChange={onChange} />);
+    const file = new File(['pem'], 'ca.pem');
+    await userEvent.upload(screen.getByLabelText(/^Bundle/), file);
+    await userEvent.upload(screen.getByLabelText(/^Bundle/), file);
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(onChange).toHaveBeenLastCalledWith(file);
   });
 });
