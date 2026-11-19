@@ -30,8 +30,19 @@ const actions = {
   },
 } as const;
 
-/** Whether the node needs a restart, once the status is read; until then the read's failure or a spinner. */
+/**
+ * Whether the node needs a restart, once the status is read; until then the read's failure or a spinner.
+ * While the latest read fails, the retained status is only the last known one.
+ */
 function RebootState({ status, error }: Readonly<{ status?: Status; error?: string }>) {
+  if (status && error) {
+    const lastKnown = status.rebootRequired ? 'a restart was needed' : 'no restart was needed';
+    return (
+      <Alert tone="warning">
+        The node status could not be refreshed, so it is not known whether a restart is needed now. Last known: {lastKnown}.
+      </Alert>
+    );
+  }
   if (status?.rebootRequired) return <Alert tone="warning">The node needs to restart to apply a change.</Alert>;
   if (status) return <p className="mb-5 text-sm text-content-muted">No restart is needed.</p>;
   if (error) return <Alert tone="error">{error}</Alert>;

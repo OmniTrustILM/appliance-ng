@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../../setup/test-utils';
@@ -27,6 +27,21 @@ describe('SystemPage', () => {
     expect(screen.queryByText('No restart is needed.')).not.toBeInTheDocument();
     expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be reached/i);
     expect(screen.queryByText('No restart is needed.')).not.toBeInTheDocument();
+  });
+
+  it('does not present the last known restart state as current once a refresh fails', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const ok = new Response(JSON.stringify(status(false)[1]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(ok).mockRejectedValue(new TypeError('down')));
+      render(<SystemPage />);
+      expect(await screen.findByText('No restart is needed.')).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      expect(await screen.findByRole('status')).toHaveTextContent(/could not be refreshed.*no restart was needed/i);
+      expect(screen.queryByText('No restart is needed.')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('cancels with Escape after a click on the dialog text', async () => {
