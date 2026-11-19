@@ -3,14 +3,19 @@ package manager
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
 // Reasons of the Appliance conditions.
@@ -34,6 +39,10 @@ const (
 
 // platformAvailable is the condition operator v1.1.0 sets when the Platform serves.
 const platformAvailable = "Available"
+
+// operatorAddon is the release manifest's add-on of the ILM operator, whose version is the operator's: the operator
+// does not report its own version.
+const operatorAddon = "ilm-operator"
 
 func setCondition(a *v1alpha1.Appliance, kind string, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
@@ -71,4 +80,80 @@ func platformReady(p *otilm.Platform) (bool, string) {
 		return false, "the Platform is not available yet: " + c.Reason
 	}
 	return true, "the Platform is available"
+}
+
+// keepKnown sets field to value unless value is empty, so that a version or address that cannot be read now keeps
+// the last known one.
+func keepKnown(field *string, value string) {
+	if value != "" {
+		*field = value
+	}
+}
+
+// setReleaseVersions sets the versions the manager knows itself: its own from the build and the operator's from the
+// release manifest.
+func (r *ApplianceReconciler) setReleaseVersions(a *v1alpha1.Appliance) {
+	keepKnown(&a.Status.Versions.Appliance, r.Version)
+	if i := slices.IndexFunc(r.Release.Addons, func(f release.AddonFile) bool { return f.Name == operatorAddon }); i >= 0 {
+		keepKnown(&a.Status.Versions.Operator, r.Release.Addons[i].Version)
+	}
+}
+
+// nodeObservation is what the node reports of itself for the status; an empty field keeps the last known value.
+type nodeObservation struct {
+	talos, kubernetes, address string
+}
+
+func (o nodeObservation) apply(s *v1alpha1.ApplianceStatus) {
+	keepKnown(&s.Versions.Talos, o.talos)
+	keepKnown(&s.Versions.Kubernetes, o.kubernetes)
+	keepKnown(&s.NodeAddress, o.address)
+}
+
+// talosVersions returns the Talos version of the node and the Kubernetes version of its machine configuration, or
+// empty strings while Talos cannot be reached or read. A failed read goes to the manager's log only; a failed
+// access is not logged here, the node configuration reports it.
+func talosVersions(ctx context.Context, access func(context.Context) (talos.Node, error)) (string, string) {
+	tn, err := access(ctx)
+	if err != nil {
+		return "", ""
+	}
+	talosVersion, kubernetesVersion, err := tn.Versions(ctx)
+	if err != nil {
+		log.FromContext(ctx).Info("could not read the Talos and Kubernetes versions, keeping the last known ones", "error", err)
+		return "", ""
+	}
+	return talosVersion, kubernetesVersion
+}
+
+// setConnectorsCondition sets ConnectorsReady from the Connectors the operator reports on: True when every chosen
+// Connector runs, otherwise False naming the Connectors that failed or are not ready yet. The operator's messages
+// stay out of the Appliance.
+func setConnectorsCondition(a *v1alpha1.Appliance, connectors []otilm.Connector) {
+	var failed, waiting []string
+	for i := range connectors {
+		c := &connectors[i]
+		switch {
+		case connectorReady(c):
+		case c.Status.Phase == otilm.ConnectorPhaseFailed:
+			failed = append(failed, c.Name)
+		default:
+			waiting = append(waiting, c.Name)
+		}
+	}
+	switch {
+	case len(failed) > 0:
+		setCondition(a, v1alpha1.ConditionConnectorsReady, metav1.ConditionFalse, reasonFailed,
+			"these connectors failed: "+strings.Join(failed, ", "))
+	case len(waiting) > 0:
+		setCondition(a, v1alpha1.ConditionConnectorsReady, metav1.ConditionFalse, reasonProgressing,
+			"waiting for these connectors: "+strings.Join(waiting, ", "))
+	default:
+		setCondition(a, v1alpha1.ConditionConnectorsReady, metav1.ConditionTrue, reasonReady, "all chosen connectors are ready")
+	}
+}
+
+// connectorReady reports whether the operator runs the Connector's current generation.
+func connectorReady(c *otilm.Connector) bool {
+	return c.Status.ObservedGeneration == c.Generation && c.Status.Phase == otilm.ConnectorPhaseRunning
 }

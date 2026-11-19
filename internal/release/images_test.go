@@ -45,3 +45,17 @@ func TestCacheListHasPublicConnectorsOnly(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+func TestConnectorRegistryHost(t *testing.T) {
+	for image, want := range map[string]string{
+		"hub.omnitrustregistry.com/ilm-private/x:1.0.0": "hub.omnitrustregistry.com",
+		"Registry.Example.com:5000/x:1":                 "registry.example.com:5000",
+		"localhost/x:1":                                 "localhost",
+		"library/busybox:1":                             "docker.io",
+		"busybox":                                       "docker.io",
+	} {
+		if got := (Connector{Image: image}).RegistryHost(); got != want {
+			t.Errorf("RegistryHost(%q) = %q, want %q", image, got, want)
+		}
+	}
+}

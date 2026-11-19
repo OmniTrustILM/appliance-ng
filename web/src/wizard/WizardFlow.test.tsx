@@ -102,7 +102,7 @@ describe('WizardFlow', () => {
     const { sent } = open({
       'GET /api/v1/appliance': [200, {
         ...appliance,
-        mail: { host: 'smtp.example.test', port: 25, security: 'none', from: 'a@b.test', username: 'mailer', passwordSet: true },
+        mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer', passwordSet: true },
         platform: { hostName: 'ilm.example.test', components: ['scanner'] },
       }],
       'PUT /api/v1/wizard/platform': [202],
@@ -123,7 +123,7 @@ describe('WizardFlow', () => {
     expect(sent['PUT /api/v1/wizard/platform']).toEqual([{
       hostName: 'ilm.example.test',
       components: ['scanner'],
-      mail: { host: 'smtp.example.test', port: 25, security: 'none', from: 'a@b.test', username: 'mailer' },
+      mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer' },
     }]);
   });
 
@@ -131,7 +131,7 @@ describe('WizardFlow', () => {
     open({
       'GET /api/v1/appliance': [200, {
         ...appliance,
-        mail: { host: 'smtp.example.test', port: 25, security: 'none', from: 'a@b.test', username: 'mailer', passwordSet: true },
+        mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer', passwordSet: true },
       }],
     });
     await screen.findByLabelText('ILM host name');
@@ -153,6 +153,7 @@ describe('WizardFlow', () => {
     ['components', 'Scanner', 'Pick public ones.'],
     ['mail.host', 'Mail server', 'Host is not valid.'],
     ['mail.password', 'Password (optional)', 'Password refused.'],
+    ['mail.username', 'User name (optional)', 'Credentials need security starttls or tls; choose one, or remove the user name.'],
   ])('sends the admin back to the step of a refused field (%s)', async (field, label, message) => {
     open({
       'GET /api/v1/appliance': [200, {
@@ -216,6 +217,11 @@ describe('WizardFlow', () => {
     await userEvent.type(screen.getByLabelText('Port'), '99999');
     await next();
     expect(screen.getByLabelText('Port')).toHaveAccessibleDescription(/1 and 65535/);
+    await userEvent.clear(screen.getByLabelText('Port'));
+    await userEvent.type(screen.getByLabelText('Port'), '25');
+    await userEvent.type(screen.getByLabelText('User name (optional)'), 'mailer');
+    await next();
+    expect(screen.getByLabelText('User name (optional)')).toHaveAccessibleDescription(/starttls or tls/);
   });
 
   it('asks for a host name', async () => {

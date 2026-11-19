@@ -107,6 +107,17 @@ func TestValidateRequiresTheSetupCertificate(t *testing.T) {
 	}
 }
 
+func TestValidateRequiresAJSONBody(t *testing.T) {
+	o := options{user: "u", password: "p", seedFile: "s", hostName: "h", method: "PUT", path: "/api/v1/node", body: `{"dns":`}
+	if err := o.validate("api"); err == nil || !strings.Contains(err.Error(), "--body") {
+		t.Errorf("validate api with a broken body = %v, want an error naming it", err)
+	}
+	o.body = `{"dns":["192.0.2.53"]}`
+	if err := o.validate("api"); err != nil {
+		t.Errorf("validate api = %v", err)
+	}
+}
+
 // TestPart1TrustsTheSetupCertificate checks that the self-signed certificate of the first-boot service, given as the
 // only root, verifies for the node address it is issued for and for nothing else.
 func TestPart1TrustsTheSetupCertificate(t *testing.T) {

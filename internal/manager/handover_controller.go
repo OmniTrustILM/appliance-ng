@@ -111,7 +111,7 @@ func (r *HandoverReconciler) importAnswers(ctx context.Context, a *v1alpha1.Appl
 	if err != nil {
 		logger.Info("waiting for access to the Talos API", "error", err)
 		return ctrl.Result{RequeueAfter: talosAccessRequeue},
-			r.setHandover(ctx, a, metav1.ConditionFalse, reasonWaitingForTalosAccess, "waiting for access to the Talos API")
+			r.setHandover(ctx, a, metav1.ConditionFalse, reasonWaitingForTalosAccess, messageWaitingForTalosAccess)
 	}
 	if err := node.RemoveExtensionConfig(ctx, machineconfig.HandoverService, machineconfig.HandoverPath); err != nil {
 		logger.Error(err, "could not remove the hand-over file from the machine configuration")

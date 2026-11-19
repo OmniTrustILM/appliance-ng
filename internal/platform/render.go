@@ -11,8 +11,10 @@ import (
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/nodeconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
@@ -60,9 +62,10 @@ type SecretNames struct {
 }
 
 // Render returns the Platform and, in the order of the Appliance's components, the
-// Connectors for a.
-func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames) (*otilm.Platform, []otilm.Connector, error) {
-	p, err := renderPlatform(a, m, secrets)
+// Connectors for a on the node at nodeIP, which the no-proxy list holds; empty when unknown.
+func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, nodeIP string) (*otilm.Platform, []otilm.Connector, error) {
+	proxy := outboundProxy(a.Spec.Proxy, nodeIP)
+	p, err := renderPlatform(a, m, secrets, proxy)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -76,7 +79,7 @@ func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames) (*o
 		if i < 0 {
 			return nil, nil, fmt.Errorf("component %s is not in the connector catalogue", name)
 		}
-		c, err := renderConnector(m.Connectors[i], a.Spec.Proxy, secrets)
+		c, err := renderConnector(m.Connectors[i], proxy, a.Spec.Mail, secrets)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -85,7 +88,17 @@ func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames) (*o
 	return p, connectors, nil
 }
 
-func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames) (*otilm.Platform, error) {
+// outboundProxy returns p with the no-proxy entries the node itself needs for the node at nodeIP, so that ILM never
+// reaches the node, the cluster networks or in-cluster services through the proxy, or nil when p sets nothing.
+func outboundProxy(p *v1alpha1.ProxySpec, nodeIP string) *v1alpha1.ProxySpec {
+	px := nodeconfig.ProxyOf(p)
+	if px == nil {
+		return nil
+	}
+	return &v1alpha1.ProxySpec{HTTP: px.HTTP, HTTPS: px.HTTPS, NoProxy: nodeconfig.NoProxy(nodeIP, px.NoProxy)}
+}
+
+func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, proxy *v1alpha1.ProxySpec) (*otilm.Platform, error) {
 	version, hostName := m.Platform.ILMVersion, firstSet(a.Spec.Node.HostName, m.Platform.HostName)
 	if ps := a.Spec.Platform; ps != nil {
 		version = firstSet(ps.ILMVersion, version)
@@ -101,13 +114,27 @@ func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNa
 	if secrets.Trust != "" {
 		p.Spec.Common.TrustedCertificates = otilm.TrustedCertificatesSpec{SecretRef: secrets.Trust, CAKey: TrustKey}
 	}
-	if proxy := a.Spec.Proxy; proxy != nil && (proxy.HTTP != "" || proxy.HTTPS != "" || proxy.NoProxy != "") {
+	if proxy != nil {
 		p.Spec.Common.Proxy = otilm.OutboundProxySpec{Enabled: true, HTTP: proxy.HTTP, HTTPS: proxy.HTTPS, NoProxy: proxy.NoProxy}
 	}
 	if secrets.PullSecret != "" {
 		p.Spec.Common.Image.PullSecrets = []string{secrets.PullSecret}
 	}
 	return p, nil
+}
+
+// Unstructured returns p for a server-side apply. Without a trust Secret the trustedCertificates field is left out,
+// so that the apply gives up the field instead of setting it to null, which the Platform's schema refuses.
+func Unstructured(p *otilm.Platform) (*unstructured.Unstructured, error) {
+	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(p)
+	if err != nil {
+		return nil, fmt.Errorf("convert the Platform: %w", err)
+	}
+	u := &unstructured.Unstructured{Object: content}
+	if p.Spec.Common.TrustedCertificates == (otilm.TrustedCertificatesSpec{}) {
+		unstructured.RemoveNestedField(u.Object, "spec", "common", "trustedCertificates")
+	}
+	return u, nil
 }
 
 // TLSOption returns the Traefik TLSOption that asks for an optional client certificate and verifies it against
@@ -191,7 +218,7 @@ func defaultPlatform(version, hostName string) *otilm.Platform {
 	}
 }
 
-func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, secrets SecretNames) (otilm.Connector, error) {
+func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, mail *v1alpha1.MailSpec, secrets SecretNames) (otilm.Connector, error) {
 	image := otilm.ImageSpec{}
 	image.Repository, image.Tag = splitTag(c.Image)
 	if c.Private {
@@ -224,14 +251,8 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, secrets Sec
 		)
 		refs = append(refs, envSecret(databaseSecret, usernameKey, "DATABASE_USER", passwordKey, "DATABASE_PASSWORD"))
 	}
-	if proxy != nil && slices.Contains(c.Settings, release.SettingProxy) {
-		env = appendSet(env, "HTTP_PROXY", proxy.HTTP)
-		env = appendSet(env, "HTTPS_PROXY", proxy.HTTPS)
-		env = appendSet(env, "NO_PROXY", proxy.NoProxy)
-	}
-	if secrets.Trust != "" && slices.Contains(c.Settings, release.SettingTrust) {
-		refs = append(refs, envSecret(secrets.Trust, TrustKey, "TRUSTED_CERTIFICATES"))
-	}
+	settingsEnv, settingsRefs := settings(c, proxy, mail, secrets)
+	env, refs = append(env, settingsEnv...), append(refs, settingsRefs...)
 	if len(c.Keys) > 0 {
 		pairs := make([]string, 0, 2*len(c.Keys))
 		for _, key := range c.Keys {
@@ -259,6 +280,49 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, secrets Sec
 		},
 	}, nil
 }
+
+// settings returns the environment and Secret references of the Appliance areas the connector reads: the proxy,
+// the trusted CAs and the mail server.
+func settings(c release.Connector, proxy *v1alpha1.ProxySpec, mail *v1alpha1.MailSpec, secrets SecretNames) ([]otilm.EnvVar, []otilm.SecretRef) {
+	var env []otilm.EnvVar
+	var refs []otilm.SecretRef
+	if proxy != nil && slices.Contains(c.Settings, release.SettingProxy) {
+		env = appendSet(env, "HTTP_PROXY", proxy.HTTP)
+		env = appendSet(env, "HTTPS_PROXY", proxy.HTTPS)
+		env = appendSet(env, "NO_PROXY", proxy.NoProxy)
+	}
+	if secrets.Trust != "" && slices.Contains(c.Settings, release.SettingTrust) {
+		refs = append(refs, envSecret(secrets.Trust, TrustKey, "TRUSTED_CERTIFICATES"))
+	}
+	// Without a mail server the connector gets no mail settings: an Appliance that chose it before the API asked for
+	// one still reconciles; the API refuses to choose it anew without one.
+	if mail != nil && slices.Contains(c.Settings, release.SettingMail) {
+		env = append(env, mailEnv(mail, secrets.Mail != "")...)
+		if secrets.Mail != "" {
+			refs = append(refs, envSecret(secrets.Mail, usernameKey, "SMTP_USERNAME", passwordKey, "SMTP_PASSWORD"))
+		}
+	}
+	return env, refs
+}
+
+// mailEnv is the mail server of the email notification provider's Spring Boot mail settings. SMTP_TLS switches
+// STARTTLS on; implicit TLS is the JavaMail property mail.smtp.ssl.enable, which Spring Boot binds from
+// sslEnableEnv. The sender address is a setting of each notification instance, not of the connector.
+func mailEnv(m *v1alpha1.MailSpec, auth bool) []otilm.EnvVar {
+	env := []otilm.EnvVar{
+		{Name: "SMTP_HOST", Value: m.Host},
+		{Name: "SMTP_PORT", Value: strconv.Itoa(int(m.Port))},
+		{Name: "SMTP_AUTH", Value: strconv.FormatBool(auth)},
+		{Name: "SMTP_TLS", Value: strconv.FormatBool(m.Security == v1alpha1.MailSecuritySTARTTLS)},
+	}
+	if m.Security == v1alpha1.MailSecurityTLS {
+		env = append(env, otilm.EnvVar{Name: sslEnableEnv, Value: "true"})
+	}
+	return env
+}
+
+// sslEnableEnv sets the JavaMail property mail.smtp.ssl.enable through Spring Boot's spring.mail.properties.
+const sslEnableEnv = "SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE"
 
 // probes uses the operator's default timings with the connector's health paths.
 func probes(liveness string) *otilm.ProbeSpec {

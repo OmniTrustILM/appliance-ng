@@ -598,7 +598,7 @@ func TestReconcileAppliesAddonsOnlyWhenDue(t *testing.T) {
 	}
 
 	a := getAppliance(t)
-	a.Spec.Node.HostName = "other.example.com"
+	a.Spec.NTP.Servers = []string{"ntp.example.com"}
 	if err := testClient.Update(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}

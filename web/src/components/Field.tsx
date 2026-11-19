@@ -1,4 +1,4 @@
-import { useId, type InputHTMLAttributes } from 'react';
+import { useId, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cx } from './cx';
 
 export const INPUT = cx(
@@ -11,7 +11,7 @@ type FieldProps = Readonly<
     label: string;
     name: string;
     error?: string;
-    hint?: string;
+    hint?: ReactNode;
     variant?: 'text' | 'code';
   }
 >;

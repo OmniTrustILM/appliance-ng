@@ -39,6 +39,56 @@ func TestAPIRunsWithTheManagerRBAC(t *testing.T) {
 	wantStatus(t, h.request(http.MethodGet, "/api/v1/ca.pem", nil, nil), http.StatusNotFound)
 	createAdminSecret(t, newAdminCredential(t, pkcs1))
 	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+	node := NodeUpdate{Dns: []string{"192.0.2.53"}, Ntp: []string{}}
+	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", node, s), http.StatusAccepted)
+	h.withTalos(&fakeTalos{}, nil)
+	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/shutdown", Confirmation{Confirm: true}, s), http.StatusAccepted)
+
+	ca := newTestCA(t)
+	key := newECKey(t)
+	certPEM := ca.issue(t, key.Public(), []string{"appliance.example.com", "ilm.example.com"}, nil)
+	upload := map[string][]byte{"certificate": certPEM, "key": pkcs8PEM(t, key), "chain": ca.pem}
+	wantStatus(t, h.upload(http.MethodPut, pathCertificate, upload, s), http.StatusAccepted)
+	wantStatus(t, h.upload(http.MethodPut, pathCertificate, upload, s), http.StatusAccepted)
+	csr := h.request(http.MethodPost, pathCSR, nil, s)
+	wantStatus(t, csr, http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, pathCSR, nil, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodGet, pathCertificate, nil, s), http.StatusOK)
+	signed := map[string][]byte{"certificate": ca.sign(t, h.request(http.MethodPost, pathCSR, nil, s).Body.Bytes()), "chain": ca.pem}
+	wantStatus(t, h.upload(http.MethodPut, pathSigned, signed, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, pathCSR, nil, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPut, pathBuiltin, nil, s), http.StatusAccepted)
+
+	trust := TrustUpload{Pem: string(ca.pem)}
+	wantStatus(t, h.request(http.MethodPost, pathTrustPreview, trust, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, pathTrust, trust, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, pathTrust, TrustUpload{Pem: string(newTestCA(t).pem)}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodGet, pathTrust, nil, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodDelete, pathTrust+"/"+ca.fingerprint(), nil, s), http.StatusAccepted)
+	for _, c := range trustList(t, h, s) {
+		wantStatus(t, h.request(http.MethodDelete, pathTrust+"/"+c.Sha256, nil, s), http.StatusAccepted)
+	}
+
+	credentials := RegistryCredentialsUpdate{Username: "robot", Password: ptr(registryPassword)}
+	wantStatus(t, h.request(http.MethodPut, pathTestRegistry, credentials, s), http.StatusAccepted)
+	credentials.Password = ptr(registryPasswordNext)
+	wantStatus(t, h.request(http.MethodPut, pathTestRegistry, credentials, s), http.StatusAccepted)
+	for _, path := range []string{pathRegistries, pathTestRegistry} {
+		wantStatus(t, h.request(http.MethodGet, path, nil, s), http.StatusOK)
+	}
+
+	wantStatus(t, h.request(http.MethodPut, pathMail, validMail(), s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodGet, pathMail, nil, s), http.StatusOK)
+	h.withSender(nil)
+	wantStatus(t, h.request(http.MethodPost, pathMailTest, MailTest{To: mailTestTo}, s), http.StatusNoContent)
+	platform := PlatformUpdate{HostName: "ilm.example.com", Components: []string{privateComponent, testMailComponent}}
+	wantStatus(t, h.request(http.MethodPut, pathPlatform, platform, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodGet, pathPlatform, nil, s), http.StatusOK)
+	platform.Components = []string{}
+	wantStatus(t, h.request(http.MethodPut, pathPlatform, platform, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodDelete, pathMail, nil, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodDelete, pathTestRegistry, nil, s), http.StatusAccepted)
 }
 
 // managerClient returns a client that acts as the manager's ServiceAccount with the RBAC of addons/manager.yaml.

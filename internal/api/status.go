@@ -17,8 +17,9 @@ import (
 
 const caFileName = `attachment; filename="ilm-appliance-ca.pem"`
 
-// GetStatus returns the setup phase, the conditions and the versions of the appliance. The condition messages are
-// fixed texts the manager sets; they carry no error text and no secret.
+// GetStatus returns the setup phase, the conditions, the versions, the node address, whether a reboot is required
+// and, when it can be read, when the certificate in use expires. The condition messages are fixed texts the manager
+// sets; they carry no error text and no secret.
 func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetStatusResponseObject, error) {
 	a, err := s.appliance(ctx)
 	if err != nil {
@@ -53,6 +54,14 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 		}
 	}
 	out.AddonStep = addonStep(st.Conditions)
+	// The cache serves the frequent polls; without the certificate the rest of the status still helps.
+	certificate, err := s.certificateInUse(ctx, s.deps.Client, a)
+	if err != nil {
+		s.deps.Log.Warn("certificate in use not read for the status", "error", err)
+	}
+	if certificate != nil {
+		out.Certificate = &StatusCertificate{NotAfter: certificate.NotAfter}
+	}
 	return GetStatus200JSONResponse(out), nil
 }
 

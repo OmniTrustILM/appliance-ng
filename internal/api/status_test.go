@@ -8,13 +8,16 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
@@ -51,6 +54,74 @@ func TestStatus(t *testing.T) {
 	}
 	if got.NodeAddress == nil || *got.NodeAddress != "192.0.2.5" {
 		t.Errorf("node address = %v", got.NodeAddress)
+	}
+}
+
+func TestStatusCertificate(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	a := createAppliance(t, v1alpha1.SetupComplete)
+	a.Status.RebootRequired = true
+	a.Status.Versions = v1alpha1.Versions{Appliance: "0.2.0", Talos: "v1.14.5", Kubernetes: "v1.37.1", Operator: "v1.1.0", ILM: "2.20.0"}
+	a.Status.Conditions = []metav1.Condition{{Type: v1alpha1.ConditionConnectorsReady, Status: metav1.ConditionFalse, Reason: "Failed", Message: "these connectors failed: ejbca-ng-connector", LastTransitionTime: metav1.Now()}}
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	status := func() Status {
+		var got Status
+		rec := h.request(http.MethodGet, "/api/v1/status", nil, s)
+		wantStatus(t, rec, http.StatusOK)
+		decode(t, rec, &got)
+		return got
+	}
+	if got := status(); got.Certificate != nil {
+		t.Errorf("certificate = %+v before one is issued, want none", got.Certificate)
+	}
+
+	ca := newTestCA(t)
+	builtin, _ := ca.leaf(t)
+	createTLSSecret(t, certs.SecretName, builtin)
+	got := status()
+	wantNotAfter := certIssued.Add(90 * 24 * time.Hour)
+	if got.Certificate == nil || !got.Certificate.NotAfter.Equal(wantNotAfter) {
+		t.Errorf("certificate = %+v, want notAfter %v", got.Certificate, wantNotAfter)
+	}
+	if !got.RebootRequired || got.Versions.Talos == nil || *got.Versions.Talos != "v1.14.5" || got.Versions.Operator == nil || *got.Versions.Operator != "v1.1.0" {
+		t.Errorf("status = %+v, want the reboot and all versions", got)
+	}
+	if len(got.Conditions) != 1 || got.Conditions[0].Type != v1alpha1.ConditionConnectorsReady {
+		t.Errorf("conditions = %+v, want ConnectorsReady", got.Conditions)
+	}
+
+	// An uploaded certificate in use replaces the built-in one.
+	key := newECKey(t)
+	uploaded := ca.issue(t, key.Public(), []string{"appliance.example.com"}, nil)
+	createTLSSecret(t, "custom-tls", uploaded)
+	a = getAppliance(t)
+	a.Spec.TLS = v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceSecret, SecretRef: "custom-tls"}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(uploaded)
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := status(); got.Certificate == nil || !got.Certificate.NotAfter.Equal(leaf.NotAfter) {
+		t.Errorf("certificate = %+v, want the uploaded one's notAfter %v", got.Certificate, leaf.NotAfter)
+	}
+}
+
+// createTLSSecret creates the TLS Secret name in the system namespace with the certificate certPEM.
+func createTLSSecret(t *testing.T, name string, certPEM []byte) {
+	t.Helper()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: name},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: certPEM, corev1.TLSPrivateKeyKey: []byte("key")},
+	}
+	if err := testClient.Create(context.Background(), secret); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -103,7 +174,7 @@ func TestGetAppliance(t *testing.T) {
 	if got.Node.HostName != "appliance.example.com" || *got.Node.Address != "192.0.2.5/24" || *got.Node.Gateway != "192.0.2.1" {
 		t.Errorf("node = %+v", got.Node)
 	}
-	if got.TlsSource != Builtin || !got.TrustSet || len(got.Dns) != 1 || len(got.Ntp) != 1 || got.Proxy == nil || *got.Proxy.Https == "" {
+	if got.TlsSource != ApplianceSettingsTlsSourceBuiltin || !got.TrustSet || len(got.Dns) != 1 || len(got.Ntp) != 1 || got.Proxy == nil || *got.Proxy.Https == "" {
 		t.Errorf("settings = %+v", got)
 	}
 	if len(got.Registries) != 2 || !got.Registries[0].CredentialsSet || got.Registries[1].CredentialsSet {
@@ -170,4 +241,46 @@ func selfSignedPEM(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// failingGet refuses to read the object name.
+type failingGet struct {
+	client.Client
+	name string
+}
+
+func (c failingGet) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if key.Name == c.name {
+		return errors.New("read refused")
+	}
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func TestStatusSurvivesACertificateReadError(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupComplete)
+	builtin, _ := newTestCA(t).leaf(t)
+	createTLSSecret(t, certs.SecretName, builtin)
+	status := func() Status {
+		var got Status
+		rec := h.request(http.MethodGet, "/api/v1/status", nil, s)
+		wantStatus(t, rec, http.StatusOK)
+		decode(t, rec, &got)
+		return got
+	}
+
+	// The status reads the certificate through the cached client, not past the cache.
+	h.srv.deps.Reader = failingGet{Client: testClient, name: certs.SecretName}
+	if got := status(); got.Certificate == nil {
+		t.Error("no certificate read through the cached client")
+	}
+
+	h.srv.deps.Client = failingGet{Client: testClient, name: certs.SecretName}
+	if got := status(); got.Certificate != nil || got.Setup != Complete {
+		t.Errorf("status %+v, want it without the certificate", got)
+	}
+	if !strings.Contains(h.logs.String(), "certificate in use not read") {
+		t.Errorf("log %s, want the read error", h.logs)
+	}
 }

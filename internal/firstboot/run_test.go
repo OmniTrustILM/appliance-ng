@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	configdoc "github.com/siderolabs/talos/pkg/machinery/config/config"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -148,6 +149,12 @@ var errNotUsed = errors.New("not used by the first-boot service")
 
 func (*fakeNode) PatchConfig(context.Context, []byte) error                   { return errNotUsed }
 func (*fakeNode) RemoveExtensionConfig(context.Context, string, string) error { return errNotUsed }
+func (*fakeNode) Documents(context.Context, ...string) ([]configdoc.Document, error) {
+	return nil, errNotUsed
+}
+func (*fakeNode) ReplaceDocuments(context.Context, []configdoc.Document, []string) error {
+	return errNotUsed
+}
 
 func (n *fakeNode) ExtensionConfigFile(_ context.Context, name, file string) ([]byte, error) {
 	n.mu.Lock()

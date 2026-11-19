@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import ilmWhite from '../assets/brand/ilm-white.svg';
 import otColor from '../assets/brand/ot-color.svg';
 import otWhite from '../assets/brand/ot-white.svg';
+import { ConsoleNav } from './ConsoleNav';
 import { useSession } from '../session';
 import { SignOutButton } from '../signin/SignOutButton';
 import ThemeToggle from '../theme/ThemeToggle';
@@ -75,6 +76,7 @@ export function Layout({ variant, children }: Readonly<LayoutProps>) {
     <div className="flex min-h-screen flex-col bg-surface text-content">
       <SkipLink />
       <TopBar product={variant === 'setup' ? 'Appliance setup' : 'Appliance'} withUser={variant === 'console'} />
+      {variant === 'console' && <ConsoleNav />}
       <main id="main" tabIndex={-1} className="mx-auto focus:outline-none w-full flex-1 px-4 py-8">
         {children}
       </main>

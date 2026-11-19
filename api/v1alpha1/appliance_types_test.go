@@ -105,6 +105,20 @@ func TestApplianceAddressMayBeSetOnce(t *testing.T) {
 	}
 }
 
+func TestApplianceHostNameImmutable(t *testing.T) {
+	a := newAppliance(v1alpha1.ApplianceName)
+	if err := create(t, a); err != nil {
+		t.Fatal(err)
+	}
+	a.Spec.Node.HostName = "pki.example.com"
+	wantInvalid(t, testClient.Update(context.Background(), a))
+	a.Spec.Node.HostName = "ilm.example.com"
+	a.Spec.Node.Gateway = "10.0.2.1"
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatalf("an unchanged host name must be accepted: %v", err)
+	}
+}
+
 func TestApplianceTLSSecretNeedsRef(t *testing.T) {
 	a := newAppliance(v1alpha1.ApplianceName)
 	a.Spec.TLS = v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceSecret}

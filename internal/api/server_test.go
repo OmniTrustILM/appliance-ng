@@ -101,7 +101,9 @@ var testRelease = &release.Manifest{
 	Connectors: []release.Connector{
 		{Name: "common-credential-provider", DisplayName: "Common Credential Provider"},
 		{Name: "ejbca-ng-connector", DisplayName: "EJBCA NG Connector"},
-		{Name: "external-authority-provider", DisplayName: "External Authority Provider", Private: true},
+		{Name: "external-authority-provider", DisplayName: "External Authority Provider", Private: true,
+			Image: testRegistryHost + "/ilm-private/external-authority-provider:1.0.0"},
+		{Name: testMailComponent, DisplayName: "Email Notification Provider", Settings: []string{release.SettingMail}},
 	},
 }
 
@@ -321,6 +323,17 @@ func TestProtectedOperationsNeedASession(t *testing.T) {
 		{http.MethodGet, "/api/v1/catalogue"},
 		{http.MethodGet, "/api/v1/audit"},
 		{http.MethodPost, "/api/v1/platform/admin-credential"},
+		{http.MethodGet, pathTrust},
+		{http.MethodPost, pathTrust},
+		{http.MethodPost, pathTrustPreview},
+		{http.MethodGet, pathRegistries},
+		{http.MethodPut, pathTestRegistry},
+		{http.MethodGet, pathPlatform},
+		{http.MethodPut, pathPlatform},
+		{http.MethodGet, pathMail},
+		{http.MethodPut, pathMail},
+		{http.MethodDelete, pathMail},
+		{http.MethodPost, pathMailTest},
 	} {
 		if rec := h.request(tc.method, tc.path, nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s without a session: status %d, want 401", tc.method, tc.path, rec.Code)

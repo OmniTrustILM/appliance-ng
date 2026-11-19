@@ -15,3 +15,11 @@ Object.defineProperty(window, 'matchMedia', {
     removeEventListener: () => {},
   }),
 });
+
+// jsdom's FormData and File are not the ones fetch's Request understands, so a multipart body would not
+// survive. The tests use Node's: its FormData class is the one an empty form read from a response has.
+// The module name is a variable because the project has no Node type declarations.
+const nodeBuffer = 'node:buffer';
+const { File: NodeFile } = (await import(/* @vite-ignore */ nodeBuffer)) as { File: typeof File };
+globalThis.FormData = (await new Response(new URLSearchParams()).formData()).constructor as typeof FormData;
+globalThis.File = NodeFile;

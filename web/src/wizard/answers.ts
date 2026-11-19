@@ -3,6 +3,7 @@ import type { components } from '../api/schema';
 export type MailSecurity = components['schemas']['MailSecurity'];
 export type CatalogueItem = components['schemas']['CatalogueItem'];
 type Appliance = components['schemas']['ApplianceSettings'];
+type MailSettings = components['schemas']['MailSettings'];
 
 export type MailAnswers = {
   host: string;
@@ -24,7 +25,19 @@ export type Step = 'host' | 'certificate' | 'components' | 'mail' | 'review' | '
 
 export type Errors = Partial<Record<string, string>>;
 
+const credentialsNeedTls = 'Credentials need security starttls or tls; choose one, or remove the user name.';
+
 export const emptyMail: MailAnswers = { host: '', port: '25', security: 'none', from: '', username: '', password: '' };
+
+/** The mail answers for the settings the appliance holds; the password is never reported. */
+export function mailAnswersOf({ host, port, security, from, username }: MailSettings): MailAnswers {
+  return { host, port: String(port), security, from, username: username ?? '', password: '' };
+}
+
+/** The request body of the mail server; an empty user name or password is left out. */
+export function mailRequest({ host, port, security, from, username, password }: MailAnswers): components['schemas']['Mail'] {
+  return { host, port: Number(port), security, from, ...(username && { username }), ...(password && { password }) };
+}
 
 /** The answers the appliance holds; the host name defaults to the node's. */
 export function answersOf(appliance: Appliance): Answers {
@@ -32,26 +45,14 @@ export function answersOf(appliance: Appliance): Answers {
   return {
     hostName: platform?.hostName ?? node.hostName,
     components: platform?.components ?? [],
-    mail: mail && {
-      host: mail.host,
-      port: String(mail.port),
-      security: mail.security,
-      from: mail.from,
-      username: mail.username ?? '',
-      password: '',
-    },
+    mail: mail && mailAnswersOf(mail),
   };
 }
 
 /** The request body; an empty user name or password is left out. */
 export function toRequest({ hostName, components, mail }: Answers): components['schemas']['PlatformSettings'] {
   if (!mail) return { hostName, components };
-  const { host, port, security, from, username, password } = mail;
-  return {
-    hostName,
-    components,
-    mail: { host, port: Number(port), security, from, ...(username && { username }), ...(password && { password }) },
-  };
+  return { hostName, components, mail: mailRequest(mail) };
 }
 
 /** Whether the appliance keeps the password it holds for mail: only for the user name and server it was given for. */
@@ -68,11 +69,12 @@ export function stepOfField(field: string): Step {
 }
 
 /** Problems of the mail fields, keyed by the request field name. */
-export function mailProblems({ host, port, from }: MailAnswers): Errors {
+export function mailProblems({ host, port, from, security, username }: MailAnswers): Errors {
   const problems: Errors = {};
   if (!host.trim()) problems['mail.host'] = 'The mail server is required.';
   const number = Number(port);
   if (!Number.isInteger(number) || number < 1 || number > 65535) problems['mail.port'] = 'The port is a number between 1 and 65535.';
   if (!from.trim()) problems['mail.from'] = 'The from address is required.';
+  if (username && security === 'none') problems['mail.username'] = credentialsNeedTls;
   return problems;
 }

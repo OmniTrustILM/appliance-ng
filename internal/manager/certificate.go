@@ -2,12 +2,10 @@ package manager
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
 	"slices"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -36,7 +34,7 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 		notReady(reasonWaitingForCertManager, "waiting for cert-manager to run")
 		return 0
 	}
-	ip, found, err := r.nodeAddress(ctx, a)
+	ip, found, err := certs.NodeAddress(ctx, r.Client, a)
 	if err != nil {
 		log.FromContext(ctx).Error(err, "find the node address for the built-in certificate")
 		notReady(reasonFailed, messageCertificateFailed)
@@ -62,7 +60,7 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 }
 
 func (r *ApplianceReconciler) ensureCertificate(ctx context.Context, a *v1alpha1.Appliance, ip netip.Addr) (bool, error) {
-	if _, err := certs.EnsureBuiltin(ctx, r.Client, certificateHosts(a), []netip.Addr{ip}); err != nil {
+	if _, err := certs.EnsureBuiltin(ctx, r.Client, certs.Hosts(a), []netip.Addr{ip}); err != nil {
 		return false, err
 	}
 	return certs.Ready(ctx, r.Client)
@@ -78,50 +76,4 @@ func stepPassed(steps []kube.Step, progress addons.Progress, name string) bool {
 	}
 	target := at(name)
 	return target >= 0 && at(progress.Step) > target
-}
-
-// certificateHosts returns the node host name and the ILM host name, which defaults to it.
-func certificateHosts(a *v1alpha1.Appliance) []string {
-	hosts := []string{a.Spec.Node.HostName}
-	if p := a.Spec.Platform; p != nil && p.HostName != "" && p.HostName != a.Spec.Node.HostName {
-		hosts = append(hosts, p.HostName)
-	}
-	return hosts
-}
-
-// nodeAddress returns the node address from the status, the spec, or with DHCP the node's internal address.
-func (r *ApplianceReconciler) nodeAddress(ctx context.Context, a *v1alpha1.Appliance) (netip.Addr, bool, error) {
-	for _, s := range []string{a.Status.NodeAddress, a.Spec.Node.Address} {
-		if addr, ok := parseAddress(s); ok {
-			return addr, true, nil
-		}
-	}
-	nodes := &corev1.NodeList{}
-	if err := r.Client.List(ctx, nodes); err != nil {
-		return netip.Addr{}, false, fmt.Errorf("list nodes: %w", err)
-	}
-	for _, n := range nodes.Items {
-		for _, address := range n.Status.Addresses {
-			if address.Type != corev1.NodeInternalIP {
-				continue
-			}
-			if addr, ok := parseAddress(address.Address); ok {
-				return addr, true, nil
-			}
-		}
-	}
-	return netip.Addr{}, false, nil
-}
-
-// parseAddress accepts an address with or without a prefix length, and only a global unicast IPv4 address.
-func parseAddress(s string) (netip.Addr, bool) {
-	addr, err := netip.ParseAddr(s)
-	if err != nil {
-		prefix, perr := netip.ParsePrefix(s)
-		if perr != nil {
-			return netip.Addr{}, false
-		}
-		addr = prefix.Addr()
-	}
-	return addr, addr.Is4() && addr.IsGlobalUnicast()
 }

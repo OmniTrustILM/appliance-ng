@@ -16,6 +16,7 @@ import (
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
 	clientconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
+	configdoc "github.com/siderolabs/talos/pkg/machinery/config/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/network"
 	"github.com/siderolabs/talos/pkg/machinery/resources/runtime"
@@ -78,6 +79,13 @@ type Node interface {
 	ExtensionConfigFile(ctx context.Context, name, file string) ([]byte, error)
 	// RemoveExtensionConfig removes the file mounted at file from the ExtensionServiceConfig name, in no-reboot mode.
 	RemoveExtensionConfig(ctx context.Context, name, file string) error
+	// Documents returns the documents of the running machine configuration whose kind is one of kinds.
+	Documents(ctx context.Context, kinds ...string) ([]configdoc.Document, error)
+	// ReplaceDocuments replaces whole documents of the running machine configuration: each of docs takes the place of
+	// the running document with its ID (see DocumentID) or is added, and each running document whose ID is in remove
+	// is dropped. The result is persisted and applied in no-reboot mode; a failed apply returns an error that names
+	// the changed documents.
+	ReplaceDocuments(ctx context.Context, docs []configdoc.Document, remove []string) error
 	// Versions returns the Talos version of the node and the Kubernetes version of its machine configuration.
 	Versions(ctx context.Context) (talos, kubernetes string, err error)
 	Reboot(ctx context.Context) error

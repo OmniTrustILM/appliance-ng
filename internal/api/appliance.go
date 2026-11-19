@@ -7,6 +7,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 )
 
 // GetAppliance returns the Appliance's configuration. Secrets are reported only as set or not set.
@@ -19,7 +21,7 @@ func (s *Server) GetAppliance(ctx context.Context, _ GetApplianceRequestObject) 
 	out := ApplianceSettings{
 		Dns:        orEmpty(spec.DNS.Servers),
 		Ntp:        orEmpty(spec.NTP.Servers),
-		TlsSource:  Builtin,
+		TlsSource:  ApplianceSettingsTlsSourceBuiltin,
 		TrustSet:   spec.Trust != nil,
 		Registries: make([]Registry, len(spec.Registries)),
 	}
@@ -35,15 +37,8 @@ func (s *Server) GetAppliance(ctx context.Context, _ GetApplianceRequestObject) 
 	for i, r := range spec.Registries {
 		out.Registries[i] = Registry{Host: r.Host, CredentialsSet: r.CredentialsRef != ""}
 	}
-	if m := spec.Mail; m != nil {
-		out.Mail = &MailSettings{Host: m.Host, Port: int(m.Port), Security: MailSecurity(m.Security), From: m.From}
-		if m.CredentialsRef != "" {
-			username, password, err := s.mailCredentials(ctx, m.CredentialsRef)
-			if err != nil {
-				return nil, err
-			}
-			out.Mail.Username, out.Mail.PasswordSet = optional(username), password != ""
-		}
+	if out.Mail, err = s.mailSettings(ctx, spec.Mail); err != nil {
+		return nil, err
 	}
 	if p := spec.Platform; p != nil {
 		out.Platform = &struct {
@@ -53,6 +48,23 @@ func (s *Server) GetAppliance(ctx context.Context, _ GetApplianceRequestObject) 
 		}{Components: orEmpty(p.Components), HostName: optional(p.HostName), IlmVersion: optional(p.ILMVersion)}
 	}
 	return GetAppliance200JSONResponse(out), nil
+}
+
+// mailSettings describes the mail server m, nil for none, with the user name of its credentials; the password only
+// as set or not set.
+func (s *Server) mailSettings(ctx context.Context, m *v1alpha1.MailSpec) (*MailSettings, error) {
+	if m == nil {
+		return nil, nil
+	}
+	out := &MailSettings{Host: m.Host, Port: int(m.Port), Security: MailSecurity(m.Security), From: m.From}
+	if m.CredentialsRef != "" {
+		username, password, err := s.mailCredentials(ctx, m.CredentialsRef)
+		if err != nil {
+			return nil, err
+		}
+		out.Username, out.PasswordSet = optional(username), password != ""
+	}
+	return out, nil
 }
 
 // mailCredentials reads the user name and password of the mail credentials Secret name; both are empty when it

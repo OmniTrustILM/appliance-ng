@@ -1,5 +1,6 @@
-// Package certs manages the appliance's built-in certificate: a root CA generated on the device by cert-manager,
-// and a leaf certificate it issues for the host names and the address of the appliance.
+// Package certs manages the appliance's certificate: the built-in one, a root CA generated on the device by
+// cert-manager and a leaf certificate it issues for the host names and the address of the appliance, or one the
+// administrator uploads, possibly for a signing request the appliance created.
 package certs
 
 import (

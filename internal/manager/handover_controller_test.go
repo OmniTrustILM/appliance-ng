@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
+	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	wizard "github.com/OmniTrustILM/appliance-ng/internal/setup"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
@@ -683,7 +685,7 @@ func managerClient(t *testing.T) client.Client {
 			}
 			t.Fatal(err)
 		}
-		if obj.GroupVersionKind().Group != rbacv1.GroupName || (obj.GetNamespace() != "" && obj.GetNamespace() != SystemNamespace) {
+		if obj.GroupVersionKind().Group != rbacv1.GroupName || !slices.Contains([]string{"", SystemNamespace, platform.Namespace}, obj.GetNamespace()) {
 			continue
 		}
 		if err := testClient.Create(ctx, obj); err != nil {

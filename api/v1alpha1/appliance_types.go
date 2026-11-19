@@ -14,6 +14,7 @@ const (
 	ConditionPlatformReady    = "PlatformReady"
 	ConditionCertificateReady = "CertificateReady"
 	ConditionHandoverComplete = "HandoverComplete"
+	ConditionConnectorsReady  = "ConnectorsReady"
 )
 
 // Setup phases reported in ApplianceStatus.Setup.
@@ -61,9 +62,11 @@ type ApplianceSpec struct {
 // NodeSpec is the network identity of the node.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.address) || size(oldSelf.address) == 0 || (has(self.address) && self.address == oldSelf.address)",message="node.address cannot be changed once set"
 type NodeSpec struct {
-	// HostName is the fully qualified host name of the appliance.
+	// HostName is the fully qualified host name of the appliance. It is the Kubernetes node name, so it is fixed
+	// once set.
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$`
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="node.hostName cannot be changed once set"
 	HostName string `json:"hostName"`
 	// Address is the node address in CIDR notation; empty means DHCP.
 	// +optional
@@ -118,6 +121,12 @@ type SecretKeyRef struct {
 	Name string `json:"name"`
 	Key  string `json:"key"`
 }
+
+// Keys of the credentials Secrets that RegistrySpec.CredentialsRef and MailSpec.CredentialsRef name.
+const (
+	CredentialsUsernameKey = "username"
+	CredentialsPasswordKey = "password"
+)
 
 // RegistrySpec is a container registry with optional credentials.
 type RegistrySpec struct {

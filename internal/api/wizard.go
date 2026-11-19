@@ -26,17 +26,19 @@ import (
 // The Secret in SystemNamespace that holds the SMTP credentials spec.mail.credentialsRef names.
 const (
 	MailSecretName  = "appliance-mail"
-	MailUsernameKey = "username"
-	MailPasswordKey = "password"
+	MailUsernameKey = v1alpha1.CredentialsUsernameKey
+	MailPasswordKey = v1alpha1.CredentialsPasswordKey
 
 	maxCredentialLength = 1024
+
+	fieldMailUsername = "mail.username"
 )
 
 var (
 	errNotSetUp      = errors.New("the Appliance does not exist yet")
 	errSetupComplete = errors.New("setup is complete")
-	// errPasswordNeeded refuses to keep a stored SMTP password for another mail server or user name.
-	errPasswordNeeded = errors.New("the stored mail password belongs to another server or user")
+	// errPasswordNeeded refuses to keep a stored password for another server or user name.
+	errPasswordNeeded = errors.New("the stored password belongs to another server or user")
 )
 
 // fieldError is a request field that failed validation.
@@ -55,7 +57,7 @@ func (s *Server) PutWizardPlatform(ctx context.Context, req PutWizardPlatformReq
 	if req.Body == nil {
 		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: BadRequestJSONResponse{Code: "invalid", Message: "Enter the platform settings."}}, nil
 	}
-	platform, ferr := parsePlatform(*req.Body, s.deps.Release)
+	platform, ferr := parsePlatform(req.Body.HostName, req.Body.Components, s.deps.Release)
 	if ferr == nil {
 		var m *mailInput
 		if m, ferr = parseMail(req.Body.Mail); ferr == nil {
@@ -69,6 +71,9 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 	a, err := s.openAppliance(ctx)
 	if err != nil {
 		return wizardClosed(err)
+	}
+	if ferr := s.componentsNeed(platform.Components, a.Spec.Registries, m != nil); ferr != nil {
+		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
 	credentialsChanged, err := s.writeMailCredentials(ctx, m, a.Spec.Mail)
 	if errors.Is(err, errPasswordNeeded) {
@@ -124,36 +129,30 @@ func wizardClosed(err error) (PutWizardPlatformResponseObject, error) {
 			Code: "setup_complete", Message: "Setup is complete; change the settings in the console.",
 		}}, nil
 	case errors.Is(err, errNotSetUp):
-		return PutWizardPlatform409JSONResponse{ConflictJSONResponse: ConflictJSONResponse{
-			Code: "not_set_up", Message: "The appliance has not finished the first part of setup yet.",
-		}}, nil
+		return PutWizardPlatform409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
 	}
 	return nil, err
 }
 
-// parsePlatform validates the host name and components of body.
-func parsePlatform(body PlatformSettings, rel *release.Manifest) (v1alpha1.PlatformSpec, *fieldError) {
-	host := strings.ToLower(strings.TrimSpace(body.HostName))
+// parsePlatform validates the host name and the components of a request; the ILM version is the one rel ships.
+func parsePlatform(hostName string, components []string, rel *release.Manifest) (v1alpha1.PlatformSpec, *fieldError) {
+	host := strings.ToLower(strings.TrimSpace(hostName))
 	if !hostname.IsFQDN(host) {
 		return v1alpha1.PlatformSpec{}, &fieldError{"hostName", "Enter a fully qualified host name, such as ilm.example.com, not an IP address."}
 	}
-	if body.Components == nil {
-		return v1alpha1.PlatformSpec{}, &fieldError{"components", "Choose the components to install."}
+	if components == nil {
+		return v1alpha1.PlatformSpec{}, &fieldError{fieldComponents, "Choose the components to install."}
 	}
-	components := make([]string, 0, len(body.Components))
-	for _, name := range body.Components {
-		i := slices.IndexFunc(rel.Connectors, func(c release.Connector) bool { return c.Name == name })
-		switch {
-		case i < 0:
-			return v1alpha1.PlatformSpec{}, &fieldError{"components", fmt.Sprintf("The component %q is not in the catalogue.", name)}
-		case rel.Connectors[i].Private:
-			return v1alpha1.PlatformSpec{}, &fieldError{"components", fmt.Sprintf(
-				"The component %q needs registry credentials, which this version of the appliance does not support yet.", name)}
-		case !slices.Contains(components, name):
-			components = append(components, name)
+	chosen := make([]string, 0, len(components))
+	for _, name := range components {
+		if _, ok := catalogueEntry(rel, name); !ok {
+			return v1alpha1.PlatformSpec{}, &fieldError{fieldComponents, fmt.Sprintf("The component %q is not in the catalogue.", name)}
+		}
+		if !slices.Contains(chosen, name) {
+			chosen = append(chosen, name)
 		}
 	}
-	return v1alpha1.PlatformSpec{ILMVersion: rel.Platform.ILMVersion, HostName: host, Components: components}, nil
+	return v1alpha1.PlatformSpec{ILMVersion: rel.Platform.ILMVersion, HostName: host, Components: chosen}, nil
 }
 
 // parseMail validates the mail settings; nil means no mail server.
@@ -171,7 +170,7 @@ func parseMail(m *Mail) (*mailInput, *fieldError) {
 	if !m.Security.Valid() {
 		return nil, &fieldError{"mail.security", "Choose none, starttls or tls."}
 	}
-	if addr, err := mail.ParseAddress(m.From); err != nil || addr.Name != "" || addr.Address != m.From {
+	if !plainAddress(m.From) {
 		return nil, &fieldError{"mail.from", "Enter the sender address, such as ilm@example.com."}
 	}
 	in := &mailInput{
@@ -181,19 +180,35 @@ func parseMail(m *Mail) (*mailInput, *fieldError) {
 	if m.Username != nil {
 		in.username = *m.Username
 	}
-	if !printable(in.username) {
-		return nil, &fieldError{"mail.username", "Enter a user name of printable characters."}
-	}
-	if in.password != nil && len(*in.password) > maxCredentialLength {
-		return nil, &fieldError{"mail.password", "The password is too long."}
-	}
-	if in.username == "" && in.password != nil && *in.password != "" {
-		return nil, &fieldError{"mail.username", "Enter the user name the password belongs to."}
+	if ferr := mailCredentialProblem(in); ferr != nil {
+		return nil, ferr
 	}
 	if in.username != "" {
 		in.spec.CredentialsRef = MailSecretName
 	}
 	return in, nil
+}
+
+// mailCredentialProblem refuses the user name and password of in, or is nil when they are fine.
+func mailCredentialProblem(in *mailInput) *fieldError {
+	switch {
+	case !printable(in.username):
+		return &fieldError{fieldMailUsername, "Enter a user name of printable characters."}
+	case in.password != nil && len(*in.password) > maxCredentialLength:
+		return &fieldError{"mail.password", "The password is too long."}
+	case in.username == "" && in.password != nil && *in.password != "":
+		return &fieldError{fieldMailUsername, "Enter the user name the password belongs to."}
+	case in.username != "" && in.spec.Security == v1alpha1.MailSecurityNone:
+		// Neither the test mail nor the platform sends a password over an unencrypted connection.
+		return &fieldError{fieldMailUsername, "Credentials need security starttls or tls; choose one, or remove the user name."}
+	}
+	return nil
+}
+
+// plainAddress reports whether s is a mail address alone, without a display name.
+func plainAddress(s string) bool {
+	addr, err := mail.ParseAddress(s)
+	return err == nil && addr.Name == "" && addr.Address == s
 }
 
 func printable(s string) bool {
@@ -252,14 +267,21 @@ func (s *Server) deleteMailCredentials(ctx context.Context, secret *corev1.Secre
 // mailSecretData returns the data of the credentials Secret for m, keeping the stored password when m has none and
 // it was stored for the same user name and mail server.
 func mailSecretData(secret *corev1.Secret, m *mailInput, previous *v1alpha1.MailSpec) (map[string][]byte, error) {
-	data := map[string][]byte{MailUsernameKey: []byte(m.username)}
-	if m.password != nil {
-		data[MailPasswordKey] = []byte(*m.password)
-	} else if old, ok := secret.Data[MailPasswordKey]; ok && len(old) > 0 {
-		if string(secret.Data[MailUsernameKey]) != m.username || !sameServer(previous, &m.spec) {
+	return credentialsData(secret, m.username, m.password, sameServer(previous, &m.spec))
+}
+
+// credentialsData returns the data of a credentials Secret for username and password. Without a password the one in
+// stored, which may be nil, is kept, but only when it was stored for username and sameServer says that the
+// credentials are for the server they were stored for; otherwise it fails with errPasswordNeeded.
+func credentialsData(stored *corev1.Secret, username string, password *string, sameServer bool) (map[string][]byte, error) {
+	data := map[string][]byte{MailUsernameKey: []byte(username)}
+	if password != nil {
+		data[MailPasswordKey] = []byte(*password)
+	} else if stored != nil && len(stored.Data[MailPasswordKey]) > 0 {
+		if string(stored.Data[MailUsernameKey]) != username || !sameServer {
 			return nil, errPasswordNeeded
 		}
-		data[MailPasswordKey] = old
+		data[MailPasswordKey] = stored.Data[MailPasswordKey]
 	}
 	return data, nil
 }
@@ -272,37 +294,53 @@ func sameServer(a, b *v1alpha1.MailSpec) bool {
 // pathMailCredentials is the JSON path of the mail credentials reference.
 const pathMailCredentials = "spec.mail.credentialsRef"
 
+// pathMailSpec is the JSON path of the mail server.
+const pathMailSpec = "spec.mail"
+
 // changedPaths lists the JSON paths the wizard changed from before to after, sorted; credentials says the
 // credentials Secret changed.
 func changedPaths(before, after *v1alpha1.ApplianceSpec, credentials bool) []string {
-	var paths []string
-	add := func(changed bool, path string) {
-		if changed {
-			paths = append(paths, path)
-		}
-	}
-	if b, a := before.Platform, after.Platform; b == nil {
-		paths = append(paths, "spec.platform")
-	} else {
-		add(b.ILMVersion != a.ILMVersion, "spec.platform.ilmVersion")
-		add(b.HostName != a.HostName, "spec.platform.hostName")
-		add(!slices.Equal(b.Components, a.Components), "spec.platform.components")
-	}
-	switch b, a := before.Mail, after.Mail; {
-	case b == nil && a == nil:
-	case b == nil || a == nil:
-		paths = append(paths, "spec.mail")
-	default:
-		add(b.Host != a.Host, "spec.mail.host")
-		add(b.Port != a.Port, "spec.mail.port")
-		add(b.Security != a.Security, "spec.mail.security")
-		add(b.From != a.From, "spec.mail.from")
-		add(b.CredentialsRef != a.CredentialsRef, pathMailCredentials)
-	}
-	if credentials && after.Mail != nil && !slices.Contains(paths, pathMailCredentials) {
-		paths = append(paths, pathMailCredentials)
-	}
+	paths := append(platformPaths(before.Platform, after.Platform), mailPaths(before.Mail, after.Mail, credentials)...)
 	slices.Sort(paths)
+	return paths
+}
+
+// platformPaths lists the JSON paths of the platform that changed from before to after, which is set, sorted.
+func platformPaths(before, after *v1alpha1.PlatformSpec) []string {
+	if before == nil {
+		return []string{"spec.platform"}
+	}
+	var paths []string
+	paths = appendChanged(paths, !slices.Equal(before.Components, after.Components), "spec.platform.components")
+	paths = appendChanged(paths, before.HostName != after.HostName, "spec.platform.hostName")
+	paths = appendChanged(paths, before.ILMVersion != after.ILMVersion, "spec.platform.ilmVersion")
+	return paths
+}
+
+// mailPaths lists the JSON paths of the mail server that changed from before to after, sorted; credentials says the
+// credentials Secret changed.
+func mailPaths(before, after *v1alpha1.MailSpec, credentials bool) []string {
+	switch {
+	case after == nil && before == nil:
+		return nil
+	case after == nil:
+		return []string{pathMailSpec}
+	case before == nil:
+		return appendChanged([]string{pathMailSpec}, credentials, pathMailCredentials)
+	}
+	var paths []string
+	paths = appendChanged(paths, before.CredentialsRef != after.CredentialsRef || credentials, pathMailCredentials)
+	paths = appendChanged(paths, before.From != after.From, "spec.mail.from")
+	paths = appendChanged(paths, before.Host != after.Host, "spec.mail.host")
+	paths = appendChanged(paths, before.Port != after.Port, "spec.mail.port")
+	paths = appendChanged(paths, before.Security != after.Security, "spec.mail.security")
+	return paths
+}
+
+func appendChanged(paths []string, changed bool, path string) []string {
+	if changed {
+		return append(paths, path)
+	}
 	return paths
 }
 
