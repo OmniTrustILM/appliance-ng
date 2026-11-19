@@ -118,6 +118,16 @@ func TestSignInRateLimited(t *testing.T) {
 	h.signIn()
 }
 
+func TestSignInLockedFromOnePeerOnly(t *testing.T) {
+	h := newHarness(t)
+	for range 5 {
+		wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
+	}
+	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
+	rec := h.requestFrom("192.0.2.11:40000", http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	wantStatus(t, rec, http.StatusOK)
+}
+
 func TestSignInRateLimitedPerPeer(t *testing.T) {
 	h := newHarness(t)
 	for i := range 20 {

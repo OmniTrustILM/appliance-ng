@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot test: boots the appliance offline, drives the onboarding wizard through its API and waits until it is ready.
 #
-#   run.sh <iso|qcow2> <arch>
+#   [E2E=1] run.sh <iso|qcow2> <arch>
 #
 # The VM gets a random setup code preset through SMBIOS. While the node waits in maintenance mode, no resource Talos
 # serves without credentials may show the preset. test/boot/drive then answers wizard part 1 on the first-boot
@@ -9,6 +9,8 @@
 # Passes when /status reports ready within 25 minutes, the ILM UI answers 200, the manager's console is healthy and
 # reports the setup complete, the connector registered with ILM Core, and the serial log holds no key material, setup
 # code, password, TOTP seed or preset.
+# With E2E=1 the Playwright tests in test/e2e answer both wizard parts in Chromium instead of drive, and change
+# settings in the console after the checks above; run npm ci and npx playwright install chromium in test/e2e first.
 # Prints "PASS <seconds to ready>" or "FAIL <reason>"; exits 0 or 1. The VM is always stopped.
 # VM state is kept in out/boot/<arch>-<media>/ and recreated on every run. TALOSCTL names the talosctl binary
 # (default talosctl), which must match the Talos version of the release.
@@ -32,6 +34,10 @@ LEAK_PATTERNS=(-e 'BEGIN ' -e 'PRIVATE KEY' -e 'client-key-data')
 CODE_ALPHABET=23456789ABCDEFGHJKLMNPQRSTUVWXYZ
 PRESET_KEY=io.otilm.appliance.setup-code-sha256=
 ADMIN='admin'
+# QEMU's user network with restrict=on offers no router or DNS server by DHCP; wizard part 1 sets these.
+GATEWAY=10.0.2.2
+DNS=10.0.2.3
+E2E="${E2E:-0}"
 TALOSCTL="${TALOSCTL:-talosctl}"
 
 usage() { sed -n '4p' "$0" >&2; exit 2; }
@@ -134,9 +140,8 @@ drive_wizard() { # drive_wizard <part1|part2|check>
   local args=(--url "$CONSOLE_URL" --user "$ADMIN" --password "$password" --seed-file "$seed_file"
     --host-name "$UI_HOST")
   case "$part" in
-    # QEMU's user network with restrict=on offers no router or DNS server by DHCP; the node address is 10.0.2.15,
-    # drive's default --server-name.
-    part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway 10.0.2.2 --dns 10.0.2.3) ;;
+    # The node address is 10.0.2.15, drive's default --server-name.
+    part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway "$GATEWAY" --dns "$DNS") ;;
     part2) args+=(--component "$COMPONENT") ;;
     check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$UI_HOST:10443" --ui-addr "$UI_ADDR") ;;
     *) fail "unknown wizard part $part" ;;
@@ -144,10 +149,35 @@ drive_wizard() { # drive_wizard <part1|part2|check>
   "$drive" "$part" "${args[@]}" >&2 || fail "drive $part failed"
 }
 
+browse() { # browse <spec> [<title pattern>]: runs the tests of a test/e2e spec, or those matching, in Chromium
+  local spec="$1" title="${2:-.}"
+  (cd "$REPO/test/e2e" &&
+    E2E_CONSOLE_URL="$CONSOLE_URL" E2E_HOST_NAME="$UI_HOST" E2E_CODE="$code" E2E_USER="$ADMIN" \
+      E2E_PASSWORD="$password" E2E_SEED_FILE="$seed_file" E2E_GATEWAY="$GATEWAY" E2E_DNS="$DNS" \
+      E2E_COMPONENT="$CONNECTOR_NAME" npx --no-install playwright test "$spec" --grep "$title") >&2 ||
+    fail "browser test $spec failed"
+}
+
+wizard() { # wizard <part1|part2>: answers that wizard part in the browser with E2E=1, else through the API
+  local part="$1"
+  if [[ "$E2E" != 1 ]]; then
+    drive_wizard "$part"
+    return
+  fi
+  case "$part" in
+    part1) browse wizard.spec.ts 'wizard part 1' ;;
+    part2) browse wizard.spec.ts 'wizard part 2' ;;
+    *) fail "unknown wizard part $part" ;;
+  esac
+}
+
 "$VM" stop "$dir" >/dev/null 2>&1 || true
 rm -rf "$dir"
 mkdir -p "$dir"
 (cd "$REPO" && go build -o "$drive" ./test/boot/drive) || fail "could not build test/boot/drive"
+if [[ "$E2E" == 1 ]]; then
+  [[ -d "$REPO/test/e2e/node_modules/@playwright/test" ]] || fail "test/e2e has no node_modules: run npm ci there"
+fi
 trap '"$VM" stop "$dir"' EXIT
 SMBIOS_OEM="$PRESET_KEY$code_hash" "$VM" start "$mode" "$arch" "$dir" || fail "VM did not start"
 start=$SECONDS
@@ -164,13 +194,13 @@ while :; do
         if ! $part1; then
           preset_hidden
           capture_setup_certificate
-          drive_wizard part1
+          wizard part1
           seed="$(cat "$seed_file")" part1=true
           log "$((SECONDS - start))s wizard part 1 applied"
         fi ;;
       addons | platform)
         if $part1 && ! $part2; then
-          drive_wizard part2
+          wizard part2
           part2=true
           log "$((SECONDS - start))s wizard part 2 done"
         fi ;;
@@ -198,6 +228,10 @@ done
 answer="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$CONSOLE_URL/healthz" || true)"
 [[ "$answer" == 200 ]] || fail "console health check answered ${answer:-nothing}, expected 200"
 drive_wizard check
+if [[ "$E2E" == 1 ]]; then
+  browse settings.spec.ts
+  log "$((SECONDS - start))s console settings changed in the browser"
+fi
 
 if leaked; then
   fail "serial log contains key material or a secret of the wizard"

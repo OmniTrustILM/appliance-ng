@@ -60,7 +60,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            test/e2e/package-lock.json
 
       - name: Install build tools
         run: |
@@ -108,9 +110,19 @@ jobs:
       - name: Build images
         run: make images ARCH="$ARCH" REGISTRY="$REGISTRY"
 
+      # The boot test answers the wizard and changes settings in Chromium; the browser leaves no trace, video or
+      # screenshot to upload. Only lock-file packages run here, after the registry log-in: CI type-checks the test
+      # and checks its licences.
+      - name: Install the browser test
+        if: matrix.arch == 'amd64'
+        working-directory: test/e2e
+        run: |
+          npm ci --ignore-scripts
+          ./node_modules/.bin/playwright install --with-deps chromium
+
       - name: Boot test
         if: matrix.arch == 'amd64'
-        run: make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
+        run: E2E=1 make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
 
       - name: Upload failure logs
         if: failure()
