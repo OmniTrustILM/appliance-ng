@@ -1,4 +1,4 @@
-import { useId, useState, type ChangeEvent } from 'react';
+import { useId, useRef, useState, type ChangeEvent } from 'react';
 import { api } from '../../api/client';
 import { Alert } from '../../components/Alert';
 import { Button } from '../../components/Button';
@@ -7,6 +7,9 @@ import { INPUT } from '../../components/Field';
 import { cx } from '../../components/cx';
 import { attempt, unreachable } from '../../setup/failure';
 import { CaDetails, type TrustedCertificate } from './CaDetails';
+
+/** The certificates a preview found, with the exact bundle it was requested for. */
+type Previewed = { pem: string; items: TrustedCertificate[] };
 
 type Sent = { response: Response; error?: { message: string } };
 
@@ -38,11 +41,13 @@ export function AddCaForm({ onAdded }: Readonly<{ onAdded: () => void }>) {
   const textId = useId();
   const [pem, setPem] = useState('');
   const [file, setFile] = useState<File>();
-  const [preview, setPreview] = useState<TrustedCertificate[]>();
+  const [preview, setPreview] = useState<Previewed>();
+  const edits = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
   function change(text: string) {
+    edits.current += 1;
     setPem(text);
     setPreview(undefined);
     setError(undefined);
@@ -74,18 +79,22 @@ export function AddCaForm({ onAdded }: Readonly<{ onAdded: () => void }>) {
   }
 
   async function previewUpload() {
-    const result = await run(() => api.POST('/api/v1/trust/preview', { body: { pem } }));
-    if (result?.data) setPreview(result.data.items);
+    const requested = pem;
+    const edit = edits.current;
+    const result = await run(() => api.POST('/api/v1/trust/preview', { body: { pem: requested } }));
+    if (result?.data && edit === edits.current) setPreview({ pem: requested, items: result.data.items });
   }
 
-  async function addUpload() {
-    if (await run(() => api.POST('/api/v1/trust', { body: { pem } }))) {
+  async function addUpload(previewed: Previewed) {
+    if (await run(() => api.POST('/api/v1/trust', { body: { pem: previewed.pem } }))) {
       setPem('');
       setFile(undefined);
       setPreview(undefined);
       onAdded();
     }
   }
+
+  const current = preview?.pem === pem ? preview : undefined;
 
   return (
     <form onSubmit={(event) => { event.preventDefault(); void previewUpload(); }} noValidate>
@@ -103,11 +112,11 @@ export function AddCaForm({ onAdded }: Readonly<{ onAdded: () => void }>) {
           className={cx(INPUT, 'h-auto py-2 font-mono text-[13px]')}
         />
       </div>
-      {preview && <Preview items={preview} />}
+      {current && <Preview items={current.items} />}
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Button type="submit" variant={preview ? 'secondary' : 'primary'} busy={busy} disabled={!pem.trim()}>Preview</Button>
-        {preview?.some((ca) => ca.new) && (
-          <Button busy={busy} onClick={() => void addUpload()}>Add the new certificates</Button>
+        <Button type="submit" variant={current ? 'secondary' : 'primary'} busy={busy} disabled={!pem.trim()}>Preview</Button>
+        {current?.items.some((ca) => ca.new) && (
+          <Button busy={busy} onClick={() => void addUpload(current)}>Add the new certificates</Button>
         )}
       </div>
     </form>

@@ -89,6 +89,42 @@ describe('TrustPage', () => {
     expect(screen.queryByRole('button', { name: 'Add the new certificates' })).not.toBeInTheDocument();
   });
 
+  it('ignores a preview that arrives after the bundle was edited', async () => {
+    let answer: (reply: Response) => void = () => undefined;
+    const { mock } = stubApi({
+      'GET /api/v1/trust': [200, { items: [] }],
+      'POST /api/v1/trust': [202],
+    });
+    const fallback = mock.getMockImplementation();
+    mock.mockImplementation(async (request: Request) => {
+      if (new URL(request.url).pathname !== '/api/v1/trust/preview') return fallback?.(request) ?? new Response(null, { status: 404 });
+      return new Promise<Response>((resolve) => { answer = resolve; });
+    });
+    renderPage();
+    await screen.findByText(/no additional/i);
+    await userEvent.type(screen.getByLabelText('Or paste the certificates'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await userEvent.type(screen.getByLabelText('Or paste the certificates'), 'y');
+    answer(new Response(JSON.stringify({ items: [ca('Team CA', 'b', { new: true })] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled());
+    expect(screen.queryByText('CN=Team CA')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add the new certificates' })).not.toBeInTheDocument();
+  });
+
+  it('adds the previewed bundle', async () => {
+    const { sent } = stubApi({
+      'GET /api/v1/trust': [200, { items: [] }],
+      'POST /api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
+      'POST /api/v1/trust': [202],
+    });
+    renderPage();
+    await screen.findByText(/no additional/i);
+    await userEvent.type(screen.getByLabelText('Or paste the certificates'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add the new certificates' }));
+    expect(sent['POST /api/v1/trust']).toEqual([{ pem: 'x' }]);
+  });
+
   it('shows the server reason for a rejected upload and adds nothing', async () => {
     const { sent } = stubApi({
       'GET /api/v1/trust': [200, { items: [] }],
