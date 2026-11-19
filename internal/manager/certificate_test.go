@@ -220,26 +220,6 @@ func TestConditionsCarryNoErrorText(t *testing.T) {
 	}
 }
 
-func TestCertificateHosts(t *testing.T) {
-	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "ilm.example.com"}}}
-	if got := certificateHosts(a); !reflect.DeepEqual(got, []string{"ilm.example.com"}) {
-		t.Errorf("hosts %v without a platform", got)
-	}
-	a.Spec.Platform = &v1alpha1.PlatformSpec{HostName: "ilm.example.com"}
-	if got := certificateHosts(a); !reflect.DeepEqual(got, []string{"ilm.example.com"}) {
-		t.Errorf("hosts %v, want the shared name once", got)
-	}
-}
-
-func TestParseAddress(t *testing.T) {
-	for in, want := range map[string]string{"192.0.2.1/24": "192.0.2.1", "192.0.2.2": "192.0.2.2", "bogus": "", "": "", "fe80::1": "", "169.254.0.9/16": ""} {
-		got, ok := parseAddress(in)
-		if (want == "") == ok || (ok && got.String() != want) {
-			t.Errorf("parseAddress(%q) = %v, %v; want %q", in, got, ok, want)
-		}
-	}
-}
-
 func TestCertificateRunsWithTheManagerRBAC(t *testing.T) {
 	cleanCertificates(t)
 	ctx := context.Background()

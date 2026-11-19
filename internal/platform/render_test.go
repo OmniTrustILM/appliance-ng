@@ -41,7 +41,7 @@ func TestRenderDefaultMatchesAddonsPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, connectors, err := Render(defaultAppliance(), loadManifest(t), SecretNames{})
+	got, connectors, err := Render(defaultAppliance(), loadManifest(t), SecretNames{}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestRenderFallsBackToNodeAndManifestDefaults(t *testing.T) {
 	a.Spec.Platform = nil
 	a.Spec.Node.HostName = "ilm.example.com"
 
-	got, _, err := Render(a, loadManifest(t), SecretNames{})
+	got, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestRenderAppliesApplianceSettings(t *testing.T) {
 	a.Spec.Proxy = &v1alpha1.ProxySpec{HTTP: "http://proxy:3128", HTTPS: "http://proxy:3128", NoProxy: ".svc"}
 	secrets := SecretNames{TLS: "ilm-tls", Trust: "ilm-trust", PullSecret: "ilm-registry"}
 
-	got, _, err := Render(a, loadManifest(t), secrets)
+	got, _, err := Render(a, loadManifest(t), secrets, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestRenderAppliesApplianceSettings(t *testing.T) {
 	if tc := spec.Common.TrustedCertificates; tc.SecretRef != "ilm-trust" || tc.CAKey != "ca.crt" {
 		t.Errorf("trusted certificates %+v", tc)
 	}
-	want := otilm.OutboundProxySpec{Enabled: true, HTTP: "http://proxy:3128", HTTPS: "http://proxy:3128", NoProxy: ".svc"}
+	want := otilm.OutboundProxySpec{Enabled: true, HTTP: "http://proxy:3128", HTTPS: "http://proxy:3128", NoProxy: internalNoProxy + ",.svc"}
 	if spec.Common.Proxy != want {
 		t.Errorf("proxy %+v", spec.Common.Proxy)
 	}
@@ -106,7 +106,7 @@ func TestRenderEmptyProxyLeavesPlatformProxyUnset(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.Proxy = &v1alpha1.ProxySpec{}
 
-	got, _, err := Render(a, loadManifest(t), SecretNames{})
+	got, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestRenderSecretTLSNeedsSecret(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.TLS = v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceSecret, SecretRef: "uploaded"}
 
-	if _, _, err := Render(a, loadManifest(t), SecretNames{}); err == nil {
+	if _, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP); err == nil {
 		t.Fatal("want an error when the TLS Secret is missing")
 	}
 }
@@ -129,7 +129,7 @@ func TestRenderComponents(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.Platform.Components = []string{"x509-compliance-provider", "ejbca-ng-connector"}
 
-	_, connectors, err := Render(a, loadManifest(t), SecretNames{})
+	_, connectors, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -184,12 +184,34 @@ func TestRenderComponents(t *testing.T) {
 	}
 }
 
+// testNodeIP is the node address, which the no-proxy lists hold.
+const testNodeIP = "192.0.2.10"
+
+// internalNoProxy is the no-proxy list of the node itself.
+const internalNoProxy = "localhost,127.0.0.1,192.0.2.10,10.244.0.0/16,10.96.0.0/12,.svc,.cluster.local"
+
+func TestRenderWithoutProxySettings(t *testing.T) {
+	a := defaultAppliance()
+	a.Spec.Platform.Components = []string{"ejbca-ng-connector"}
+	a.Spec.Proxy = &v1alpha1.ProxySpec{}
+	p, connectors, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Spec.Common.Proxy.Enabled {
+		t.Errorf("proxy %+v enabled without any setting", p.Spec.Common.Proxy)
+	}
+	if _, set := envMap(connectors[0].Spec.Env)["NO_PROXY"]; set {
+		t.Error("NO_PROXY rendered without a proxy")
+	}
+}
+
 func TestRenderConnectorSettings(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.Platform.Components = []string{"ejbca-ng-connector", "hashicorp-vault-connector", "software-cryptography-provider"}
 	a.Spec.Proxy = &v1alpha1.ProxySpec{HTTPS: "http://proxy:3128"}
 
-	_, connectors, err := Render(a, loadManifest(t), SecretNames{Trust: "ilm-trust"})
+	_, connectors, err := Render(a, loadManifest(t), SecretNames{Trust: "ilm-trust"}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -202,6 +224,9 @@ func TestRenderConnectorSettings(t *testing.T) {
 	}
 	if _, set := env["HTTP_PROXY"]; set {
 		t.Errorf("empty HTTP_PROXY rendered: %v", env)
+	}
+	if env["NO_PROXY"] != internalNoProxy {
+		t.Errorf("ejbca NO_PROXY %q, want the entries the node needs", env["NO_PROXY"])
 	}
 	if !hasSecretRef(ejbca, "ilm-trust", "ca.crt", "TRUSTED_CERTIFICATES") {
 		t.Errorf("ejbca trust secretRefs %+v", ejbca.Spec.SecretRefs)
@@ -233,13 +258,13 @@ func TestRenderPrivateNeedsPullSecret(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.Platform.Components = []string{"x509-compliance-provider", "timestamp-formatting-connector"}
 
-	_, _, err := Render(a, loadManifest(t), SecretNames{})
+	_, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 
 	if err == nil || !strings.Contains(err.Error(), "timestamp-formatting-connector") {
 		t.Fatalf("want an error naming the private component, got %v", err)
 	}
 
-	_, connectors, err := Render(a, loadManifest(t), SecretNames{PullSecret: "ilm-registry"})
+	_, connectors, err := Render(a, loadManifest(t), SecretNames{PullSecret: "ilm-registry"}, testNodeIP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +283,7 @@ func TestRenderUnknownComponent(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.Platform.Components = []string{"no-such-connector"}
 
-	if _, _, err := Render(a, loadManifest(t), SecretNames{}); err == nil || !strings.Contains(err.Error(), "no-such-connector") {
+	if _, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP); err == nil || !strings.Contains(err.Error(), "no-such-connector") {
 		t.Fatalf("want an error naming the component, got %v", err)
 	}
 }
@@ -309,7 +334,7 @@ func TestTLSOptionTrustsTheAdministratorCA(t *testing.T) {
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			p, _, err := Render(defaultAppliance(), loadManifest(t), tt.secrets)
+			p, _, err := Render(defaultAppliance(), loadManifest(t), tt.secrets, testNodeIP)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -325,5 +350,104 @@ func TestTLSOptionTrustsTheAdministratorCA(t *testing.T) {
 				t.Errorf("clientAuth = %v, want VerifyClientCertIfGiven against %s", auth, tt.want)
 			}
 		})
+	}
+}
+
+func TestUnstructuredLeavesOutAnUnsetTrust(t *testing.T) {
+	for name, tc := range map[string]struct {
+		trust string
+		want  bool
+	}{"without trust": {"", false}, "with trust": {"appliance-trust", true}} {
+		p, _, err := Render(defaultAppliance(), loadManifest(t), SecretNames{Trust: tc.trust}, testNodeIP)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, err := Unstructured(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref, found, err := unstructured.NestedString(u.Object, "spec", "common", "trustedCertificates", "secretRef")
+		if err != nil || found != tc.want || ref != tc.trust {
+			t.Errorf("%s: trustedCertificates.secretRef = %q (found %v, %v)", name, ref, found, err)
+		}
+		if _, found, _ := unstructured.NestedMap(u.Object, "spec", "common", "trustedCertificates"); found != tc.want {
+			t.Errorf("%s: trustedCertificates present %v, want %v", name, found, tc.want)
+		}
+		if u.GetKind() != "Platform" || u.GetName() != Name {
+			t.Errorf("%s: object %s %s", name, u.GetKind(), u.GetName())
+		}
+	}
+}
+
+func TestEmailConnectorGetsMailSettings(t *testing.T) {
+	const email = "email-notification-provider"
+	// Spring Boot binds it to the JavaMail property mail.smtp.ssl.enable: implicit TLS.
+	const sslEnableEnv = "SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE"
+	a := defaultAppliance()
+	a.Spec.Platform.Components = []string{email, "ejbca-ng-connector"}
+
+	// An Appliance that chose the connector without a mail server still renders, without mail settings.
+	_, connectors, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := envMap(connectors[0].Spec.Env)["SMTP_HOST"]; set {
+		t.Error("mail settings rendered without a mail server")
+	}
+	// Spring Boot's startup connection check would keep the connector from starting while the server is unreachable.
+	if got := envMap(connectors[0].Spec.Env)["SPRING_MAIL_TESTCONNECTION"]; got != "false" {
+		t.Errorf("SPRING_MAIL_TESTCONNECTION = %q, want false", got)
+	}
+
+	for _, tc := range []struct {
+		security string
+		want     map[string]string
+		unset    []string
+	}{
+		{v1alpha1.MailSecurityNone, map[string]string{"SMTP_TLS": "false"}, []string{sslEnableEnv}},
+		{v1alpha1.MailSecuritySTARTTLS, map[string]string{"SMTP_TLS": "true"}, []string{sslEnableEnv}},
+		{v1alpha1.MailSecurityTLS, map[string]string{"SMTP_TLS": "false", sslEnableEnv: "true"}, nil},
+	} {
+		t.Run(tc.security, func(t *testing.T) {
+			a.Spec.Mail = &v1alpha1.MailSpec{Host: "smtp.example.com", Port: 465, Security: tc.security, From: "ilm@example.com", CredentialsRef: "appliance-mail"}
+			_, connectors, err := Render(a, loadManifest(t), SecretNames{Mail: "ilm-mail"}, testNodeIP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mailer, ejbca := connectors[0], connectors[1]
+			env := envMap(mailer.Spec.Env)
+			for k, v := range map[string]string{"SMTP_HOST": "smtp.example.com", "SMTP_PORT": "465", "SMTP_AUTH": "true"} {
+				tc.want[k] = v
+			}
+			for k, v := range tc.want {
+				if env[k] != v {
+					t.Errorf("%s = %q, want %q", k, env[k], v)
+				}
+			}
+			for _, k := range append(tc.unset, "SMTP_USERNAME", "SMTP_PASSWORD") {
+				if _, set := env[k]; set {
+					t.Errorf("%s rendered as a plain value", k)
+				}
+			}
+			if !hasSecretRef(mailer, "ilm-mail", "username", "SMTP_USERNAME") || !hasSecretRef(mailer, "ilm-mail", "password", "SMTP_PASSWORD") {
+				t.Errorf("mail secretRefs %+v", mailer.Spec.SecretRefs)
+			}
+			if _, set := envMap(ejbca.Spec.Env)["SMTP_HOST"]; set || hasSecretRef(ejbca, "ilm-mail", "password", "SMTP_PASSWORD") {
+				t.Error("mail settings rendered for a connector without the mail setting")
+			}
+		})
+	}
+
+	// Without credentials the connector does not authenticate.
+	a.Spec.Mail = &v1alpha1.MailSpec{Host: "smtp.example.com", Port: 25, Security: v1alpha1.MailSecurityNone, From: "ilm@example.com"}
+	_, connectors, err = Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env := envMap(connectors[0].Spec.Env); env["SMTP_AUTH"] != "false" || env["SMTP_PORT"] != "25" {
+		t.Errorf("env without credentials %v", env)
+	}
+	if hasSecretRef(connectors[0], "ilm-mail", "password", "SMTP_PASSWORD") {
+		t.Error("credentials referenced without a mail Secret")
 	}
 }

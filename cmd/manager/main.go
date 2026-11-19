@@ -40,6 +40,8 @@ var version = "dev"
 const (
 	// certificateRefresh is how often the console checks its TLS Secret for a renewed or replaced certificate.
 	certificateRefresh = 30 * time.Second
+	// failedPodSweep is how often the manager deletes its own Failed pods.
+	failedPodSweep = 10 * time.Minute
 )
 
 func main() {
@@ -60,12 +62,21 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint string) error {
+// newScheme returns the scheme of the Kubernetes, Appliance and ILM operator types.
+func newScheme() (*runtime.Scheme, error) {
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, v1alpha1.AddToScheme, otilm.AddToScheme} {
 		if err := add(scheme); err != nil {
-			return fmt.Errorf("build the scheme: %w", err)
+			return nil, fmt.Errorf("build the scheme: %w", err)
 		}
+	}
+	return scheme, nil
+}
+
+func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint string) error {
+	scheme, err := newScheme()
+	if err != nil {
+		return err
 	}
 	rel, err := release.Parse(appliance.ReleaseManifest, "release.yaml")
 	if err != nil {
@@ -103,6 +114,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Addons:    addons.FS,
 		Release:   rel,
 		Recorder:  mgr.GetEventRecorder(kube.ManagerFieldManager),
+		Version:   version,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the Appliance controller: %w", err)
@@ -113,14 +125,16 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		return fmt.Errorf("create the Kubernetes client: %w", err)
 	}
 	users := auth.NewSecretUserStore(direct, manager.SystemNamespace)
-	handover := &manager.HandoverReconciler{
-		Client: mgr.GetClient(),
-		Users:  users,
-		Talos: manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
-			talosEndpoint, talos.DialAPI),
-	}
+	// One Talos client for the controllers and the API.
+	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
+		talosEndpoint, talos.DialAPI)
+	handover := &manager.HandoverReconciler{Client: mgr.GetClient(), Users: users, Talos: talosAccess}
 	if err := handover.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the hand-over controller: %w", err)
+	}
+	node := &manager.NodeReconciler{Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess}
+	if err := node.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up the node controller: %w", err)
 	}
 
 	auditLog, err := audit.Open(data)
@@ -135,6 +149,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Audit:   auditLog,
 		Release: rel,
 		Log:     log,
+		Talos:   talosAccess,
 	})
 	cert, err := console.NewCertificate(log, mgr.GetClient())
 	if err != nil {
@@ -146,6 +161,11 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	}
 	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error { return console.Serve(ctx, log, srv) })); err != nil {
 		return fmt.Errorf("add the console server: %w", err)
+	}
+	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error {
+		return manager.RemoveFailedPods(ctx, mgr.GetClient(), failedPodSweep)
+	})); err != nil {
+		return fmt.Errorf("add the failed pod sweep: %w", err)
 	}
 	return mgr.Start(ctx)
 }

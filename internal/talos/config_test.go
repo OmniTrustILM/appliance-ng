@@ -14,6 +14,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/configloader"
 	"github.com/siderolabs/talos/pkg/machinery/config/container"
 	k8sconfig "github.com/siderolabs/talos/pkg/machinery/config/types/k8s"
+	"github.com/siderolabs/talos/pkg/machinery/config/types/network"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/runtime/extensions"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
@@ -302,5 +303,96 @@ func TestRemoveExtensionConfigWithoutRunningConfiguration(t *testing.T) {
 	n.st = failingState{newState(t)}
 	if err := n.RemoveExtensionConfig(context.Background(), "firstboot", "/etc/firstboot/setup"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDocumentsReturnsTheRunningDocumentsOfTheKinds(t *testing.T) {
+	docs, err := dialConfigured(t, &fakeMachine{}).Documents(context.Background(), extensions.ServiceConfigKind, "HostnameConfig")
+	if err != nil {
+		t.Fatalf("Documents: %v", err)
+	}
+	var ids []string
+	for _, doc := range docs {
+		ids = append(ids, DocumentID(doc))
+	}
+	if want := []string{"ExtensionServiceConfig/firstboot", "ExtensionServiceConfig/other"}; !slices.Equal(ids, want) {
+		t.Fatalf("documents %v, want %v", ids, want)
+	}
+}
+
+func TestDocumentsWithoutRunningConfiguration(t *testing.T) {
+	n := dialFake(t, &fakeMachine{})
+	n.st = failingState{newState(t)}
+	if _, err := n.Documents(context.Background(), extensions.ServiceConfigKind); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestReplaceDocumentsReplacesAddsAndRemovesWholeDocuments(t *testing.T) {
+	fake := &fakeMachine{}
+	other := extensionConfig("other", []string{"MODE=other"})
+	hostname := network.NewHostnameConfigV1Alpha1()
+	hostname.ConfigHostname = "ilm.example.com"
+	err := dialConfigured(t, fake).ReplaceDocuments(context.Background(), []configdoc.Document{other, hostname},
+		[]string{"ExtensionServiceConfig/firstboot", "ResolverConfig"})
+	if err != nil {
+		t.Fatalf("ReplaceDocuments: %v", err)
+	}
+	if fake.applyCalls != 1 || fake.applyMode != machineapi.ApplyConfigurationRequest_NO_REBOOT {
+		t.Fatalf("%d apply calls in mode %v, want one in NO_REBOOT", fake.applyCalls, fake.applyMode)
+	}
+	cfg := appliedConfig(t, fake)
+	files := extensionFiles(cfg)
+	if _, ok := files["firstboot"]; ok || len(files["other"]) != 0 {
+		t.Errorf("extension files %v, want firstboot removed and other replaced whole, without its file", files)
+	}
+	if got := cfg.NetworkHostnameConfig(); got == nil || got.Hostname() != "ilm.example.com" {
+		t.Errorf("host name configuration %v, want the added document", got)
+	}
+	if got := cfg.K8sKubeletConfig().Image(); got != kubeletRef {
+		t.Errorf("kubelet image %q, want the running configuration kept", got)
+	}
+}
+
+func TestReplaceDocumentsAppliesNothingWithoutAChange(t *testing.T) {
+	fake := &fakeMachine{}
+	n := dialConfigured(t, fake)
+	docs, err := n.Documents(context.Background(), extensions.ServiceConfigKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Documents decoded again encode the same, so an equal copy is no change either.
+	copies := make([]configdoc.Document, len(docs))
+	for i, doc := range docs {
+		copies[i] = doc.Clone()
+	}
+	if err := n.ReplaceDocuments(context.Background(), copies, []string{"ResolverConfig"}); err != nil {
+		t.Fatalf("ReplaceDocuments: %v", err)
+	}
+	if fake.applyCalls != 0 {
+		t.Fatal("nothing changed, yet a configuration was applied")
+	}
+}
+
+func TestReplaceDocumentsApplyErrorNamesTheChangedDocuments(t *testing.T) {
+	fake := &fakeMachine{applyErr: status.Error(codes.InvalidArgument, "rejected: secret value")}
+	err := dialConfigured(t, fake).ReplaceDocuments(context.Background(), nil, []string{"ExtensionServiceConfig/other"})
+	if err == nil || !strings.Contains(err.Error(), "ExtensionServiceConfig/other") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("ReplaceDocuments: %v, want an error naming the document without the Talos message", err)
+	}
+}
+
+func TestReplaceDocumentsFailures(t *testing.T) {
+	n := dialFake(t, &fakeMachine{})
+	n.st = failingState{newState(t)}
+	if err := n.ReplaceDocuments(context.Background(), nil, nil); err == nil {
+		t.Error("without a running configuration: expected error")
+	}
+	fake := &fakeMachine{}
+	if err := dialConfigured(t, fake).ReplaceDocuments(context.Background(), []configdoc.Document{unencodable{}}, nil); err == nil {
+		t.Error("with an unencodable document: expected error")
+	}
+	if fake.applyCalls != 0 {
+		t.Error("a configuration was applied after a failure")
 	}
 }

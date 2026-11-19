@@ -216,7 +216,8 @@ export interface paths {
          * @description Replaces the platform settings and the mail server; without `mail` the mail server is removed. The ILM
          *     version is always the one the release ships. The mail password is kept in a Secret. Without `password`
          *     the stored one is kept only while the user name, host, port and security are unchanged; otherwise the
-         *     answer is 400 with field `mail.password`. Accepted until setup is complete, then answered with 409.
+         *     answer is 400 with field `mail.password`. Credentials need security `starttls` or `tls`, otherwise the answer
+         *     is 400 with field `mail.username`. Accepted until setup is complete, then answered with 409.
          */
         put: operations["putWizardPlatform"];
         post?: never;
@@ -280,6 +281,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/certificate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The TLS certificate the appliance serves
+         * @description Where the certificate comes from, whether a signing request waits for its certificate and, once the
+         *     certificate exists, its subject, names, issuer and validity. Never a private key.
+         */
+        get: operations["getCertificate"];
+        /**
+         * Upload a certificate and its private key
+         * @description Replaces the built-in certificate with the uploaded one. The certificate must match the key, be valid now,
+         *     cover the node host name and the ILM host name, not be self-signed, chain to a root certificate (included
+         *     in the upload, publicly trusted or one of the trusted CAs) and use an RSA key of at least 2048 bits or an
+         *     ECDSA key. Otherwise the upload is answered with 400, a message that names the problem, and the current
+         *     certificate stays in use. The node address need not be covered; without it the console is reachable only
+         *     by its host name.
+         *     A successful upload discards a pending signing request. The request body is limited to 1 MiB.
+         */
+        put: operations["putCertificate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/certificate/csr": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a certificate signing request
+         * @description Generates an ECDSA P-256 key that never leaves the appliance and returns a signing request for the node
+         *     host name and the ILM host name. It asks for no IP address, so that a public CA can sign it; the console is
+         *     then reachable only by its host name. A new request replaces a pending one and its key.
+         */
+        post: operations["postCertificateCsr"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/certificate/csr/signed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload the certificate issued for the pending signing request
+         * @description The certificate must have been issued for the pending signing request's key and pass the same checks as an
+         *     uploaded certificate; otherwise it is answered with 400 and the current certificate stays in use. Without a
+         *     pending request it is answered with 409. The request body is limited to 1 MiB.
+         */
+        put: operations["putCertificateCsrSigned"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/certificate/builtin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Go back to the built-in certificate
+         * @description Selects the built-in certificate and deletes the uploaded certificate and a pending signing request.
+         */
+        put: operations["putCertificateBuiltin"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/platform/admin-credential": {
         parameters: {
             query?: never;
@@ -296,6 +392,279 @@ export interface paths {
          *     with 410 until the platform renews the certificate.
          */
         post: operations["postPlatformAdminCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/node": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change the gateway, DNS and NTP servers and proxy of the node
+         * @description Replaces the node settings; without `proxy` the proxy is removed. The node address and host name are fixed
+         *     at setup: a request with `address` is answered with 400 and field `address`, one with a `hostName` other
+         *     than the current one with 400 and field `hostName`. The public name of ILM changes through
+         *     `PUT /api/v1/platform` and the certificate. A gateway needs a static address. The manager applies the change
+         *     to the node without a reboot; a changed proxy takes effect only after a reboot, which `rebootRequired` in
+         *     the status reports.
+         */
+        put: operations["putNode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/reboot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reboot the appliance
+         * @description The request must confirm the reboot with `confirm` set to true; otherwise it is answered with 400.
+         */
+        post: operations["postSystemReboot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shut the appliance down
+         * @description The request must confirm the shutdown with `confirm` set to true; otherwise it is answered with 400.
+         */
+        post: operations["postSystemShutdown"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The additional trusted CA certificates
+         * @description The CA certificates the platform and the node trust in addition to the public ones, in bundle order.
+         */
+        get: operations["getTrust"];
+        put?: never;
+        /**
+         * Add trusted CA certificates
+         * @description Adds the CA certificates of the upload to the bundle; a certificate already trusted is not added again. Only
+         *     CA certificates are accepted: an upload with another certificate, or anything but certificates, is answered
+         *     with 400 and a message that names the problem, and nothing is added. The manager passes the bundle on to the
+         *     platform and the node; the node uses it after a reboot, which `rebootRequired` in the status reports. The
+         *     request body is limited to 1 MiB.
+         */
+        post: operations["postTrust"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trust/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview adding trusted CA certificates
+         * @description The bundle the upload would give, without changing anything: every certificate, those the upload adds marked
+         *     `new`. An upload that adding would refuse is answered with 400 the same way. The request body is limited to
+         *     1 MiB.
+         */
+        post: operations["postTrustPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/trust/{sha256}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SHA-256 fingerprint of the certificate, as listed. */
+                sha256: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Stop trusting a CA certificate
+         * @description Removes the certificate from the bundle; removing the last one leaves no additional trusted certificates.
+         */
+        delete: operations["deleteTrust"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The container registries
+         * @description The registries and the user names of their credentials. Passwords are reported only as set or not set.
+         */
+        get: operations["getRegistries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registries/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry's host name or IP address with an optional port, such as registry.example.com:5000. */
+                host: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A container registry
+         * @description The registry and the user name of its credentials. The password is reported only as set or not set.
+         */
+        get: operations["getRegistry"];
+        /**
+         * Add a registry or change its credentials
+         * @description Sets the credentials the platform and the node pull images from the registry with. Without `password` the
+         *     stored password is kept, but only for the same user name; otherwise the request is answered with 400 and
+         *     field `password`. The host is a host name or IP address with an optional port, without a scheme or path.
+         */
+        put: operations["putRegistry"];
+        post?: never;
+        /**
+         * Remove a registry and its credentials
+         * @description Removes the registry and deletes its credentials. While a chosen private component pulls from the registry,
+         *     the request is answered with 409 and code `registry_in_use`, naming the component.
+         */
+        delete: operations["deleteRegistry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/platform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The ILM platform and the components that can be installed
+         * @description The ILM version, the platform host name and every component of the catalogue, with whether it is chosen
+         *     and what it still needs before it can be chosen.
+         */
+        get: operations["getPlatform"];
+        /**
+         * Change the platform host name and its components
+         * @description Replaces the platform host name and the chosen components. The ILM version is the installed one and cannot
+         *     be changed: a request with another `ilmVersion` is answered with 400 and field `ilmVersion`. A private
+         *     component needs credentials for the registry of its image, and a component that sends mail needs the mail
+         *     settings; otherwise the request is answered with 400 and field `components`, naming the component. While an
+         *     uploaded certificate is in use, a new host name it does not cover is answered with 400 and field `hostName`.
+         */
+        put: operations["putPlatform"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The mail server
+         * @description The mail server settings, without `mail` when none is set. The password is reported only as set or not set.
+         */
+        get: operations["getMail"];
+        /**
+         * Set the mail server
+         * @description Sets the mail server the platform sends notifications through. The password is kept in a Secret. Without
+         *     `password` the stored one is kept only while the user name, host, port and security are unchanged;
+         *     otherwise the answer is 400 with field `password`. Without `username` no credentials are used; credentials
+         *     need security `starttls` or `tls`, otherwise the answer is 400 with field `username`.
+         */
+        put: operations["putMail"];
+        post?: never;
+        /**
+         * Remove the mail server and its credentials
+         * @description Refused with 409 while a chosen component sends mail.
+         */
+        delete: operations["deleteMail"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mail/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a test mail through the mail server
+         * @description Sends a test mail to `to` through the stored mail server, trusting the public CAs and the additional trusted
+         *     CAs. A failure is answered with 502 and the stage that failed; the server's reply is never passed on.
+         */
+        post: operations["postMailTest"];
         delete?: never;
         options?: never;
         head?: never;
@@ -419,8 +788,16 @@ export interface components {
             addonStep?: string;
             conditions: components["schemas"]["Condition"][];
             versions: components["schemas"]["Versions"];
+            /** @description The address the node is reached at. */
             nodeAddress?: string;
+            /** @description A change takes effect only after the node restarts. */
             rebootRequired: boolean;
+            certificate?: components["schemas"]["StatusCertificate"];
+        };
+        /** @description The certificate the console and ILM serve; absent while none is issued or installed. */
+        StatusCertificate: {
+            /** Format: date-time */
+            notAfter: string;
         };
         /** @enum {string} */
         MailSecurity: "none" | "starttls" | "tls";
@@ -487,7 +864,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -495,6 +872,56 @@ export interface components {
             result: "success" | "failure" | "denied";
             /** @description The Appliance fields the request changed, as JSON paths; never their values. */
             paths: string[];
+        };
+        CertificateInfo: {
+            /**
+             * @description `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.
+             * @enum {string}
+             */
+            source: "builtin" | "secret";
+            /** @description A signing request waits for its certificate. */
+            csrPending: boolean;
+            certificate?: components["schemas"]["CertificateDetails"];
+        };
+        /** @description The certificate in use; absent until the built-in certificate is issued. */
+        CertificateDetails: {
+            subject: string;
+            issuer: string;
+            dnsNames: string[];
+            ipAddresses: string[];
+            /** Format: date-time */
+            notBefore: string;
+            /** Format: date-time */
+            notAfter: string;
+        };
+        CertificateUpload: {
+            /**
+             * Format: binary
+             * @description The certificate in PEM, optionally followed by its chain.
+             */
+            certificate: string;
+            /**
+             * Format: binary
+             * @description The certificate's private key in PEM, unencrypted.
+             */
+            key: string;
+            /**
+             * Format: binary
+             * @description The intermediate and root certificates in PEM.
+             */
+            chain?: string;
+        };
+        SignedCertificateUpload: {
+            /**
+             * Format: binary
+             * @description The certificate in PEM, optionally followed by its chain.
+             */
+            certificate: string;
+            /**
+             * Format: binary
+             * @description The intermediate and root certificates in PEM.
+             */
+            chain?: string;
         };
         AdminCredentialRequest: {
             /**
@@ -505,6 +932,91 @@ export interface components {
         };
         AuditLog: {
             items: components["schemas"]["AuditEntry"][];
+        };
+        NodeUpdate: {
+            /** @description Optional; the node host name is fixed at setup. A value other than the current host name is answered with 400. */
+            hostName?: string;
+            /** @description Not accepted; the node address is fixed at setup. A request with it is answered with 400. */
+            address?: string;
+            /** @description The default gateway of the static address; empty with DHCP. */
+            gateway?: string;
+            dns: string[];
+            ntp: string[];
+            proxy?: components["schemas"]["Proxy"];
+        };
+        Confirmation: {
+            /** @description Must be true. */
+            confirm: boolean;
+        };
+        TrustedCertificate: {
+            subject: string;
+            issuer: string;
+            /** Format: date-time */
+            notAfter: string;
+            /** @description The SHA-256 fingerprint of the certificate's DER in lowercase hex, which identifies it. */
+            sha256: string;
+            /** @description In a preview, the upload adds the certificate. */
+            new?: boolean;
+        };
+        TrustedCertificateList: {
+            items: components["schemas"]["TrustedCertificate"][];
+        };
+        TrustUpload: {
+            /** @description One or more CA certificates in PEM. */
+            pem: string;
+        };
+        RegistryCredentials: {
+            host: string;
+            /** @description The user name of the credentials; empty for a registry without credentials. */
+            username: string;
+            passwordSet: boolean;
+        };
+        RegistryList: {
+            items: components["schemas"]["RegistryCredentials"][];
+        };
+        RegistryCredentialsUpdate: {
+            username: string;
+            /**
+             * Format: password
+             * @description Required unless the registry has a password for the same user name, which is then kept.
+             */
+            password?: string;
+        };
+        PlatformComponent: {
+            name: string;
+            title: string;
+            /** @description Whether the component's image comes from a registry that needs credentials. */
+            private: boolean;
+            chosen: boolean;
+            /** @description A private component whose registry has no credentials yet. */
+            needsCredentials: boolean;
+            /** @description A component that sends mail while no mail server is set. */
+            needsMail: boolean;
+        };
+        PlatformState: {
+            ilmVersion: string;
+            hostName: string;
+            components: components["schemas"]["PlatformComponent"][];
+        };
+        PlatformUpdate: {
+            hostName: string;
+            components: string[];
+            /** @description Optional; must be the installed version, which cannot be changed. */
+            ilmVersion?: string;
+        };
+        MailState: {
+            mail?: components["schemas"]["MailSettings"];
+        };
+        MailTest: {
+            /** @description The address the test mail is sent to. */
+            to: string;
+        };
+        MailTestFailure: components["schemas"]["Error"] & {
+            /**
+             * @description The stage that failed.
+             * @enum {string}
+             */
+            stage: "connect" | "tls" | "auth" | "send";
         };
     };
     responses: {
@@ -591,6 +1103,15 @@ export interface components {
         };
         /** @description The request conflicts with the current state, for example setup is in progress in another browser. */
         Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The node's Talos API cannot be reached at the moment. */
+        ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1008,6 +1529,124 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    getCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The certificate in use. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CertificateInfo"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    putCertificate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["CertificateUpload"];
+            };
+        };
+        responses: {
+            /** @description The certificate is stored; the console and the platform switch to it shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postCertificateCsr: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The signing request in PEM. */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-pem-file": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putCertificateCsrSigned: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["SignedCertificateUpload"];
+            };
+        };
+        responses: {
+            /** @description The certificate is stored; the console and the platform switch to it shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putCertificateBuiltin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The console and the platform switch to the built-in certificate shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     postPlatformAdminCredential: {
         parameters: {
             query?: never;
@@ -1036,6 +1675,439 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             410: components["responses"]["Gone"];
+        };
+    };
+    putNode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NodeUpdate"];
+            };
+        };
+        responses: {
+            /** @description The node settings are being applied. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postSystemReboot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Confirmation"];
+            };
+        };
+        responses: {
+            /** @description The appliance reboots. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    postSystemShutdown: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Confirmation"];
+            };
+        };
+        responses: {
+            /** @description The appliance shuts down. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trusted certificates; empty when there are none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedCertificateList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustUpload"];
+            };
+        };
+        responses: {
+            /** @description The certificates are trusted; the platform and the node follow shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postTrustPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustUpload"];
+            };
+        };
+        responses: {
+            /** @description The certificates of the bundle after the upload. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustedCertificateList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SHA-256 fingerprint of the certificate, as listed. */
+                sha256: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The certificate is no longer trusted; the platform and the node follow shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getRegistries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getRegistry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry's host name or IP address with an optional port, such as registry.example.com:5000. */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryCredentials"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putRegistry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry's host name or IP address with an optional port, such as registry.example.com:5000. */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegistryCredentialsUpdate"];
+            };
+        };
+        responses: {
+            /** @description The credentials are stored; the platform and the node follow shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteRegistry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registry's host name or IP address with an optional port, such as registry.example.com:5000. */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registry is removed; the platform and the node follow shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getPlatform: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The platform. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putPlatform: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformUpdate"];
+            };
+        };
+        responses: {
+            /** @description The platform follows shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getMail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The mail server. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putMail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Mail"];
+            };
+        };
+        responses: {
+            /** @description The mail server is set; the platform follows shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteMail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The mail server is removed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postMailTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MailTest"];
+            };
+        };
+        responses: {
+            /** @description The mail server accepted the test mail. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /** @description The test mail could not be sent. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailTestFailure"];
+                };
+            };
         };
     };
 }

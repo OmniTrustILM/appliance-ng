@@ -1,0 +1,89 @@
+import { useState } from 'react';
+import { Alert } from '../../components/Alert';
+import { Badge } from '../../components/Badge';
+import { Button } from '../../components/Button';
+import { Card } from '../../components/Card';
+import { PageHeading } from '../../components/PageHeading';
+import { PageWidth } from '../../components/PageWidth';
+import { Loading } from '../../components/Spinner';
+import { pageOf, useAuditSnapshot, type AuditEntry } from './useAuditPage';
+
+const results = {
+  success: { tone: 'ok', label: 'Success' },
+  failure: { tone: 'bad', label: 'Failed' },
+  denied: { tone: 'wait', label: 'Denied' },
+} as const;
+
+const CELL = 'px-3 py-2.5 align-top';
+
+function EntryRow({ entry }: Readonly<{ entry: AuditEntry }>) {
+  const result = results[entry.result];
+  return (
+    <tr className="border-t border-divider">
+      <td className={`${CELL} whitespace-nowrap`}>{new Date(entry.time).toLocaleString()}</td>
+      <td className={CELL}>{entry.user || '—'}</td>
+      <td className={`${CELL} whitespace-nowrap font-mono text-[13px]`}>{entry.action}</td>
+      <td className={`${CELL} font-mono text-[13px] [overflow-wrap:anywhere]`}>{entry.paths.join(', ') || '—'}</td>
+      <td className={CELL}><Badge tone={result.tone}>{result.label}</Badge></td>
+    </tr>
+  );
+}
+
+function EntryTable({ entries }: Readonly<{ entries: readonly AuditEntry[] }>) {
+  return (
+    <div className="-mx-5 overflow-x-auto sm:mx-0">
+      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+        <thead className="text-xs uppercase tracking-[0.06em] text-content-subtle">
+          <tr>
+            <th scope="col" className={`${CELL} font-semibold`}>Time</th>
+            <th scope="col" className={`${CELL} font-semibold`}>User</th>
+            <th scope="col" className={`${CELL} font-semibold`}>Action</th>
+            <th scope="col" className={`${CELL} font-semibold`}>Changed paths</th>
+            <th scope="col" className={`${CELL} font-semibold`}>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((entry) => <EntryRow key={`${entry.time}|${entry.user}|${entry.action}|${entry.result}`} entry={entry} />)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The audit log, newest first, a page at a time; read-only. */
+export function AuditPage() {
+  const [page, setPage] = useState(0);
+  const { items, error, loading, refresh } = useAuditSnapshot();
+  const current = items && pageOf(items, page);
+  const empty = items?.length === 0;
+
+  function reload() {
+    setPage(0);
+    refresh();
+  }
+
+  return (
+    <PageWidth wide>
+      <Card
+        back={<Button variant="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>}
+        actions={(
+          <>
+            <Button variant="secondary" busy={loading && !!items} onClick={reload}>Refresh</Button>
+            <Button variant="secondary" disabled={!current?.hasNext} onClick={() => setPage(page + 1)}>Next</Button>
+          </>
+        )}
+      >
+        <PageHeading eyebrow="Platform" title="Audit log" lead="Sign-ins and changes made in this console, newest first." />
+        {error && <Alert tone="error">{error}</Alert>}
+        {!items && !error && <Loading />}
+        {empty && <p className="text-content-muted">Nothing has been recorded yet.</p>}
+        {current && !empty && (
+          <>
+            <EntryTable entries={current.entries} />
+            <p className="mt-3 text-sm text-content-muted">Page {page + 1}</p>
+          </>
+        )}
+      </Card>
+    </PageWidth>
+  );
+}

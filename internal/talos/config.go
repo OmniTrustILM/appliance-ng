@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/cosi-project/runtime/pkg/safe"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
@@ -19,8 +20,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// configMu serializes the changes of the running machine configuration made by this process: each reads the
+// running configuration and applies an edited copy, which would undo a change applied in between.
+var configMu sync.Mutex
+
 // PatchConfig applies a strategic merge patch to the running machine configuration in no-reboot mode.
 func (n *node) PatchConfig(ctx context.Context, patch []byte) error {
+	configMu.Lock()
+	defer configMu.Unlock()
 	current, err := n.machineConfig(ctx)
 	if err != nil {
 		return err
@@ -66,6 +73,8 @@ func (n *node) ExtensionConfigFile(ctx context.Context, name, file string) ([]by
 // the machine configuration. Talos rejects an ExtensionServiceConfig with neither files nor environment, so a
 // document left with neither is removed. Nothing is applied when there is no such file.
 func (n *node) RemoveExtensionConfig(ctx context.Context, name, file string) error {
+	configMu.Lock()
+	defer configMu.Unlock()
 	current, err := n.machineConfig(ctx)
 	if err != nil {
 		return err
@@ -103,6 +112,65 @@ func (n *node) RemoveExtensionConfig(ctx context.Context, name, file string) err
 		return nil
 	}
 
+	return nil
+}
+
+// Documents returns the documents of the running machine configuration whose kind is one of kinds.
+func (n *node) Documents(ctx context.Context, kinds ...string) ([]configdoc.Document, error) {
+	current, err := n.machineConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var docs []configdoc.Document
+	for _, doc := range current.Documents() {
+		if slices.Contains(kinds, doc.Kind()) {
+			docs = append(docs, doc)
+		}
+	}
+	return docs, nil
+}
+
+// ReplaceDocuments puts each of docs in place of the running document with its ID, or adds it, and drops the
+// running documents whose IDs are in remove; the rest of the machine configuration is kept. Nothing is applied when
+// nothing changes.
+func (n *node) ReplaceDocuments(ctx context.Context, docs []configdoc.Document, remove []string) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+	current, err := n.machineConfig(ctx)
+	if err != nil {
+		return err
+	}
+	replacements := map[string]configdoc.Document{}
+	for _, doc := range docs {
+		replacements[DocumentID(doc)] = doc
+	}
+	var next []configdoc.Document
+	for _, doc := range current.Documents() {
+		id := DocumentID(doc)
+		if replacement, ok := replacements[id]; ok {
+			next = append(next, replacement)
+			delete(replacements, id)
+		} else if !slices.Contains(remove, id) {
+			next = append(next, doc)
+		}
+	}
+	for _, doc := range docs {
+		if _, added := replacements[DocumentID(doc)]; added {
+			next = append(next, doc)
+		}
+	}
+	cfg, err := container.New(next...)
+	if err != nil {
+		return fmt.Errorf("rebuild machine configuration: %w", err)
+	}
+	changed, err := changedDocuments(current, cfg)
+	if err != nil || len(changed) == 0 {
+		return err
+	}
+	if err := n.applyNoReboot(ctx, current, cfg); err != nil {
+		return err
+	}
+	slog.Info("replaced machine configuration documents", "documents", changed)
 	return nil
 }
 
@@ -168,21 +236,36 @@ func changedDocuments(current, next coreconfig.Provider) ([]string, error) {
 	return changed, nil
 }
 
-// encodeDocuments encodes each document of cfg by its ID: the kind, followed by "/" and the name for a named
-// document.
+// encodeDocuments encodes each document of cfg by its ID.
 func encodeDocuments(cfg coreconfig.Provider) (map[string]string, error) {
 	docs := map[string]string{}
 	for _, doc := range cfg.Documents() {
-		id := doc.Kind()
-		if named, ok := doc.(configdoc.NamedDocument); ok {
-			id += "/" + named.Name()
-		}
-		encoded, err := encoder.NewEncoder(doc, encoder.WithComments(encoder.CommentsDisabled)).Encode()
+		encoded, err := EncodeDocument(doc)
 		if err != nil {
-			return nil, fmt.Errorf("encode configuration document %s: %w", id, err)
+			return nil, err
 		}
-		docs[id] = string(encoded)
+		docs[DocumentID(doc)] = string(encoded)
 	}
 
 	return docs, nil
+}
+
+// DocumentID returns the ID of a configuration document: its kind, followed by "/" and the name for a named
+// document.
+func DocumentID(doc configdoc.Document) string {
+	id := doc.Kind()
+	if named, ok := doc.(configdoc.NamedDocument); ok {
+		id += "/" + named.Name()
+	}
+	return id
+}
+
+// EncodeDocument encodes a configuration document canonically, without comments, so that two documents with the
+// same content encode the same.
+func EncodeDocument(doc configdoc.Document) ([]byte, error) {
+	encoded, err := encoder.NewEncoder(doc, encoder.WithComments(encoder.CommentsDisabled)).Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode configuration document %s: %w", DocumentID(doc), err)
+	}
+	return encoded, nil
 }

@@ -65,6 +65,20 @@ describe('App routing', () => {
     expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(1);
   });
 
+  it('shows the console menu with the current page marked, and the system page', async () => {
+    vi.stubGlobal('fetch', respond({ ...signedIn, '/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }] }));
+    renderAt('/system');
+    expect(await screen.findByRole('heading', { name: 'System' })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Console' })).getByRole('link', { name: 'System' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('shows the audit log page', async () => {
+    vi.stubGlobal('fetch', respond({ ...signedIn, '/api/v1/audit': [200, { items: [] }] }));
+    renderAt('/audit');
+    expect(await screen.findByRole('heading', { name: 'Audit log' })).toBeInTheDocument();
+    expect(within(screen.getByRole('navigation', { name: 'Console' })).getByRole('link', { name: 'Audit log' })).toHaveAttribute('aria-current', 'page');
+  });
+
   it('shows the sign-in page without a banner and with the theme toggle', async () => {
     renderAt('/signin');
     expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();

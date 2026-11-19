@@ -29,9 +29,19 @@ tags:
   - name: audit
     description: The audit log.
   - name: certificate
-    description: The appliance's built-in certificate authority.
+    description: The appliance's TLS certificate and its built-in certificate authority.
   - name: platform
     description: The installed ILM platform.
+  - name: node
+    description: The network settings of the node.
+  - name: system
+    description: Reboot and shutdown of the appliance.
+  - name: trust
+    description: The CA certificates the platform and the node trust in addition to the public ones.
+  - name: registries
+    description: The container registries the platform and the node pull images from with credentials.
+  - name: mail
+    description: The mail server the platform sends notifications through.
 paths:
   /api/v1/setup/code:
     post:
@@ -312,7 +322,8 @@ paths:
         Replaces the platform settings and the mail server; without `mail` the mail server is removed. The ILM
         version is always the one the release ships. The mail password is kept in a Secret. Without `password`
         the stored one is kept only while the user name, host, port and security are unchanged; otherwise the
-        answer is 400 with field `mail.password`. Accepted until setup is complete, then answered with 409.
+        answer is 400 with field `mail.password`. Credentials need security `starttls` or `tls`, otherwise the answer
+        is 400 with field `mail.username`. Accepted until setup is complete, then answered with 409.
       security:
         - session: []
       requestBody:
@@ -395,6 +406,129 @@ paths:
                 type: string
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/v1/certificate:
+    get:
+      tags: [certificate]
+      operationId: getCertificate
+      summary: The TLS certificate the appliance serves
+      description: |
+        Where the certificate comes from, whether a signing request waits for its certificate and, once the
+        certificate exists, its subject, names, issuer and validity. Never a private key.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The certificate in use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [certificate]
+      operationId: putCertificate
+      summary: Upload a certificate and its private key
+      description: |
+        Replaces the built-in certificate with the uploaded one. The certificate must match the key, be valid now,
+        cover the node host name and the ILM host name, not be self-signed, chain to a root certificate (included
+        in the upload, publicly trusted or one of the trusted CAs) and use an RSA key of at least 2048 bits or an
+        ECDSA key. Otherwise the upload is answered with 400, a message that names the problem, and the current
+        certificate stays in use. The node address need not be covered; without it the console is reachable only
+        by its host name.
+        A successful upload discards a pending signing request. The request body is limited to 1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CertificateUpload'
+      responses:
+        '202':
+          description: The certificate is stored; the console and the platform switch to it shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/certificate/csr:
+    post:
+      tags: [certificate]
+      operationId: postCertificateCsr
+      summary: Create a certificate signing request
+      description: |
+        Generates an ECDSA P-256 key that never leaves the appliance and returns a signing request for the node
+        host name and the ILM host name. It asks for no IP address, so that a public CA can sign it; the console is
+        then reachable only by its host name. A new request replaces a pending one and its key.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The signing request in PEM.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/x-pem-file:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/certificate/csr/signed:
+    put:
+      tags: [certificate]
+      operationId: putCertificateCsrSigned
+      summary: Upload the certificate issued for the pending signing request
+      description: |
+        The certificate must have been issued for the pending signing request's key and pass the same checks as an
+        uploaded certificate; otherwise it is answered with 400 and the current certificate stays in use. Without a
+        pending request it is answered with 409. The request body is limited to 1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SignedCertificateUpload'
+      responses:
+        '202':
+          description: The certificate is stored; the console and the platform switch to it shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/certificate/builtin:
+    put:
+      tags: [certificate]
+      operationId: putCertificateBuiltin
+      summary: Go back to the built-in certificate
+      description: Selects the built-in certificate and deletes the uploaded certificate and a pending signing request.
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The console and the platform switch to the built-in certificate shortly.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /api/v1/platform/admin-credential:
     post:
       tags: [platform]
@@ -434,6 +568,433 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
+  /api/v1/node:
+    put:
+      tags: [node]
+      operationId: putNode
+      summary: Change the gateway, DNS and NTP servers and proxy of the node
+      description: |
+        Replaces the node settings; without `proxy` the proxy is removed. The node address and host name are fixed
+        at setup: a request with `address` is answered with 400 and field `address`, one with a `hostName` other
+        than the current one with 400 and field `hostName`. The public name of ILM changes through
+        `PUT /api/v1/platform` and the certificate. A gateway needs a static address. The manager applies the change
+        to the node without a reboot; a changed proxy takes effect only after a reboot, which `rebootRequired` in
+        the status reports.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeUpdate'
+      responses:
+        '202':
+          description: The node settings are being applied.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/system/reboot:
+    post:
+      tags: [system]
+      operationId: postSystemReboot
+      summary: Reboot the appliance
+      description: The request must confirm the reboot with `confirm` set to true; otherwise it is answered with 400.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Confirmation'
+      responses:
+        '202':
+          description: The appliance reboots.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/system/shutdown:
+    post:
+      tags: [system]
+      operationId: postSystemShutdown
+      summary: Shut the appliance down
+      description: The request must confirm the shutdown with `confirm` set to true; otherwise it is answered with 400.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Confirmation'
+      responses:
+        '202':
+          description: The appliance shuts down.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/trust:
+    get:
+      tags: [trust]
+      operationId: getTrust
+      summary: The additional trusted CA certificates
+      description: The CA certificates the platform and the node trust in addition to the public ones, in bundle order.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The trusted certificates; empty when there are none.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustedCertificateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    post:
+      tags: [trust]
+      operationId: postTrust
+      summary: Add trusted CA certificates
+      description: |
+        Adds the CA certificates of the upload to the bundle; a certificate already trusted is not added again. Only
+        CA certificates are accepted: an upload with another certificate, or anything but certificates, is answered
+        with 400 and a message that names the problem, and nothing is added. The manager passes the bundle on to the
+        platform and the node; the node uses it after a reboot, which `rebootRequired` in the status reports. The
+        request body is limited to 1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrustUpload'
+      responses:
+        '202':
+          description: The certificates are trusted; the platform and the node follow shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/trust/preview:
+    post:
+      tags: [trust]
+      operationId: postTrustPreview
+      summary: Preview adding trusted CA certificates
+      description: |
+        The bundle the upload would give, without changing anything: every certificate, those the upload adds marked
+        `new`. An upload that adding would refuse is answered with 400 the same way. The request body is limited to
+        1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrustUpload'
+      responses:
+        '200':
+          description: The certificates of the bundle after the upload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrustedCertificateList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/trust/{sha256}:
+    parameters:
+      - name: sha256
+        in: path
+        required: true
+        description: The SHA-256 fingerprint of the certificate, as listed.
+        schema:
+          type: string
+    delete:
+      tags: [trust]
+      operationId: deleteTrust
+      summary: Stop trusting a CA certificate
+      description: Removes the certificate from the bundle; removing the last one leaves no additional trusted certificates.
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The certificate is no longer trusted; the platform and the node follow shortly.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/registries:
+    get:
+      tags: [registries]
+      operationId: getRegistries
+      summary: The container registries
+      description: The registries and the user names of their credentials. Passwords are reported only as set or not set.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The registries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistryList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/registries/{host}:
+    parameters:
+      - name: host
+        in: path
+        required: true
+        description: The registry's host name or IP address with an optional port, such as registry.example.com:5000.
+        schema:
+          type: string
+    get:
+      tags: [registries]
+      operationId: getRegistry
+      summary: A container registry
+      description: The registry and the user name of its credentials. The password is reported only as set or not set.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The registry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistryCredentials'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    put:
+      tags: [registries]
+      operationId: putRegistry
+      summary: Add a registry or change its credentials
+      description: |
+        Sets the credentials the platform and the node pull images from the registry with. Without `password` the
+        stored password is kept, but only for the same user name; otherwise the request is answered with 400 and
+        field `password`. The host is a host name or IP address with an optional port, without a scheme or path.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistryCredentialsUpdate'
+      responses:
+        '202':
+          description: The credentials are stored; the platform and the node follow shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [registries]
+      operationId: deleteRegistry
+      summary: Remove a registry and its credentials
+      description: |
+        Removes the registry and deletes its credentials. While a chosen private component pulls from the registry,
+        the request is answered with 409 and code `registry_in_use`, naming the component.
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The registry is removed; the platform and the node follow shortly.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/platform:
+    get:
+      tags: [platform]
+      operationId: getPlatform
+      summary: The ILM platform and the components that can be installed
+      description: |
+        The ILM version, the platform host name and every component of the catalogue, with whether it is chosen
+        and what it still needs before it can be chosen.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The platform.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    put:
+      tags: [platform]
+      operationId: putPlatform
+      summary: Change the platform host name and its components
+      description: |
+        Replaces the platform host name and the chosen components. The ILM version is the installed one and cannot
+        be changed: a request with another `ilmVersion` is answered with 400 and field `ilmVersion`. A private
+        component needs credentials for the registry of its image, and a component that sends mail needs the mail
+        settings; otherwise the request is answered with 400 and field `components`, naming the component. While an
+        uploaded certificate is in use, a new host name it does not cover is answered with 400 and field `hostName`.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformUpdate'
+      responses:
+        '202':
+          description: The platform follows shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/mail:
+    get:
+      tags: [mail]
+      operationId: getMail
+      summary: The mail server
+      description: The mail server settings, without `mail` when none is set. The password is reported only as set or not set.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The mail server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    put:
+      tags: [mail]
+      operationId: putMail
+      summary: Set the mail server
+      description: |
+        Sets the mail server the platform sends notifications through. The password is kept in a Secret. Without
+        `password` the stored one is kept only while the user name, host, port and security are unchanged;
+        otherwise the answer is 400 with field `password`. Without `username` no credentials are used; credentials
+        need security `starttls` or `tls`, otherwise the answer is 400 with field `username`.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Mail'
+      responses:
+        '202':
+          description: The mail server is set; the platform follows shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [mail]
+      operationId: deleteMail
+      summary: Remove the mail server and its credentials
+      description: Refused with 409 while a chosen component sends mail.
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The mail server is removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/v1/mail/test:
+    post:
+      tags: [mail]
+      operationId: postMailTest
+      summary: Send a test mail through the mail server
+      description: |
+        Sends a test mail to `to` through the stored mail server, trusting the public CAs and the additional trusted
+        CAs. A failure is answered with 502 and the stage that failed; the server's reply is never passed on.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MailTest'
+      responses:
+        '204':
+          description: The mail server accepted the test mail.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          description: The test mail could not be sent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MailTestFailure'
 components:
   securitySchemes:
     session:
@@ -499,6 +1060,12 @@ components:
             $ref: '#/components/schemas/Error'
     Conflict:
       description: The request conflicts with the current state, for example setup is in progress in another browser.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServiceUnavailable:
+      description: The node's Talos API cannot be reached at the moment.
       content:
         application/json:
           schema:
@@ -721,8 +1288,20 @@ components:
           $ref: '#/components/schemas/Versions'
         nodeAddress:
           type: string
+          description: The address the node is reached at.
         rebootRequired:
           type: boolean
+          description: A change takes effect only after the node restarts.
+        certificate:
+          $ref: '#/components/schemas/StatusCertificate'
+    StatusCertificate:
+      type: object
+      description: The certificate the console and ILM serve; absent while none is issued or installed.
+      required: [notAfter]
+      properties:
+        notAfter:
+          type: string
+          format: date-time
     MailSecurity:
       type: string
       enum: [none, starttls, tls]
@@ -863,7 +1442,9 @@ components:
           description: The signed-in user, or the existing account a sign-in attempt named; empty otherwise.
         action:
           type: string
-          enum: [sign-in, sign-out, wizard-platform, admin-credential]
+          enum: [sign-in, sign-out, wizard-platform, admin-credential, node-settings, reboot, shutdown, certificate-upload,
+            certificate-csr, certificate-signed, certificate-builtin, trust-add, trust-remove, registry-set,
+            registry-remove, platform-settings, mail-settings, mail-remove, mail-test]
         result:
           type: string
           enum: [success, failure, denied]
@@ -875,6 +1456,70 @@ components:
           description: The Appliance fields the request changed, as JSON paths; never their values.
           items:
             type: string
+    CertificateInfo:
+      type: object
+      required: [source, csrPending]
+      properties:
+        source:
+          type: string
+          enum: [builtin, secret]
+          description: '`builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.'
+        csrPending:
+          type: boolean
+          description: A signing request waits for its certificate.
+        certificate:
+          $ref: '#/components/schemas/CertificateDetails'
+    CertificateDetails:
+      type: object
+      description: The certificate in use; absent until the built-in certificate is issued.
+      required: [subject, issuer, dnsNames, ipAddresses, notBefore, notAfter]
+      properties:
+        subject:
+          type: string
+        issuer:
+          type: string
+        dnsNames:
+          type: array
+          items:
+            type: string
+        ipAddresses:
+          type: array
+          items:
+            type: string
+        notBefore:
+          type: string
+          format: date-time
+        notAfter:
+          type: string
+          format: date-time
+    CertificateUpload:
+      type: object
+      required: [certificate, key]
+      properties:
+        certificate:
+          type: string
+          format: binary
+          description: The certificate in PEM, optionally followed by its chain.
+        key:
+          type: string
+          format: binary
+          description: The certificate's private key in PEM, unencrypted.
+        chain:
+          type: string
+          format: binary
+          description: The intermediate and root certificates in PEM.
+    SignedCertificateUpload:
+      type: object
+      required: [certificate]
+      properties:
+        certificate:
+          type: string
+          format: binary
+          description: The certificate in PEM, optionally followed by its chain.
+        chain:
+          type: string
+          format: binary
+          description: The intermediate and root certificates in PEM.
     AdminCredentialRequest:
       type: object
       required: [password]
@@ -895,3 +1540,165 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+    NodeUpdate:
+      type: object
+      required: [dns, ntp]
+      properties:
+        hostName:
+          type: string
+          description: >-
+            Optional; the node host name is fixed at setup. A value other than the current host name is answered
+            with 400.
+        address:
+          type: string
+          description: Not accepted; the node address is fixed at setup. A request with it is answered with 400.
+        gateway:
+          type: string
+          description: The default gateway of the static address; empty with DHCP.
+        dns:
+          type: array
+          items:
+            type: string
+        ntp:
+          type: array
+          items:
+            type: string
+        proxy:
+          $ref: '#/components/schemas/Proxy'
+    Confirmation:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: Must be true.
+    TrustedCertificate:
+      type: object
+      required: [subject, issuer, notAfter, sha256]
+      properties:
+        subject:
+          type: string
+        issuer:
+          type: string
+        notAfter:
+          type: string
+          format: date-time
+        sha256:
+          type: string
+          description: The SHA-256 fingerprint of the certificate's DER in lowercase hex, which identifies it.
+        new:
+          type: boolean
+          description: In a preview, the upload adds the certificate.
+    TrustedCertificateList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrustedCertificate'
+    TrustUpload:
+      type: object
+      required: [pem]
+      properties:
+        pem:
+          type: string
+          description: One or more CA certificates in PEM.
+    RegistryCredentials:
+      type: object
+      required: [host, username, passwordSet]
+      properties:
+        host:
+          type: string
+        username:
+          type: string
+          description: The user name of the credentials; empty for a registry without credentials.
+        passwordSet:
+          type: boolean
+    RegistryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegistryCredentials'
+    RegistryCredentialsUpdate:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: Required unless the registry has a password for the same user name, which is then kept.
+    PlatformComponent:
+      type: object
+      required: [name, title, private, chosen, needsCredentials, needsMail]
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        private:
+          type: boolean
+          description: Whether the component's image comes from a registry that needs credentials.
+        chosen:
+          type: boolean
+        needsCredentials:
+          type: boolean
+          description: A private component whose registry has no credentials yet.
+        needsMail:
+          type: boolean
+          description: A component that sends mail while no mail server is set.
+    PlatformState:
+      type: object
+      required: [ilmVersion, hostName, components]
+      properties:
+        ilmVersion:
+          type: string
+        hostName:
+          type: string
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformComponent'
+    PlatformUpdate:
+      type: object
+      required: [hostName, components]
+      properties:
+        hostName:
+          type: string
+        components:
+          type: array
+          items:
+            type: string
+        ilmVersion:
+          type: string
+          description: Optional; must be the installed version, which cannot be changed.
+    MailState:
+      type: object
+      properties:
+        mail:
+          $ref: '#/components/schemas/MailSettings'
+    MailTest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          description: The address the test mail is sent to.
+    MailTestFailure:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          required: [stage]
+          properties:
+            stage:
+              type: string
+              enum: [connect, tls, auth, send]
+              x-enum-varnames: [StageConnect, StageTLS, StageAuth, StageSend]
+              description: The stage that failed.

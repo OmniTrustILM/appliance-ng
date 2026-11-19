@@ -59,15 +59,23 @@ const (
 // Names of the copies, in the platform namespace, of the Secrets the Appliance references.
 const (
 	TLSSecretName   = platform.TLSSecretName
-	TrustSecretName = "appliance-trust"
+	TrustSecretName = certs.TrustSecretName
 	// PullSecretName is the dockerconfigjson Secret with the credentials of every registry that has some.
 	PullSecretName = "appliance-registry-credentials"
+	// MailSecretName holds the SMTP credentials of the mail server.
+	MailSecretName = "appliance-mail"
 )
 
 // Keys of a registry credentials Secret in the system namespace.
 const (
-	RegistryUsernameKey = "username"
-	RegistryPasswordKey = "password"
+	RegistryUsernameKey = v1alpha1.CredentialsUsernameKey
+	RegistryPasswordKey = v1alpha1.CredentialsPasswordKey
+)
+
+// Keys of the mail credentials Secret in the system namespace and of its copy, which the email connector reads.
+const (
+	MailUsernameKey = v1alpha1.CredentialsUsernameKey
+	MailPasswordKey = v1alpha1.CredentialsPasswordKey
 )
 
 // ApplianceReconciler applies the add-ons and the ILM Platform and Connectors the Appliance describes.
@@ -81,6 +89,8 @@ type ApplianceReconciler struct {
 	Addons    fs.FS
 	Release   *release.Manifest
 	Recorder  events.EventRecorder
+	// Version is the manager's own version, set when it is built.
+	Version string
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -106,7 +116,6 @@ func CacheOptions() cache.Options {
 // SetupWithManager watches the Appliance and the Secrets it may reference. The Platform and Connectors it owns
 // are watched from the first reconcile that finds the operator's CRDs served, see watchOperator.
 func (r *ApplianceReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	inSystemNamespace := predicate.NewPredicateFuncs(func(o client.Object) bool { return o.GetNamespace() == SystemNamespace })
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Appliance{}).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(applianceRequest), builder.WithPredicates(inSystemNamespace)).
@@ -153,6 +162,9 @@ func (r *ApplianceReconciler) watchOperator(ctx context.Context) error {
 	return nil
 }
 
+// inSystemNamespace lets through the events of the objects in the system namespace.
+var inSystemNamespace = predicate.NewPredicateFuncs(func(o client.Object) bool { return o.GetNamespace() == SystemNamespace })
+
 // applianceRequest maps any object to the single Appliance.
 func applianceRequest(context.Context, client.Object) []reconcile.Request {
 	return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: v1alpha1.ApplianceName}}}
@@ -171,6 +183,7 @@ func (r *ApplianceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 	before := a.Status.DeepCopy()
+	r.setReleaseVersions(a)
 	result, err := r.reconcile(ctx, a)
 	if serr := r.writeStatus(ctx, a, before); serr != nil {
 		return ctrl.Result{}, errors.Join(err, serr)
@@ -251,7 +264,15 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	if err != nil {
 		return false, "", err
 	}
-	p, connectors, err := platform.Render(a, r.Release, secrets)
+	ip, ok, err := certs.NodeAddress(ctx, r.Client, a)
+	if err != nil {
+		return false, "", err
+	}
+	nodeIP := ""
+	if ok {
+		nodeIP = ip.String()
+	}
+	p, connectors, err := platform.Render(a, r.Release, secrets, nodeIP)
 	if err != nil {
 		return false, "", fmt.Errorf("render the platform: %w", err)
 	}
@@ -261,22 +282,33 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	if _, err := r.apply(ctx, a, platform.TLSOption(p)); err != nil {
 		return false, "", err
 	}
-	applied, err := r.apply(ctx, a, p)
+	content, err := platform.Unstructured(p)
 	if err != nil {
 		return false, "", err
 	}
+	applied, err := r.apply(ctx, a, content)
+	if err != nil {
+		return false, "", err
+	}
+	observed := make([]otilm.Connector, len(connectors))
 	for i := range connectors {
-		if _, err := r.apply(ctx, a, &connectors[i]); err != nil {
+		appliedConnector, err := r.apply(ctx, a, &connectors[i])
+		if err != nil {
 			return false, "", err
+		}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(appliedConnector.Object, &observed[i]); err != nil {
+			return false, "", fmt.Errorf("read the applied connector %s: %w", connectors[i].Name, err)
 		}
 	}
 	if err := r.deleteRemovedConnectors(ctx, a, connectors); err != nil {
 		return false, "", err
 	}
+	setConnectorsCondition(a, observed)
 	current := &otilm.Platform{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, current); err != nil {
 		return false, "", fmt.Errorf("read the applied Platform: %w", err)
 	}
+	keepKnown(&a.Status.Versions.ILM, current.Status.ObservedVersion)
 	ready, message := platformReady(current)
 	return ready, message, nil
 }
@@ -303,8 +335,9 @@ func (r *ApplianceReconciler) deleteRemovedConnectors(ctx context.Context, a *v1
 	return nil
 }
 
-// copySecrets copies the certificate and key of the TLS Secret, the referenced key of the trust Secret and the
-// registry credentials the spec references into the platform namespace, and returns the names of the copies.
+// copySecrets copies the certificate and key of the TLS Secret, the referenced key of the trust Secret, the
+// registry credentials and the mail credentials the spec references into the platform namespace, and returns the
+// names of the copies. The copy of trust, registry or mail credentials the spec no longer references is deleted.
 func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appliance) (platform.SecretNames, error) {
 	var names platform.SecretNames
 	src, err := r.tlsSecret(ctx, a)
@@ -321,25 +354,17 @@ func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appli
 		}
 		names.TLS = TLSSecretName
 	}
-	if ref := a.Spec.Trust; ref != nil {
-		src, err := r.systemSecret(ctx, ref.Name)
-		if err != nil {
-			return names, err
-		}
-		bundle, err := secretValue(src, ref.Key)
-		if err != nil {
-			return names, err
-		}
-		if err := r.applySecret(ctx, a, TrustSecretName, corev1.SecretTypeOpaque, map[string][]byte{platform.TrustKey: bundle}); err != nil {
-			return names, err
-		}
-		names.Trust = TrustSecretName
+	if names.Trust, err = r.copyTrust(ctx, a); err != nil {
+		return names, err
 	}
 	pull, err := r.copyRegistryCredentials(ctx, a)
 	if err != nil {
 		return names, err
 	}
 	names.PullSecret = pull
+	if names.Mail, err = r.copyMailCredentials(ctx, a); err != nil {
+		return names, err
+	}
 	return names, nil
 }
 
@@ -347,7 +372,7 @@ func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appli
 // issued it; nil means the built-in certificate is not issued yet.
 func (r *ApplianceReconciler) tlsSecret(ctx context.Context, a *v1alpha1.Appliance) (*corev1.Secret, error) {
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
-		return r.systemSecret(ctx, a.Spec.TLS.SecretRef)
+		return systemSecret(ctx, r.Client, a.Spec.TLS.SecretRef)
 	}
 	s := &corev1.Secret{}
 	err := r.Client.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: certs.SecretName}, s)
@@ -369,34 +394,40 @@ type dockerAuth struct {
 	Auth     string `json:"auth"`
 }
 
-// copyRegistryCredentials writes the credentials of every registry that references some into one pull Secret in
-// the platform namespace, and returns its name, or "" when no registry has credentials.
-func (r *ApplianceReconciler) copyRegistryCredentials(ctx context.Context, a *v1alpha1.Appliance) (string, error) {
-	auths := map[string]dockerAuth{}
-	for _, registry := range a.Spec.Registries {
-		if registry.CredentialsRef == "" {
-			continue
-		}
-		src, err := r.systemSecret(ctx, registry.CredentialsRef)
-		if err != nil {
-			return "", err
-		}
-		username, err := secretValue(src, RegistryUsernameKey)
-		if err != nil {
-			return "", err
-		}
-		password, err := secretValue(src, RegistryPasswordKey)
-		if err != nil {
-			return "", err
-		}
-		auths[registry.Host] = dockerAuth{
-			Username: string(username),
-			Password: string(password),
-			Auth:     base64.StdEncoding.EncodeToString([]byte(string(username) + ":" + string(password))),
-		}
+// copyTrust copies the CA bundle spec.trust references into the platform namespace and returns the copy's name, or
+// deletes the copy and returns "" without one.
+func (r *ApplianceReconciler) copyTrust(ctx context.Context, a *v1alpha1.Appliance) (string, error) {
+	if a.Spec.Trust == nil {
+		return "", r.deleteCopy(ctx, TrustSecretName)
 	}
-	if len(auths) == 0 {
-		return "", nil
+	bundle, err := trustBundle(ctx, r.Client, a)
+	if err != nil {
+		return "", err
+	}
+	if err := r.applySecret(ctx, a, TrustSecretName, corev1.SecretTypeOpaque, map[string][]byte{platform.TrustKey: bundle}); err != nil {
+		return "", err
+	}
+	return TrustSecretName, nil
+}
+
+// copyRegistryCredentials writes the credentials of every registry that references some into one pull Secret in
+// the platform namespace and returns its name, or deletes the pull Secret and returns "" when no registry has
+// credentials.
+func (r *ApplianceReconciler) copyRegistryCredentials(ctx context.Context, a *v1alpha1.Appliance) (string, error) {
+	registries, err := registryCredentials(ctx, r.Client, a)
+	if err != nil {
+		return "", err
+	}
+	if len(registries) == 0 {
+		return "", r.deleteCopy(ctx, PullSecretName)
+	}
+	auths := make(map[string]dockerAuth, len(registries))
+	for _, registry := range registries {
+		auths[registry.Host] = dockerAuth{
+			Username: registry.Username,
+			Password: registry.Password,
+			Auth:     base64.StdEncoding.EncodeToString([]byte(registry.Username + ":" + registry.Password)),
+		}
 	}
 	config, err := json.Marshal(map[string]map[string]dockerAuth{"auths": auths})
 	if err != nil {
@@ -408,21 +439,40 @@ func (r *ApplianceReconciler) copyRegistryCredentials(ctx context.Context, a *v1
 	return PullSecretName, nil
 }
 
-// secretValue returns the value of a key of a Secret; an error names the Secret and the key, never a value.
-func secretValue(s *corev1.Secret, key string) ([]byte, error) {
-	value, ok := s.Data[key]
-	if !ok {
-		return nil, fmt.Errorf("secret %s/%s has no key %s", s.Namespace, s.Name, key)
+// copyMailCredentials copies the user name and password of the mail credentials spec.mail references into the
+// platform namespace and returns the copy's name, or deletes the copy and returns "" without credentials. The copy
+// always holds both keys, so that the connector's references resolve for a user name without a password.
+func (r *ApplianceReconciler) copyMailCredentials(ctx context.Context, a *v1alpha1.Appliance) (string, error) {
+	if a.Spec.Mail == nil || a.Spec.Mail.CredentialsRef == "" {
+		return "", r.deleteCopy(ctx, MailSecretName)
 	}
-	return value, nil
+	src, err := systemSecret(ctx, r.Client, a.Spec.Mail.CredentialsRef)
+	if err != nil {
+		return "", err
+	}
+	username, err := secretValue(src, MailUsernameKey)
+	if err != nil {
+		return "", err
+	}
+	data := map[string][]byte{MailUsernameKey: username, MailPasswordKey: append([]byte{}, src.Data[MailPasswordKey]...)}
+	if err := r.applySecret(ctx, a, MailSecretName, corev1.SecretTypeOpaque, data); err != nil {
+		return "", err
+	}
+	return MailSecretName, nil
 }
 
-func (r *ApplianceReconciler) systemSecret(ctx context.Context, name string) (*corev1.Secret, error) {
-	s := &corev1.Secret{}
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: SystemNamespace, Name: name}, s); err != nil {
-		return nil, fmt.Errorf("read secret %s/%s: %w", SystemNamespace, name, err)
+// deleteCopy deletes the copy name in the platform namespace if it exists.
+func (r *ApplianceReconciler) deleteCopy(ctx context.Context, name string) error {
+	s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: name}}
+	err := r.Client.Delete(ctx, s)
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil
+	case err != nil:
+		return fmt.Errorf("delete secret %s/%s: %w", platform.Namespace, name, err)
 	}
-	return s, nil
+	log.FromContext(ctx).Info("deleted a copy the Appliance no longer references", "secret", platform.Namespace+"/"+name)
+	return nil
 }
 
 func (r *ApplianceReconciler) applySecret(ctx context.Context, a *v1alpha1.Appliance, name string, kind corev1.SecretType, data map[string][]byte) error {

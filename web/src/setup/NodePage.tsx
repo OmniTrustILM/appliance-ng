@@ -9,7 +9,8 @@ import { Field } from '../components/Field';
 import { PageHeading } from '../components/PageHeading';
 import { Loading } from '../components/Spinner';
 import { attempt, failureMessage, unreachable } from './failure';
-import { isFqdn, isHostOrAddress, isIpAddress, isIpv4, isIpv4Cidr, isProxyUrl, splitList } from './validate';
+import { NetworkFields, networkProblems, networkValues, PAIR, proxyOf } from './networkFields';
+import { isFqdn, isIpv4, isIpv4Cidr, splitList } from './validate';
 
 export type NodeSettings = components['schemas']['NodeSettings'];
 type Errors = Partial<Record<string, string>>;
@@ -24,7 +25,6 @@ type Props = {
 };
 
 const MONO = 'font-mono';
-const PAIR = 'grid gap-x-4 sm:grid-cols-2';
 
 const withoutPrefix = (cidr?: string) => cidr?.split('/')[0];
 
@@ -37,11 +37,7 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
   const [hostName, setHostName] = useState(initial?.hostName ?? '');
   const [address, setAddress] = useState(initial?.address ?? '');
   const [gateway, setGateway] = useState(initial?.gateway ?? '');
-  const [dns, setDns] = useState((initial?.dns ?? []).join(', '));
-  const [ntp, setNtp] = useState((initial?.ntp ?? []).join(', '));
-  const [http, setHttp] = useState(initial?.proxy?.http ?? '');
-  const [https, setHttps] = useState(initial?.proxy?.https ?? '');
-  const [noProxy, setNoProxy] = useState(initial?.proxy?.noProxy ?? '');
+  const [network, setNetwork] = useState(networkValues(initial ?? {}));
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState(false);
 
@@ -55,8 +51,7 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
       setDhcpAddress(withoutPrefix(values.address));
       if (!initial) {
         setHostName(values.hostName ?? '');
-        setDns((values.dns ?? []).join(', '));
-        setNtp((values.ntp ?? []).join(', '));
+        setNetwork((current) => ({ ...current, ...networkValues({ dns: values.dns, ntp: values.ntp }) }));
       }
       if (!result) setErrors({ form: unreachable });
       setLoaded(true);
@@ -81,29 +76,19 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
       if (!isIpv4Cidr(address.trim())) found.address = 'Enter an IPv4 address in CIDR notation, for example 192.0.2.10/24.';
       if (!isIpv4(gateway.trim())) found.gateway = 'Enter the IPv4 address of the gateway.';
     }
-    const dnsServers = splitList(dns);
-    if (dnsServers.length === 0) found.dns = 'Enter at least one DNS server.';
-    else if (!dnsServers.every(isIpAddress)) found.dns = 'Enter IP addresses separated by commas.';
-    if (!splitList(ntp).every(isHostOrAddress)) found.ntp = 'Enter host names or IP addresses separated by commas.';
-    if ([http, https].some((url) => url.trim() !== '' && !isProxyUrl(url.trim()))) {
-      found.proxy = 'Enter proxy URLs that start with http:// or https://.';
-    }
+    Object.assign(found, networkProblems(network));
     return found;
   }
 
   function settings(): NodeSettings {
-    const proxy = {
-      ...(http.trim() && { http: http.trim() }),
-      ...(https.trim() && { https: https.trim() }),
-      ...(noProxy.trim() && { noProxy: noProxy.trim() }),
-    };
+    const proxy = proxyOf(network);
     return {
       hostName: hostName.trim().toLowerCase(),
       address: mode === 'static' ? address.trim() : '',
       gateway: mode === 'static' ? gateway.trim() : '',
-      dns: splitList(dns),
-      ntp: splitList(ntp),
-      ...(Object.keys(proxy).length > 0 && { proxy }),
+      dns: splitList(network.dns),
+      ntp: splitList(network.ntp),
+      ...(proxy && { proxy }),
     };
   }
 
@@ -150,18 +135,7 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
             </div>
           )}
         </fieldset>
-        <div className={PAIR}>
-          <Field label="DNS servers" name="dns" className={MONO} value={dns} onChange={(e) => setDns(e.target.value)} error={errors.dns} placeholder="comma-separated" />
-          <Field label="NTP servers" name="ntp" className={MONO} value={ntp} onChange={(e) => setNtp(e.target.value)} error={errors.ntp} placeholder="comma-separated; empty uses the default" />
-        </div>
-        <fieldset className="mt-7 border-t border-divider pt-5">
-          <legend className="float-left mb-3.5 w-full text-sm font-semibold">Proxy (optional)</legend>
-          <div className={`clear-both ${PAIR}`}>
-            <Field label="HTTP proxy" name="http" className={MONO} value={http} onChange={(e) => setHttp(e.target.value)} error={errors.proxy} placeholder="http://proxy.example.com:3128" />
-            <Field label="HTTPS proxy" name="https" className={MONO} value={https} onChange={(e) => setHttps(e.target.value)} />
-          </div>
-          <Field label="Hosts that bypass the proxy" name="noProxy" className={MONO} value={noProxy} onChange={(e) => setNoProxy(e.target.value)} placeholder="comma-separated" />
-        </fieldset>
+        <NetworkFields values={network} errors={errors} onChange={setNetwork} />
         {errors.form && <Alert tone="error">{errors.form}</Alert>}
       </Card>
     </form>

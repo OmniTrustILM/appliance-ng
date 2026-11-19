@@ -64,3 +64,9 @@ func isRegistry(component string) bool {
 func hasTag(name string) bool {
 	return strings.Contains(name[strings.LastIndex(name, "/")+1:], ":")
 }
+
+// RegistryHost is the registry the connector's image is pulled from, in lowercase.
+func (c Connector) RegistryHost() string {
+	host, _, _ := strings.Cut(normalize(c.Image), "/")
+	return strings.ToLower(host)
+}

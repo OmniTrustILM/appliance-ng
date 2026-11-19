@@ -40,6 +40,33 @@ describe('ProgressPage', () => {
     expect(await screen.findByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/api/v1/ca.pem');
   });
 
+  it('says before the switch that the console certificate is about to change', async () => {
+    stubApi({
+      'GET /api/v1/status': [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }],
+    });
+    render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
+    expect(await screen.findByText(/switches from its self-signed certificate/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /root certificate/i })).toBeInTheDocument();
+  });
+
+  it('explains a failed poll after the switch: reload and accept the new certificate', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let calls = 0;
+    const { mock } = stubApi({
+      'GET /api/v1/status': () => {
+        calls++;
+        return [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }];
+      },
+    });
+    render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
+    await screen.findByRole('link', { name: /root certificate/i });
+    expect(screen.queryByText(/Reload the page and accept/)).not.toBeInTheDocument();
+    mock.mockRejectedValue(new TypeError('certificate changed'));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(await screen.findByText(/Reload the page and accept the new certificate/)).toBeInTheDocument();
+    expect(calls).toBeGreaterThan(0);
+  });
+
   it('waits while there are no conditions yet', async () => {
     stubApi({ 'GET /api/v1/status': [200, base] });
     render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);

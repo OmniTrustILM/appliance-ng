@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -13,7 +14,9 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/mail"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
 const (
@@ -34,7 +37,8 @@ type AuditStore interface {
 	Tail(n int) ([]audit.Entry, error)
 }
 
-// Deps is what the Server needs. Now defaults to time.Now; everything else must be set.
+// Deps is what the Server needs. Now defaults to time.Now; without Talos, reboot and shutdown are unavailable;
+// everything else must be set.
 type Deps struct {
 	// Client reads the Appliance and the Secrets in SystemNamespace, possibly from a cache, and writes them.
 	Client client.Client
@@ -45,6 +49,8 @@ type Deps struct {
 	Release *release.Manifest
 	Log     *slog.Logger
 	Now     func() time.Time
+	// Talos returns the Talos API of the node, or an error while it cannot be reached.
+	Talos func(context.Context) (talos.Node, error)
 }
 
 // Server serves the manager's API under /api/v1/.
@@ -60,6 +66,8 @@ type Server struct {
 	hashSlots auth.HashSlots
 	// dummyHash is checked against for an unknown user, so that the answer takes as long as for a known one.
 	dummyHash string
+	// sendMail is mail.SendTest; tests replace it.
+	sendMail sendFunc
 }
 
 // NewServer returns the API server on deps.
@@ -74,6 +82,7 @@ func NewServer(deps Deps) *Server {
 		checkPassword: auth.CheckPassword,
 		hashSlots:     auth.NewHashSlots(maxPasswordChecks),
 		dummyHash:     newDummyHash(),
+		sendMail:      mail.SendTest,
 	}
 }
 
@@ -103,6 +112,21 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/session", change(AuditEntryActionSignOut))
 	mux.Handle("PUT /api/v1/wizard/platform", change(AuditEntryActionWizardPlatform))
 	mux.Handle("POST /api/v1/platform/admin-credential", change(AuditEntryActionAdminCredential))
+	mux.Handle("PUT /api/v1/node", change(AuditEntryActionNodeSettings))
+	mux.Handle("POST /api/v1/system/reboot", change(AuditEntryActionReboot))
+	mux.Handle("POST /api/v1/system/shutdown", change(AuditEntryActionShutdown))
+	mux.Handle(route(http.MethodPut, certificatePath), change(AuditEntryActionCertificateUpload))
+	mux.Handle(route(http.MethodPost, certificatePath+"/csr"), change(AuditEntryActionCertificateCsr))
+	mux.Handle(route(http.MethodPut, certificatePath+"/csr/signed"), change(AuditEntryActionCertificateSigned))
+	mux.Handle(route(http.MethodPut, certificatePath+"/builtin"), change(AuditEntryActionCertificateBuiltin))
+	mux.Handle(route(http.MethodPost, trustPath), change(AuditEntryActionTrustAdd))
+	mux.Handle(route(http.MethodDelete, trustPath+"/{sha256}"), change(AuditEntryActionTrustRemove))
+	mux.Handle(route(http.MethodPut, registriesPath+"/{host}"), change(AuditEntryActionRegistrySet))
+	mux.Handle(route(http.MethodDelete, registriesPath+"/{host}"), change(AuditEntryActionRegistryRemove))
+	mux.Handle(route(http.MethodPut, platformPath), change(AuditEntryActionPlatformSettings))
+	mux.Handle(route(http.MethodPut, mailPath), change(AuditEntryActionMailSettings))
+	mux.Handle(route(http.MethodDelete, mailPath), change(AuditEntryActionMailRemove))
+	mux.Handle(route(http.MethodPost, mailPath+"/test"), change(AuditEntryActionMailTest))
 	mux.Handle("/api/", protected)
 	return withRequest(mux)
 }
@@ -125,13 +149,18 @@ type request struct {
 
 type requestKey struct{}
 
+// route is the mux pattern of method on path.
+func route(method, path string) string {
+	return method + " " + path
+}
+
 // withRequest keeps API answers out of caches and from being read as another content type, caps the request body
 // and puts the request's details in its context.
 func withRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r.URL.Path))
 		req := &request{peer: r.RemoteAddr}
 		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 			req.peer = host
@@ -141,6 +170,17 @@ func withRequest(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestKey{}, req)))
 	})
+}
+
+// bodyLimit is the largest request body accepted for path: certificate uploads carry chains, and trust uploads CA
+// bundles.
+func bodyLimit(path string) int64 {
+	for _, prefix := range []string{certificatePath, trustPath} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return maxUploadBody
+		}
+	}
+	return maxBody
 }
 
 func requestFrom(ctx context.Context) *request {

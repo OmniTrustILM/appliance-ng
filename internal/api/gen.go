@@ -12,24 +12,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for ApplianceSettingsTlsSource.
 const (
-	Builtin ApplianceSettingsTlsSource = "builtin"
-	Secret  ApplianceSettingsTlsSource = "secret"
+	ApplianceSettingsTlsSourceBuiltin ApplianceSettingsTlsSource = "builtin"
+	ApplianceSettingsTlsSourceSecret  ApplianceSettingsTlsSource = "secret"
 )
 
 // Valid indicates whether the value is a known member of the ApplianceSettingsTlsSource enum.
 func (e ApplianceSettingsTlsSource) Valid() bool {
 	switch e {
-	case Builtin:
+	case ApplianceSettingsTlsSourceBuiltin:
 		return true
-	case Secret:
+	case ApplianceSettingsTlsSourceSecret:
 		return true
 	default:
 		return false
@@ -38,10 +40,25 @@ func (e ApplianceSettingsTlsSource) Valid() bool {
 
 // Defines values for AuditEntryAction.
 const (
-	AuditEntryActionAdminCredential AuditEntryAction = "admin-credential"
-	AuditEntryActionSignIn          AuditEntryAction = "sign-in"
-	AuditEntryActionSignOut         AuditEntryAction = "sign-out"
-	AuditEntryActionWizardPlatform  AuditEntryAction = "wizard-platform"
+	AuditEntryActionAdminCredential    AuditEntryAction = "admin-credential"
+	AuditEntryActionCertificateBuiltin AuditEntryAction = "certificate-builtin"
+	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
+	AuditEntryActionCertificateSigned  AuditEntryAction = "certificate-signed"
+	AuditEntryActionCertificateUpload  AuditEntryAction = "certificate-upload"
+	AuditEntryActionMailRemove         AuditEntryAction = "mail-remove"
+	AuditEntryActionMailSettings       AuditEntryAction = "mail-settings"
+	AuditEntryActionMailTest           AuditEntryAction = "mail-test"
+	AuditEntryActionNodeSettings       AuditEntryAction = "node-settings"
+	AuditEntryActionPlatformSettings   AuditEntryAction = "platform-settings"
+	AuditEntryActionReboot             AuditEntryAction = "reboot"
+	AuditEntryActionRegistryRemove     AuditEntryAction = "registry-remove"
+	AuditEntryActionRegistrySet        AuditEntryAction = "registry-set"
+	AuditEntryActionShutdown           AuditEntryAction = "shutdown"
+	AuditEntryActionSignIn             AuditEntryAction = "sign-in"
+	AuditEntryActionSignOut            AuditEntryAction = "sign-out"
+	AuditEntryActionTrustAdd           AuditEntryAction = "trust-add"
+	AuditEntryActionTrustRemove        AuditEntryAction = "trust-remove"
+	AuditEntryActionWizardPlatform     AuditEntryAction = "wizard-platform"
 )
 
 // Valid indicates whether the value is a known member of the AuditEntryAction enum.
@@ -49,9 +66,39 @@ func (e AuditEntryAction) Valid() bool {
 	switch e {
 	case AuditEntryActionAdminCredential:
 		return true
+	case AuditEntryActionCertificateBuiltin:
+		return true
+	case AuditEntryActionCertificateCsr:
+		return true
+	case AuditEntryActionCertificateSigned:
+		return true
+	case AuditEntryActionCertificateUpload:
+		return true
+	case AuditEntryActionMailRemove:
+		return true
+	case AuditEntryActionMailSettings:
+		return true
+	case AuditEntryActionMailTest:
+		return true
+	case AuditEntryActionNodeSettings:
+		return true
+	case AuditEntryActionPlatformSettings:
+		return true
+	case AuditEntryActionReboot:
+		return true
+	case AuditEntryActionRegistryRemove:
+		return true
+	case AuditEntryActionRegistrySet:
+		return true
+	case AuditEntryActionShutdown:
+		return true
 	case AuditEntryActionSignIn:
 		return true
 	case AuditEntryActionSignOut:
+		return true
+	case AuditEntryActionTrustAdd:
+		return true
+	case AuditEntryActionTrustRemove:
 		return true
 	case AuditEntryActionWizardPlatform:
 		return true
@@ -75,6 +122,24 @@ func (e AuditEntryResult) Valid() bool {
 	case Failure:
 		return true
 	case Success:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CertificateInfoSource.
+const (
+	CertificateInfoSourceBuiltin CertificateInfoSource = "builtin"
+	CertificateInfoSourceSecret  CertificateInfoSource = "secret"
+)
+
+// Valid indicates whether the value is a known member of the CertificateInfoSource enum.
+func (e CertificateInfoSource) Valid() bool {
+	switch e {
+	case CertificateInfoSourceBuiltin:
+		return true
+	case CertificateInfoSourceSecret:
 		return true
 	default:
 		return false
@@ -117,6 +182,30 @@ func (e MailSecurity) Valid() bool {
 	case Starttls:
 		return true
 	case Tls:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MailTestFailureStage.
+const (
+	StageAuth    MailTestFailureStage = "auth"
+	StageConnect MailTestFailureStage = "connect"
+	StageSend    MailTestFailureStage = "send"
+	StageTLS     MailTestFailureStage = "tls"
+)
+
+// Valid indicates whether the value is a known member of the MailTestFailureStage enum.
+func (e MailTestFailureStage) Valid() bool {
+	switch e {
+	case StageAuth:
+		return true
+	case StageConnect:
+		return true
+	case StageSend:
+		return true
+	case StageTLS:
 		return true
 	default:
 		return false
@@ -232,6 +321,43 @@ type CatalogueItem struct {
 	Title   string `json:"title"`
 }
 
+// CertificateDetails The certificate in use; absent until the built-in certificate is issued.
+type CertificateDetails struct {
+	DnsNames    []string  `json:"dnsNames"`
+	IpAddresses []string  `json:"ipAddresses"`
+	Issuer      string    `json:"issuer"`
+	NotAfter    time.Time `json:"notAfter"`
+	NotBefore   time.Time `json:"notBefore"`
+	Subject     string    `json:"subject"`
+}
+
+// CertificateInfo defines model for CertificateInfo.
+type CertificateInfo struct {
+	// Certificate The certificate in use; absent until the built-in certificate is issued.
+	Certificate *CertificateDetails `json:"certificate,omitempty"`
+
+	// CsrPending A signing request waits for its certificate.
+	CsrPending bool `json:"csrPending"`
+
+	// Source `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.
+	Source CertificateInfoSource `json:"source"`
+}
+
+// CertificateInfoSource `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.
+type CertificateInfoSource string
+
+// CertificateUpload defines model for CertificateUpload.
+type CertificateUpload struct {
+	// Certificate The certificate in PEM, optionally followed by its chain.
+	Certificate openapi_types.File `json:"certificate"`
+
+	// Chain The intermediate and root certificates in PEM.
+	Chain *openapi_types.File `json:"chain,omitempty"`
+
+	// Key The certificate's private key in PEM, unencrypted.
+	Key openapi_types.File `json:"key"`
+}
+
 // Condition defines model for Condition.
 type Condition struct {
 	LastTransitionTime *time.Time      `json:"lastTransitionTime,omitempty"`
@@ -243,6 +369,12 @@ type Condition struct {
 
 // ConditionStatus defines model for Condition.Status.
 type ConditionStatus string
+
+// Confirmation defines model for Confirmation.
+type Confirmation struct {
+	// Confirm Must be true.
+	Confirm bool `json:"confirm"`
+}
 
 // CsrfToken defines model for CsrfToken.
 type CsrfToken struct {
@@ -295,11 +427,85 @@ type MailSettings struct {
 	Username    *string      `json:"username,omitempty"`
 }
 
+// MailState defines model for MailState.
+type MailState struct {
+	Mail *MailSettings `json:"mail,omitempty"`
+}
+
+// MailTest defines model for MailTest.
+type MailTest struct {
+	// To The address the test mail is sent to.
+	To string `json:"to"`
+}
+
+// MailTestFailure defines model for MailTestFailure.
+type MailTestFailure struct {
+	// Code A machine-readable error code.
+	Code string `json:"code"`
+
+	// Field The request field that failed validation.
+	Field   *string `json:"field,omitempty"`
+	Message string  `json:"message"`
+
+	// Stage The stage that failed.
+	Stage MailTestFailureStage `json:"stage"`
+}
+
+// MailTestFailureStage The stage that failed.
+type MailTestFailureStage string
+
+// NodeUpdate defines model for NodeUpdate.
+type NodeUpdate struct {
+	// Address Not accepted; the node address is fixed at setup. A request with it is answered with 400.
+	Address *string  `json:"address,omitempty"`
+	Dns     []string `json:"dns"`
+
+	// Gateway The default gateway of the static address; empty with DHCP.
+	Gateway *string `json:"gateway,omitempty"`
+
+	// HostName Optional; the node host name is fixed at setup. A value other than the current host name is answered with 400.
+	HostName *string  `json:"hostName,omitempty"`
+	Ntp      []string `json:"ntp"`
+	Proxy    *Proxy   `json:"proxy,omitempty"`
+}
+
+// PlatformComponent defines model for PlatformComponent.
+type PlatformComponent struct {
+	Chosen bool   `json:"chosen"`
+	Name   string `json:"name"`
+
+	// NeedsCredentials A private component whose registry has no credentials yet.
+	NeedsCredentials bool `json:"needsCredentials"`
+
+	// NeedsMail A component that sends mail while no mail server is set.
+	NeedsMail bool `json:"needsMail"`
+
+	// Private Whether the component's image comes from a registry that needs credentials.
+	Private bool   `json:"private"`
+	Title   string `json:"title"`
+}
+
 // PlatformSettings defines model for PlatformSettings.
 type PlatformSettings struct {
 	Components []string `json:"components"`
 	HostName   string   `json:"hostName"`
 	Mail       *Mail    `json:"mail,omitempty"`
+}
+
+// PlatformState defines model for PlatformState.
+type PlatformState struct {
+	Components []PlatformComponent `json:"components"`
+	HostName   string              `json:"hostName"`
+	IlmVersion string              `json:"ilmVersion"`
+}
+
+// PlatformUpdate defines model for PlatformUpdate.
+type PlatformUpdate struct {
+	Components []string `json:"components"`
+	HostName   string   `json:"hostName"`
+
+	// IlmVersion Optional; must be the installed version, which cannot be changed.
+	IlmVersion *string `json:"ilmVersion,omitempty"`
 }
 
 // Proxy defines model for Proxy.
@@ -318,6 +524,27 @@ type Proxy struct {
 type Registry struct {
 	CredentialsSet bool   `json:"credentialsSet"`
 	Host           string `json:"host"`
+}
+
+// RegistryCredentials defines model for RegistryCredentials.
+type RegistryCredentials struct {
+	Host        string `json:"host"`
+	PasswordSet bool   `json:"passwordSet"`
+
+	// Username The user name of the credentials; empty for a registry without credentials.
+	Username string `json:"username"`
+}
+
+// RegistryCredentialsUpdate defines model for RegistryCredentialsUpdate.
+type RegistryCredentialsUpdate struct {
+	// Password Required unless the registry has a password for the same user name, which is then kept.
+	Password *string `json:"password,omitempty"`
+	Username string  `json:"username"`
+}
+
+// RegistryList defines model for RegistryList.
+type RegistryList struct {
+	Items []RegistryCredentials `json:"items"`
 }
 
 // Session defines model for Session.
@@ -346,12 +573,28 @@ type SignInError struct {
 	ServerTime time.Time `json:"serverTime"`
 }
 
+// SignedCertificateUpload defines model for SignedCertificateUpload.
+type SignedCertificateUpload struct {
+	// Certificate The certificate in PEM, optionally followed by its chain.
+	Certificate openapi_types.File `json:"certificate"`
+
+	// Chain The intermediate and root certificates in PEM.
+	Chain *openapi_types.File `json:"chain,omitempty"`
+}
+
 // Status defines model for Status.
 type Status struct {
 	// AddonStep The add-on being installed while AddonsReady is not true yet.
-	AddonStep      *string     `json:"addonStep,omitempty"`
-	Conditions     []Condition `json:"conditions"`
-	NodeAddress    *string     `json:"nodeAddress,omitempty"`
+	AddonStep *string `json:"addonStep,omitempty"`
+
+	// Certificate The certificate the console and ILM serve; absent while none is issued or installed.
+	Certificate *StatusCertificate `json:"certificate,omitempty"`
+	Conditions  []Condition        `json:"conditions"`
+
+	// NodeAddress The address the node is reached at.
+	NodeAddress *string `json:"nodeAddress,omitempty"`
+
+	// RebootRequired A change takes effect only after the node restarts.
 	RebootRequired bool        `json:"rebootRequired"`
 	Setup          StatusSetup `json:"setup"`
 	Versions       Versions    `json:"versions"`
@@ -359,6 +602,35 @@ type Status struct {
 
 // StatusSetup defines model for Status.Setup.
 type StatusSetup string
+
+// StatusCertificate The certificate the console and ILM serve; absent while none is issued or installed.
+type StatusCertificate struct {
+	NotAfter time.Time `json:"notAfter"`
+}
+
+// TrustUpload defines model for TrustUpload.
+type TrustUpload struct {
+	// Pem One or more CA certificates in PEM.
+	Pem string `json:"pem"`
+}
+
+// TrustedCertificate defines model for TrustedCertificate.
+type TrustedCertificate struct {
+	Issuer string `json:"issuer"`
+
+	// New In a preview, the upload adds the certificate.
+	New      *bool     `json:"new,omitempty"`
+	NotAfter time.Time `json:"notAfter"`
+
+	// Sha256 The SHA-256 fingerprint of the certificate's DER in lowercase hex, which identifies it.
+	Sha256  string `json:"sha256"`
+	Subject string `json:"subject"`
+}
+
+// TrustedCertificateList defines model for TrustedCertificateList.
+type TrustedCertificateList struct {
+	Items []TrustedCertificate `json:"items"`
+}
 
 // Versions defines model for Versions.
 type Versions struct {
@@ -384,6 +656,9 @@ type Gone = Error
 // NotFound defines model for NotFound.
 type NotFound = Error
 
+// ServiceUnavailable defines model for ServiceUnavailable.
+type ServiceUnavailable = Error
+
 // SignInFailed defines model for SignInFailed.
 type SignInFailed = SignInError
 
@@ -408,11 +683,44 @@ type GetStatusParams struct {
 // GetStatusParamsXBackgroundRefresh defines parameters for GetStatus.
 type GetStatusParamsXBackgroundRefresh string
 
+// PutCertificateMultipartRequestBody defines body for PutCertificate for multipart/form-data ContentType.
+type PutCertificateMultipartRequestBody = CertificateUpload
+
+// PutCertificateCsrSignedMultipartRequestBody defines body for PutCertificateCsrSigned for multipart/form-data ContentType.
+type PutCertificateCsrSignedMultipartRequestBody = SignedCertificateUpload
+
+// PutMailJSONRequestBody defines body for PutMail for application/json ContentType.
+type PutMailJSONRequestBody = Mail
+
+// PostMailTestJSONRequestBody defines body for PostMailTest for application/json ContentType.
+type PostMailTestJSONRequestBody = MailTest
+
+// PutNodeJSONRequestBody defines body for PutNode for application/json ContentType.
+type PutNodeJSONRequestBody = NodeUpdate
+
+// PutPlatformJSONRequestBody defines body for PutPlatform for application/json ContentType.
+type PutPlatformJSONRequestBody = PlatformUpdate
+
 // PostPlatformAdminCredentialJSONRequestBody defines body for PostPlatformAdminCredential for application/json ContentType.
 type PostPlatformAdminCredentialJSONRequestBody = AdminCredentialRequest
 
+// PutRegistryJSONRequestBody defines body for PutRegistry for application/json ContentType.
+type PutRegistryJSONRequestBody = RegistryCredentialsUpdate
+
 // PostSessionJSONRequestBody defines body for PostSession for application/json ContentType.
 type PostSessionJSONRequestBody = SignIn
+
+// PostSystemRebootJSONRequestBody defines body for PostSystemReboot for application/json ContentType.
+type PostSystemRebootJSONRequestBody = Confirmation
+
+// PostSystemShutdownJSONRequestBody defines body for PostSystemShutdown for application/json ContentType.
+type PostSystemShutdownJSONRequestBody = Confirmation
+
+// PostTrustJSONRequestBody defines body for PostTrust for application/json ContentType.
+type PostTrustJSONRequestBody = TrustUpload
+
+// PostTrustPreviewJSONRequestBody defines body for PostTrustPreview for application/json ContentType.
+type PostTrustPreviewJSONRequestBody = TrustUpload
 
 // PutWizardPlatformJSONRequestBody defines body for PutWizardPlatform for application/json ContentType.
 type PutWizardPlatformJSONRequestBody = PlatformSettings
@@ -431,9 +739,57 @@ type ServerInterface interface {
 	// GetCatalogue The platform components that can be installed
 	// (GET /api/v1/catalogue)
 	GetCatalogue(w http.ResponseWriter, r *http.Request)
+	// GetCertificate The TLS certificate the appliance serves
+	// (GET /api/v1/certificate)
+	GetCertificate(w http.ResponseWriter, r *http.Request)
+	// PutCertificate Upload a certificate and its private key
+	// (PUT /api/v1/certificate)
+	PutCertificate(w http.ResponseWriter, r *http.Request)
+	// PutCertificateBuiltin Go back to the built-in certificate
+	// (PUT /api/v1/certificate/builtin)
+	PutCertificateBuiltin(w http.ResponseWriter, r *http.Request)
+	// PostCertificateCsr Create a certificate signing request
+	// (POST /api/v1/certificate/csr)
+	PostCertificateCsr(w http.ResponseWriter, r *http.Request)
+	// PutCertificateCsrSigned Upload the certificate issued for the pending signing request
+	// (PUT /api/v1/certificate/csr/signed)
+	PutCertificateCsrSigned(w http.ResponseWriter, r *http.Request)
+	// DeleteMail Remove the mail server and its credentials
+	// (DELETE /api/v1/mail)
+	DeleteMail(w http.ResponseWriter, r *http.Request)
+	// GetMail The mail server
+	// (GET /api/v1/mail)
+	GetMail(w http.ResponseWriter, r *http.Request)
+	// PutMail Set the mail server
+	// (PUT /api/v1/mail)
+	PutMail(w http.ResponseWriter, r *http.Request)
+	// PostMailTest Send a test mail through the mail server
+	// (POST /api/v1/mail/test)
+	PostMailTest(w http.ResponseWriter, r *http.Request)
+	// PutNode Change the gateway, DNS and NTP servers and proxy of the node
+	// (PUT /api/v1/node)
+	PutNode(w http.ResponseWriter, r *http.Request)
+	// GetPlatform The ILM platform and the components that can be installed
+	// (GET /api/v1/platform)
+	GetPlatform(w http.ResponseWriter, r *http.Request)
+	// PutPlatform Change the platform host name and its components
+	// (PUT /api/v1/platform)
+	PutPlatform(w http.ResponseWriter, r *http.Request)
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
 	// (POST /api/v1/platform/admin-credential)
 	PostPlatformAdminCredential(w http.ResponseWriter, r *http.Request)
+	// GetRegistries The container registries
+	// (GET /api/v1/registries)
+	GetRegistries(w http.ResponseWriter, r *http.Request)
+	// DeleteRegistry Remove a registry and its credentials
+	// (DELETE /api/v1/registries/{host})
+	DeleteRegistry(w http.ResponseWriter, r *http.Request, host string)
+	// GetRegistry A container registry
+	// (GET /api/v1/registries/{host})
+	GetRegistry(w http.ResponseWriter, r *http.Request, host string)
+	// PutRegistry Add a registry or change its credentials
+	// (PUT /api/v1/registries/{host})
+	PutRegistry(w http.ResponseWriter, r *http.Request, host string)
 	// DeleteSession Sign out
 	// (DELETE /api/v1/session)
 	DeleteSession(w http.ResponseWriter, r *http.Request)
@@ -446,6 +802,24 @@ type ServerInterface interface {
 	// GetStatus The state of the appliance
 	// (GET /api/v1/status)
 	GetStatus(w http.ResponseWriter, r *http.Request, params GetStatusParams)
+	// PostSystemReboot Reboot the appliance
+	// (POST /api/v1/system/reboot)
+	PostSystemReboot(w http.ResponseWriter, r *http.Request)
+	// PostSystemShutdown Shut the appliance down
+	// (POST /api/v1/system/shutdown)
+	PostSystemShutdown(w http.ResponseWriter, r *http.Request)
+	// GetTrust The additional trusted CA certificates
+	// (GET /api/v1/trust)
+	GetTrust(w http.ResponseWriter, r *http.Request)
+	// PostTrust Add trusted CA certificates
+	// (POST /api/v1/trust)
+	PostTrust(w http.ResponseWriter, r *http.Request)
+	// PostTrustPreview Preview adding trusted CA certificates
+	// (POST /api/v1/trust/preview)
+	PostTrustPreview(w http.ResponseWriter, r *http.Request)
+	// DeleteTrust Stop trusting a CA certificate
+	// (DELETE /api/v1/trust/{sha256})
+	DeleteTrust(w http.ResponseWriter, r *http.Request, sha256 string)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
 	// (PUT /api/v1/wizard/platform)
 	PutWizardPlatform(w http.ResponseWriter, r *http.Request)
@@ -535,11 +909,271 @@ func (siw *ServerInterfaceWrapper) GetCatalogue(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetCertificate operation middleware
+func (siw *ServerInterfaceWrapper) GetCertificate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCertificate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutCertificate operation middleware
+func (siw *ServerInterfaceWrapper) PutCertificate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutCertificate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutCertificateBuiltin operation middleware
+func (siw *ServerInterfaceWrapper) PutCertificateBuiltin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutCertificateBuiltin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostCertificateCsr operation middleware
+func (siw *ServerInterfaceWrapper) PostCertificateCsr(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostCertificateCsr(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutCertificateCsrSigned operation middleware
+func (siw *ServerInterfaceWrapper) PutCertificateCsrSigned(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutCertificateCsrSigned(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteMail operation middleware
+func (siw *ServerInterfaceWrapper) DeleteMail(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteMail(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMail operation middleware
+func (siw *ServerInterfaceWrapper) GetMail(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMail(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutMail operation middleware
+func (siw *ServerInterfaceWrapper) PutMail(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutMail(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostMailTest operation middleware
+func (siw *ServerInterfaceWrapper) PostMailTest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostMailTest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutNode operation middleware
+func (siw *ServerInterfaceWrapper) PutNode(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutNode(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlatform operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatform(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatform(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPlatform operation middleware
+func (siw *ServerInterfaceWrapper) PutPlatform(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPlatform(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostPlatformAdminCredential operation middleware
 func (siw *ServerInterfaceWrapper) PostPlatformAdminCredential(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostPlatformAdminCredential(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRegistries operation middleware
+func (siw *ServerInterfaceWrapper) GetRegistries(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRegistries(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRegistry operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRegistry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "host" -------------
+	var host string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRegistry(w, r, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRegistry operation middleware
+func (siw *ServerInterfaceWrapper) GetRegistry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "host" -------------
+	var host string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRegistry(w, r, host)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutRegistry operation middleware
+func (siw *ServerInterfaceWrapper) PutRegistry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "host" -------------
+	var host string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "host", r.PathValue("host"), &host, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "host", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutRegistry(w, r, host)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -623,6 +1257,102 @@ func (siw *ServerInterfaceWrapper) GetStatus(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetStatus(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSystemReboot operation middleware
+func (siw *ServerInterfaceWrapper) PostSystemReboot(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSystemReboot(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSystemShutdown operation middleware
+func (siw *ServerInterfaceWrapper) PostSystemShutdown(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSystemShutdown(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetTrust operation middleware
+func (siw *ServerInterfaceWrapper) GetTrust(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTrust(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostTrust operation middleware
+func (siw *ServerInterfaceWrapper) PostTrust(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTrust(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostTrustPreview operation middleware
+func (siw *ServerInterfaceWrapper) PostTrustPreview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostTrustPreview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteTrust operation middleware
+func (siw *ServerInterfaceWrapper) DeleteTrust(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "sha256" -------------
+	var sha256 string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "sha256", r.PathValue("sha256"), &sha256, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sha256", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteTrust(w, r, sha256)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -775,7 +1505,29 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/catalogue", wrapper.GetCatalogue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.GetAudit)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/ca.pem", wrapper.GetCaPem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/certificate", wrapper.GetCertificate)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/certificate", wrapper.PutCertificate)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/certificate/csr", wrapper.PostCertificateCsr)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/certificate/csr/signed", wrapper.PutCertificateCsrSigned)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/certificate/builtin", wrapper.PutCertificateBuiltin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/platform/admin-credential", wrapper.PostPlatformAdminCredential)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/node", wrapper.PutNode)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reboot", wrapper.PostSystemReboot)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/shutdown", wrapper.PostSystemShutdown)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/trust", wrapper.GetTrust)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/trust", wrapper.PostTrust)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/trust/preview", wrapper.PostTrustPreview)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/trust/{sha256}", wrapper.DeleteTrust)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/registries", wrapper.GetRegistries)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/registries/{host}", wrapper.DeleteRegistry)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/registries/{host}", wrapper.GetRegistry)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/registries/{host}", wrapper.PutRegistry)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platform", wrapper.GetPlatform)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/platform", wrapper.PutPlatform)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/mail", wrapper.DeleteMail)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/mail", wrapper.GetMail)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/mail", wrapper.PutMail)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/mail/test", wrapper.PostMailTest)
 
 	return m
 }
@@ -789,6 +1541,8 @@ type ForbiddenJSONResponse Error
 type GoneJSONResponse Error
 
 type NotFoundJSONResponse Error
+
+type ServiceUnavailableJSONResponse Error
 
 type SignInFailedJSONResponse SignInError
 
@@ -965,6 +1719,776 @@ func (response GetCatalogue401JSONResponse) VisitGetCatalogueResponse(w http.Res
 	return err
 }
 
+type GetCertificateRequestObject struct {
+}
+
+type GetCertificateResponseObject interface {
+	VisitGetCertificateResponse(w http.ResponseWriter) error
+}
+
+type GetCertificate200JSONResponse CertificateInfo
+
+func (response GetCertificate200JSONResponse) VisitGetCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCertificate401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCertificate401JSONResponse) VisitGetCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PutCertificateResponseObject interface {
+	VisitPutCertificateResponse(w http.ResponseWriter) error
+}
+
+type PutCertificate202Response struct {
+}
+
+func (response PutCertificate202Response) VisitPutCertificateResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutCertificate400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutCertificate400JSONResponse) VisitPutCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificate401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutCertificate401JSONResponse) VisitPutCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificate403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutCertificate403JSONResponse) VisitPutCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificate409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutCertificate409JSONResponse) VisitPutCertificateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateBuiltinRequestObject struct {
+}
+
+type PutCertificateBuiltinResponseObject interface {
+	VisitPutCertificateBuiltinResponse(w http.ResponseWriter) error
+}
+
+type PutCertificateBuiltin202Response struct {
+}
+
+func (response PutCertificateBuiltin202Response) VisitPutCertificateBuiltinResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutCertificateBuiltin401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutCertificateBuiltin401JSONResponse) VisitPutCertificateBuiltinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateBuiltin403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutCertificateBuiltin403JSONResponse) VisitPutCertificateBuiltinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateBuiltin409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutCertificateBuiltin409JSONResponse) VisitPutCertificateBuiltinResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostCertificateCsrRequestObject struct {
+}
+
+type PostCertificateCsrResponseObject interface {
+	VisitPostCertificateCsrResponse(w http.ResponseWriter) error
+}
+
+type PostCertificateCsr200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type PostCertificateCsr200ApplicationxPemFileResponse struct {
+	Body          io.Reader
+	Headers       PostCertificateCsr200ResponseHeaders
+	ContentLength int64
+}
+
+func (response PostCertificateCsr200ApplicationxPemFileResponse) VisitPostCertificateCsrResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type PostCertificateCsr401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostCertificateCsr401JSONResponse) VisitPostCertificateCsrResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostCertificateCsr403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostCertificateCsr403JSONResponse) VisitPostCertificateCsrResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostCertificateCsr409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostCertificateCsr409JSONResponse) VisitPostCertificateCsrResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateCsrSignedRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PutCertificateCsrSignedResponseObject interface {
+	VisitPutCertificateCsrSignedResponse(w http.ResponseWriter) error
+}
+
+type PutCertificateCsrSigned202Response struct {
+}
+
+func (response PutCertificateCsrSigned202Response) VisitPutCertificateCsrSignedResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutCertificateCsrSigned400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutCertificateCsrSigned400JSONResponse) VisitPutCertificateCsrSignedResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateCsrSigned401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutCertificateCsrSigned401JSONResponse) VisitPutCertificateCsrSignedResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateCsrSigned403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutCertificateCsrSigned403JSONResponse) VisitPutCertificateCsrSignedResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateCsrSigned409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutCertificateCsrSigned409JSONResponse) VisitPutCertificateCsrSignedResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMailRequestObject struct {
+}
+
+type DeleteMailResponseObject interface {
+	VisitDeleteMailResponse(w http.ResponseWriter) error
+}
+
+type DeleteMail202Response struct {
+}
+
+func (response DeleteMail202Response) VisitDeleteMailResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type DeleteMail401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteMail401JSONResponse) VisitDeleteMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMail403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response DeleteMail403JSONResponse) VisitDeleteMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteMail409JSONResponse struct{ ConflictJSONResponse }
+
+func (response DeleteMail409JSONResponse) VisitDeleteMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMailRequestObject struct {
+}
+
+type GetMailResponseObject interface {
+	VisitGetMailResponse(w http.ResponseWriter) error
+}
+
+type GetMail200JSONResponse MailState
+
+func (response GetMail200JSONResponse) VisitGetMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMail401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetMail401JSONResponse) VisitGetMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMail409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetMail409JSONResponse) VisitGetMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMailRequestObject struct {
+	Body *PutMailJSONRequestBody
+}
+
+type PutMailResponseObject interface {
+	VisitPutMailResponse(w http.ResponseWriter) error
+}
+
+type PutMail202Response struct {
+}
+
+func (response PutMail202Response) VisitPutMailResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutMail400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutMail400JSONResponse) VisitPutMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMail401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutMail401JSONResponse) VisitPutMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMail403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutMail403JSONResponse) VisitPutMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutMail409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutMail409JSONResponse) VisitPutMailResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostMailTestRequestObject struct {
+	Body *PostMailTestJSONRequestBody
+}
+
+type PostMailTestResponseObject interface {
+	VisitPostMailTestResponse(w http.ResponseWriter) error
+}
+
+type PostMailTest204Response struct {
+}
+
+func (response PostMailTest204Response) VisitPostMailTestResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostMailTest400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostMailTest400JSONResponse) VisitPostMailTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostMailTest401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostMailTest401JSONResponse) VisitPostMailTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostMailTest403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostMailTest403JSONResponse) VisitPostMailTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostMailTest409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostMailTest409JSONResponse) VisitPostMailTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostMailTest502JSONResponse MailTestFailure
+
+func (response PostMailTest502JSONResponse) VisitPostMailTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutNodeRequestObject struct {
+	Body *PutNodeJSONRequestBody
+}
+
+type PutNodeResponseObject interface {
+	VisitPutNodeResponse(w http.ResponseWriter) error
+}
+
+type PutNode202Response struct {
+}
+
+func (response PutNode202Response) VisitPutNodeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutNode400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutNode400JSONResponse) VisitPutNodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutNode401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutNode401JSONResponse) VisitPutNodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutNode403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutNode403JSONResponse) VisitPutNodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutNode409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutNode409JSONResponse) VisitPutNodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformRequestObject struct {
+}
+
+type GetPlatformResponseObject interface {
+	VisitGetPlatformResponse(w http.ResponseWriter) error
+}
+
+type GetPlatform200JSONResponse PlatformState
+
+func (response GetPlatform200JSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatform401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetPlatform401JSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatform409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetPlatform409JSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatformRequestObject struct {
+	Body *PutPlatformJSONRequestBody
+}
+
+type PutPlatformResponseObject interface {
+	VisitPutPlatformResponse(w http.ResponseWriter) error
+}
+
+type PutPlatform202Response struct {
+}
+
+func (response PutPlatform202Response) VisitPutPlatformResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutPlatform400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutPlatform400JSONResponse) VisitPutPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatform401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutPlatform401JSONResponse) VisitPutPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatform403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutPlatform403JSONResponse) VisitPutPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatform409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutPlatform409JSONResponse) VisitPutPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PostPlatformAdminCredentialRequestObject struct {
 	Body *PostPlatformAdminCredentialJSONRequestBody
 }
@@ -1067,6 +2591,264 @@ func (response PostPlatformAdminCredential410JSONResponse) VisitPostPlatformAdmi
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistriesRequestObject struct {
+}
+
+type GetRegistriesResponseObject interface {
+	VisitGetRegistriesResponse(w http.ResponseWriter) error
+}
+
+type GetRegistries200JSONResponse RegistryList
+
+func (response GetRegistries200JSONResponse) VisitGetRegistriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistries401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetRegistries401JSONResponse) VisitGetRegistriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistries409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetRegistries409JSONResponse) VisitGetRegistriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRegistryRequestObject struct {
+	Host string `json:"host"`
+}
+
+type DeleteRegistryResponseObject interface {
+	VisitDeleteRegistryResponse(w http.ResponseWriter) error
+}
+
+type DeleteRegistry202Response struct {
+}
+
+func (response DeleteRegistry202Response) VisitDeleteRegistryResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type DeleteRegistry401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteRegistry401JSONResponse) VisitDeleteRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRegistry403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response DeleteRegistry403JSONResponse) VisitDeleteRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRegistry404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteRegistry404JSONResponse) VisitDeleteRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteRegistry409JSONResponse struct{ ConflictJSONResponse }
+
+func (response DeleteRegistry409JSONResponse) VisitDeleteRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistryRequestObject struct {
+	Host string `json:"host"`
+}
+
+type GetRegistryResponseObject interface {
+	VisitGetRegistryResponse(w http.ResponseWriter) error
+}
+
+type GetRegistry200JSONResponse RegistryCredentials
+
+func (response GetRegistry200JSONResponse) VisitGetRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistry401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetRegistry401JSONResponse) VisitGetRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistry404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetRegistry404JSONResponse) VisitGetRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRegistry409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetRegistry409JSONResponse) VisitGetRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRegistryRequestObject struct {
+	Host string `json:"host"`
+	Body *PutRegistryJSONRequestBody
+}
+
+type PutRegistryResponseObject interface {
+	VisitPutRegistryResponse(w http.ResponseWriter) error
+}
+
+type PutRegistry202Response struct {
+}
+
+func (response PutRegistry202Response) VisitPutRegistryResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutRegistry400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutRegistry400JSONResponse) VisitPutRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRegistry401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutRegistry401JSONResponse) VisitPutRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRegistry403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutRegistry403JSONResponse) VisitPutRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRegistry409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutRegistry409JSONResponse) VisitPutRegistryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1253,6 +3035,421 @@ func (response GetStatus401JSONResponse) VisitGetStatusResponse(w http.ResponseW
 	return err
 }
 
+type PostSystemRebootRequestObject struct {
+	Body *PostSystemRebootJSONRequestBody
+}
+
+type PostSystemRebootResponseObject interface {
+	VisitPostSystemRebootResponse(w http.ResponseWriter) error
+}
+
+type PostSystemReboot202Response struct {
+}
+
+func (response PostSystemReboot202Response) VisitPostSystemRebootResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostSystemReboot400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostSystemReboot400JSONResponse) VisitPostSystemRebootResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemReboot401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostSystemReboot401JSONResponse) VisitPostSystemRebootResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemReboot403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostSystemReboot403JSONResponse) VisitPostSystemRebootResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemReboot503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response PostSystemReboot503JSONResponse) VisitPostSystemRebootResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemShutdownRequestObject struct {
+	Body *PostSystemShutdownJSONRequestBody
+}
+
+type PostSystemShutdownResponseObject interface {
+	VisitPostSystemShutdownResponse(w http.ResponseWriter) error
+}
+
+type PostSystemShutdown202Response struct {
+}
+
+func (response PostSystemShutdown202Response) VisitPostSystemShutdownResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostSystemShutdown400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostSystemShutdown400JSONResponse) VisitPostSystemShutdownResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemShutdown401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostSystemShutdown401JSONResponse) VisitPostSystemShutdownResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemShutdown403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostSystemShutdown403JSONResponse) VisitPostSystemShutdownResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostSystemShutdown503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response PostSystemShutdown503JSONResponse) VisitPostSystemShutdownResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTrustRequestObject struct {
+}
+
+type GetTrustResponseObject interface {
+	VisitGetTrustResponse(w http.ResponseWriter) error
+}
+
+type GetTrust200JSONResponse TrustedCertificateList
+
+func (response GetTrust200JSONResponse) VisitGetTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTrust401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetTrust401JSONResponse) VisitGetTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTrust409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetTrust409JSONResponse) VisitGetTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrustRequestObject struct {
+	Body *PostTrustJSONRequestBody
+}
+
+type PostTrustResponseObject interface {
+	VisitPostTrustResponse(w http.ResponseWriter) error
+}
+
+type PostTrust202Response struct {
+}
+
+func (response PostTrust202Response) VisitPostTrustResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostTrust400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostTrust400JSONResponse) VisitPostTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrust401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTrust401JSONResponse) VisitPostTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrust403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostTrust403JSONResponse) VisitPostTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrust409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostTrust409JSONResponse) VisitPostTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrustPreviewRequestObject struct {
+	Body *PostTrustPreviewJSONRequestBody
+}
+
+type PostTrustPreviewResponseObject interface {
+	VisitPostTrustPreviewResponse(w http.ResponseWriter) error
+}
+
+type PostTrustPreview200JSONResponse TrustedCertificateList
+
+func (response PostTrustPreview200JSONResponse) VisitPostTrustPreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrustPreview400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostTrustPreview400JSONResponse) VisitPostTrustPreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrustPreview401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostTrustPreview401JSONResponse) VisitPostTrustPreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrustPreview403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostTrustPreview403JSONResponse) VisitPostTrustPreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostTrustPreview409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostTrustPreview409JSONResponse) VisitPostTrustPreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTrustRequestObject struct {
+	Sha256 string `json:"sha256"`
+}
+
+type DeleteTrustResponseObject interface {
+	VisitDeleteTrustResponse(w http.ResponseWriter) error
+}
+
+type DeleteTrust202Response struct {
+}
+
+func (response DeleteTrust202Response) VisitDeleteTrustResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type DeleteTrust401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteTrust401JSONResponse) VisitDeleteTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTrust403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response DeleteTrust403JSONResponse) VisitDeleteTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTrust404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteTrust404JSONResponse) VisitDeleteTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteTrust409JSONResponse struct{ ConflictJSONResponse }
+
+func (response DeleteTrust409JSONResponse) VisitDeleteTrustResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutWizardPlatformRequestObject struct {
 	Body *PutWizardPlatformJSONRequestBody
 }
@@ -1339,9 +3536,57 @@ type StrictServerInterface interface {
 	// GetCatalogue The platform components that can be installed
 	// (GET /api/v1/catalogue)
 	GetCatalogue(ctx context.Context, request GetCatalogueRequestObject) (GetCatalogueResponseObject, error)
+	// GetCertificate The TLS certificate the appliance serves
+	// (GET /api/v1/certificate)
+	GetCertificate(ctx context.Context, request GetCertificateRequestObject) (GetCertificateResponseObject, error)
+	// PutCertificate Upload a certificate and its private key
+	// (PUT /api/v1/certificate)
+	PutCertificate(ctx context.Context, request PutCertificateRequestObject) (PutCertificateResponseObject, error)
+	// PutCertificateBuiltin Go back to the built-in certificate
+	// (PUT /api/v1/certificate/builtin)
+	PutCertificateBuiltin(ctx context.Context, request PutCertificateBuiltinRequestObject) (PutCertificateBuiltinResponseObject, error)
+	// PostCertificateCsr Create a certificate signing request
+	// (POST /api/v1/certificate/csr)
+	PostCertificateCsr(ctx context.Context, request PostCertificateCsrRequestObject) (PostCertificateCsrResponseObject, error)
+	// PutCertificateCsrSigned Upload the certificate issued for the pending signing request
+	// (PUT /api/v1/certificate/csr/signed)
+	PutCertificateCsrSigned(ctx context.Context, request PutCertificateCsrSignedRequestObject) (PutCertificateCsrSignedResponseObject, error)
+	// DeleteMail Remove the mail server and its credentials
+	// (DELETE /api/v1/mail)
+	DeleteMail(ctx context.Context, request DeleteMailRequestObject) (DeleteMailResponseObject, error)
+	// GetMail The mail server
+	// (GET /api/v1/mail)
+	GetMail(ctx context.Context, request GetMailRequestObject) (GetMailResponseObject, error)
+	// PutMail Set the mail server
+	// (PUT /api/v1/mail)
+	PutMail(ctx context.Context, request PutMailRequestObject) (PutMailResponseObject, error)
+	// PostMailTest Send a test mail through the mail server
+	// (POST /api/v1/mail/test)
+	PostMailTest(ctx context.Context, request PostMailTestRequestObject) (PostMailTestResponseObject, error)
+	// PutNode Change the gateway, DNS and NTP servers and proxy of the node
+	// (PUT /api/v1/node)
+	PutNode(ctx context.Context, request PutNodeRequestObject) (PutNodeResponseObject, error)
+	// GetPlatform The ILM platform and the components that can be installed
+	// (GET /api/v1/platform)
+	GetPlatform(ctx context.Context, request GetPlatformRequestObject) (GetPlatformResponseObject, error)
+	// PutPlatform Change the platform host name and its components
+	// (PUT /api/v1/platform)
+	PutPlatform(ctx context.Context, request PutPlatformRequestObject) (PutPlatformResponseObject, error)
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
 	// (POST /api/v1/platform/admin-credential)
 	PostPlatformAdminCredential(ctx context.Context, request PostPlatformAdminCredentialRequestObject) (PostPlatformAdminCredentialResponseObject, error)
+	// GetRegistries The container registries
+	// (GET /api/v1/registries)
+	GetRegistries(ctx context.Context, request GetRegistriesRequestObject) (GetRegistriesResponseObject, error)
+	// DeleteRegistry Remove a registry and its credentials
+	// (DELETE /api/v1/registries/{host})
+	DeleteRegistry(ctx context.Context, request DeleteRegistryRequestObject) (DeleteRegistryResponseObject, error)
+	// GetRegistry A container registry
+	// (GET /api/v1/registries/{host})
+	GetRegistry(ctx context.Context, request GetRegistryRequestObject) (GetRegistryResponseObject, error)
+	// PutRegistry Add a registry or change its credentials
+	// (PUT /api/v1/registries/{host})
+	PutRegistry(ctx context.Context, request PutRegistryRequestObject) (PutRegistryResponseObject, error)
 	// DeleteSession Sign out
 	// (DELETE /api/v1/session)
 	DeleteSession(ctx context.Context, request DeleteSessionRequestObject) (DeleteSessionResponseObject, error)
@@ -1354,6 +3599,24 @@ type StrictServerInterface interface {
 	// GetStatus The state of the appliance
 	// (GET /api/v1/status)
 	GetStatus(ctx context.Context, request GetStatusRequestObject) (GetStatusResponseObject, error)
+	// PostSystemReboot Reboot the appliance
+	// (POST /api/v1/system/reboot)
+	PostSystemReboot(ctx context.Context, request PostSystemRebootRequestObject) (PostSystemRebootResponseObject, error)
+	// PostSystemShutdown Shut the appliance down
+	// (POST /api/v1/system/shutdown)
+	PostSystemShutdown(ctx context.Context, request PostSystemShutdownRequestObject) (PostSystemShutdownResponseObject, error)
+	// GetTrust The additional trusted CA certificates
+	// (GET /api/v1/trust)
+	GetTrust(ctx context.Context, request GetTrustRequestObject) (GetTrustResponseObject, error)
+	// PostTrust Add trusted CA certificates
+	// (POST /api/v1/trust)
+	PostTrust(ctx context.Context, request PostTrustRequestObject) (PostTrustResponseObject, error)
+	// PostTrustPreview Preview adding trusted CA certificates
+	// (POST /api/v1/trust/preview)
+	PostTrustPreview(ctx context.Context, request PostTrustPreviewRequestObject) (PostTrustPreviewResponseObject, error)
+	// DeleteTrust Stop trusting a CA certificate
+	// (DELETE /api/v1/trust/{sha256})
+	DeleteTrust(ctx context.Context, request DeleteTrustRequestObject) (DeleteTrustResponseObject, error)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
 	// (PUT /api/v1/wizard/platform)
 	PutWizardPlatform(ctx context.Context, request PutWizardPlatformRequestObject) (PutWizardPlatformResponseObject, error)
@@ -1496,6 +3759,336 @@ func (sh *strictHandler) GetCatalogue(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetCertificate operation middleware
+func (sh *strictHandler) GetCertificate(w http.ResponseWriter, r *http.Request) {
+	var request GetCertificateRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCertificate(ctx, request.(GetCertificateRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCertificate")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCertificateResponseObject); ok {
+		if err := validResponse.VisitGetCertificateResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutCertificate operation middleware
+func (sh *strictHandler) PutCertificate(w http.ResponseWriter, r *http.Request) {
+	var request PutCertificateRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutCertificate(ctx, request.(PutCertificateRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutCertificate")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutCertificateResponseObject); ok {
+		if err := validResponse.VisitPutCertificateResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutCertificateBuiltin operation middleware
+func (sh *strictHandler) PutCertificateBuiltin(w http.ResponseWriter, r *http.Request) {
+	var request PutCertificateBuiltinRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutCertificateBuiltin(ctx, request.(PutCertificateBuiltinRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutCertificateBuiltin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutCertificateBuiltinResponseObject); ok {
+		if err := validResponse.VisitPutCertificateBuiltinResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostCertificateCsr operation middleware
+func (sh *strictHandler) PostCertificateCsr(w http.ResponseWriter, r *http.Request) {
+	var request PostCertificateCsrRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostCertificateCsr(ctx, request.(PostCertificateCsrRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostCertificateCsr")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostCertificateCsrResponseObject); ok {
+		if err := validResponse.VisitPostCertificateCsrResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutCertificateCsrSigned operation middleware
+func (sh *strictHandler) PutCertificateCsrSigned(w http.ResponseWriter, r *http.Request) {
+	var request PutCertificateCsrSignedRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutCertificateCsrSigned(ctx, request.(PutCertificateCsrSignedRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutCertificateCsrSigned")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutCertificateCsrSignedResponseObject); ok {
+		if err := validResponse.VisitPutCertificateCsrSignedResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteMail operation middleware
+func (sh *strictHandler) DeleteMail(w http.ResponseWriter, r *http.Request) {
+	var request DeleteMailRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteMail(ctx, request.(DeleteMailRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteMail")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteMailResponseObject); ok {
+		if err := validResponse.VisitDeleteMailResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMail operation middleware
+func (sh *strictHandler) GetMail(w http.ResponseWriter, r *http.Request) {
+	var request GetMailRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMail(ctx, request.(GetMailRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMail")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMailResponseObject); ok {
+		if err := validResponse.VisitGetMailResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutMail operation middleware
+func (sh *strictHandler) PutMail(w http.ResponseWriter, r *http.Request) {
+	var request PutMailRequestObject
+
+	var body PutMailJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutMail(ctx, request.(PutMailRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutMail")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutMailResponseObject); ok {
+		if err := validResponse.VisitPutMailResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostMailTest operation middleware
+func (sh *strictHandler) PostMailTest(w http.ResponseWriter, r *http.Request) {
+	var request PostMailTestRequestObject
+
+	var body PostMailTestJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostMailTest(ctx, request.(PostMailTestRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostMailTest")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostMailTestResponseObject); ok {
+		if err := validResponse.VisitPostMailTestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutNode operation middleware
+func (sh *strictHandler) PutNode(w http.ResponseWriter, r *http.Request) {
+	var request PutNodeRequestObject
+
+	var body PutNodeJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutNode(ctx, request.(PutNodeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutNode")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutNodeResponseObject); ok {
+		if err := validResponse.VisitPutNodeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatform operation middleware
+func (sh *strictHandler) GetPlatform(w http.ResponseWriter, r *http.Request) {
+	var request GetPlatformRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatform(ctx, request.(GetPlatformRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatform")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformResponseObject); ok {
+		if err := validResponse.VisitGetPlatformResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutPlatform operation middleware
+func (sh *strictHandler) PutPlatform(w http.ResponseWriter, r *http.Request) {
+	var request PutPlatformRequestObject
+
+	var body PutPlatformJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutPlatform(ctx, request.(PutPlatformRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutPlatform")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutPlatformResponseObject); ok {
+		if err := validResponse.VisitPutPlatformResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PostPlatformAdminCredential operation middleware
 func (sh *strictHandler) PostPlatformAdminCredential(w http.ResponseWriter, r *http.Request) {
 	var request PostPlatformAdminCredentialRequestObject
@@ -1520,6 +4113,115 @@ func (sh *strictHandler) PostPlatformAdminCredential(w http.ResponseWriter, r *h
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PostPlatformAdminCredentialResponseObject); ok {
 		if err := validResponse.VisitPostPlatformAdminCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRegistries operation middleware
+func (sh *strictHandler) GetRegistries(w http.ResponseWriter, r *http.Request) {
+	var request GetRegistriesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRegistries(ctx, request.(GetRegistriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRegistries")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRegistriesResponseObject); ok {
+		if err := validResponse.VisitGetRegistriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteRegistry operation middleware
+func (sh *strictHandler) DeleteRegistry(w http.ResponseWriter, r *http.Request, host string) {
+	var request DeleteRegistryRequestObject
+
+	request.Host = host
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteRegistry(ctx, request.(DeleteRegistryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteRegistry")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteRegistryResponseObject); ok {
+		if err := validResponse.VisitDeleteRegistryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRegistry operation middleware
+func (sh *strictHandler) GetRegistry(w http.ResponseWriter, r *http.Request, host string) {
+	var request GetRegistryRequestObject
+
+	request.Host = host
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRegistry(ctx, request.(GetRegistryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRegistry")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRegistryResponseObject); ok {
+		if err := validResponse.VisitGetRegistryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutRegistry operation middleware
+func (sh *strictHandler) PutRegistry(w http.ResponseWriter, r *http.Request, host string) {
+	var request PutRegistryRequestObject
+
+	request.Host = host
+
+	var body PutRegistryJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutRegistry(ctx, request.(PutRegistryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutRegistry")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutRegistryResponseObject); ok {
+		if err := validResponse.VisitPutRegistryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1625,6 +4327,180 @@ func (sh *strictHandler) GetStatus(w http.ResponseWriter, r *http.Request, param
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetStatusResponseObject); ok {
 		if err := validResponse.VisitGetStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostSystemReboot operation middleware
+func (sh *strictHandler) PostSystemReboot(w http.ResponseWriter, r *http.Request) {
+	var request PostSystemRebootRequestObject
+
+	var body PostSystemRebootJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSystemReboot(ctx, request.(PostSystemRebootRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSystemReboot")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostSystemRebootResponseObject); ok {
+		if err := validResponse.VisitPostSystemRebootResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostSystemShutdown operation middleware
+func (sh *strictHandler) PostSystemShutdown(w http.ResponseWriter, r *http.Request) {
+	var request PostSystemShutdownRequestObject
+
+	var body PostSystemShutdownJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostSystemShutdown(ctx, request.(PostSystemShutdownRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostSystemShutdown")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostSystemShutdownResponseObject); ok {
+		if err := validResponse.VisitPostSystemShutdownResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTrust operation middleware
+func (sh *strictHandler) GetTrust(w http.ResponseWriter, r *http.Request) {
+	var request GetTrustRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTrust(ctx, request.(GetTrustRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTrust")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTrustResponseObject); ok {
+		if err := validResponse.VisitGetTrustResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTrust operation middleware
+func (sh *strictHandler) PostTrust(w http.ResponseWriter, r *http.Request) {
+	var request PostTrustRequestObject
+
+	var body PostTrustJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTrust(ctx, request.(PostTrustRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTrust")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTrustResponseObject); ok {
+		if err := validResponse.VisitPostTrustResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostTrustPreview operation middleware
+func (sh *strictHandler) PostTrustPreview(w http.ResponseWriter, r *http.Request) {
+	var request PostTrustPreviewRequestObject
+
+	var body PostTrustPreviewJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostTrustPreview(ctx, request.(PostTrustPreviewRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostTrustPreview")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostTrustPreviewResponseObject); ok {
+		if err := validResponse.VisitPostTrustPreviewResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteTrust operation middleware
+func (sh *strictHandler) DeleteTrust(w http.ResponseWriter, r *http.Request, sha256 string) {
+	var request DeleteTrustRequestObject
+
+	request.Sha256 = sha256
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteTrust(ctx, request.(DeleteTrustRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteTrust")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteTrustResponseObject); ok {
+		if err := validResponse.VisitDeleteTrustResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -75,7 +75,7 @@ func TestWizardStoresMailCredentialsInASecret(t *testing.T) {
 		"user name": func(m *Mail) { m.Username = ptr("mailer2") },
 		"host":      func(m *Mail) { m.Host = "smtp.elsewhere.example" },
 		"port":      func(m *Mail) { m.Port = 465 },
-		"security":  func(m *Mail) { m.Security = None },
+		"security":  func(m *Mail) { m.Security = Tls },
 	} {
 		changed := *body.Mail
 		edit(&changed)
@@ -145,12 +145,14 @@ func TestWizardValidates(t *testing.T) {
 		{"bad character", PlatformSettings{HostName: "ilm_1.example.com", Components: []string{}}, "hostName"},
 		{"unknown component", PlatformSettings{HostName: "ilm.example.com", Components: []string{"nope"}}, "components"},
 		{"private component", PlatformSettings{HostName: "ilm.example.com", Components: []string{"external-authority-provider"}}, "components"},
+		{"mail component without mail", PlatformSettings{HostName: "ilm.example.com", Components: []string{testMailComponent}}, "components"},
 		{"mail host", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.Host = "bad host" })}, "mail.host"},
 		{"mail port low", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.Port = 0 })}, "mail.port"},
 		{"mail port high", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.Port = 65536 })}, "mail.port"},
 		{"mail security", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.Security = "ssl" })}, "mail.security"},
 		{"mail from", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.From = "ILM <ilm@example.com>" })}, "mail.from"},
 		{"password without user", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.Username = nil })}, "mail.username"},
+		{"credentials without TLS", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail(func(m *Mail) { m.Security = None })}, "mail.username"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := h.request(http.MethodPut, "/api/v1/wizard/platform", tc.body, s)
@@ -207,6 +209,7 @@ func TestCatalogue(t *testing.T) {
 		{Name: "common-credential-provider", Title: "Common Credential Provider"},
 		{Name: "ejbca-ng-connector", Title: "EJBCA NG Connector"},
 		{Name: "external-authority-provider", Title: "External Authority Provider", Private: true},
+		{Name: testMailComponent, Title: "Email Notification Provider"},
 	}
 	if !slices.Equal(got.Items, want) {
 		t.Errorf("catalogue = %+v, want %+v", got.Items, want)

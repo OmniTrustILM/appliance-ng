@@ -20,6 +20,8 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/machine"
 	"github.com/siderolabs/talos/pkg/machinery/config/validation"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/nodeconfig"
 )
 
 // kubernetesVersion is the Kubernetes version of the generated cluster.
@@ -57,9 +59,7 @@ type Input struct {
 }
 
 // Proxy is the outbound HTTP proxy of the node and its services.
-type Proxy struct {
-	HTTP, HTTPS, NoProxy string
-}
+type Proxy = nodeconfig.Proxy
 
 // metalMode is the validation mode of a bare-metal node that installs itself to disk.
 type metalMode struct{}

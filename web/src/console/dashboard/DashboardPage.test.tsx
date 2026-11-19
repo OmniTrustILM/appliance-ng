@@ -1,8 +1,8 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../../setup/test-utils';
-import { StatusPage } from './StatusPage';
+import { DashboardPage } from './DashboardPage';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -21,10 +21,10 @@ const status = {
 };
 
 function renderPage() {
-  return render(<MemoryRouter><StatusPage /></MemoryRouter>);
+  return render(<MemoryRouter><DashboardPage /></MemoryRouter>);
 }
 
-describe('StatusPage', () => {
+describe('DashboardPage', () => {
   it('shows the setup state, versions, add-on step and conditions', async () => {
     stubApi({ 'GET /api/v1/status': [200, status] });
     renderPage();
@@ -133,5 +133,72 @@ describe('StatusPage', () => {
     unmount();
     await act(() => vi.advanceTimersByTimeAsync(20000));
     expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns when the certificate expires within 30 days and links to the certificate page', async () => {
+    const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
+    stubApi({ 'GET /api/v1/status': [200, { ...status, rebootRequired: false, certificate: { notAfter: soon } }] });
+    renderPage();
+    expect(await screen.findByText(/expires within 30 days/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the certificate page' })).toHaveAttribute('href', '/certificate');
+  });
+
+  it('warns about an expired certificate', async () => {
+    stubApi({ 'GET /api/v1/status': [200, { ...status, certificate: { notAfter: '2020-01-01T00:00:00Z' } }] });
+    renderPage();
+    expect(await screen.findByText(/has expired/)).toBeInTheDocument();
+  });
+
+  it('does not warn about a certificate valid for longer than 30 days', async () => {
+    const later = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+    stubApi({ 'GET /api/v1/status': [200, { ...status, rebootRequired: false, certificate: { notAfter: later } }] });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(screen.queryByText(/expire/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open the certificate page' })).not.toBeInTheDocument();
+    expect(screen.getByText(new Date(later).toLocaleDateString())).toBeInTheDocument();
+  });
+
+  it('links the restart warning to the system page', async () => {
+    stubApi({ 'GET /api/v1/status': [200, status] });
+    renderPage();
+    expect(await screen.findByText(/needs to restart/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the system page' })).toHaveAttribute('href', '/system');
+  });
+
+  it('shows no restart warning when none is needed', async () => {
+    stubApi({ 'GET /api/v1/status': [200, { ...status, rebootRequired: false }] });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(screen.queryByRole('link', { name: 'Open the system page' })).not.toBeInTheDocument();
+  });
+
+  it('names every version', async () => {
+    const versions = { appliance: '0.2.0', talos: 'v1.14.5', kubernetes: 'v1.37.1', operator: 'v1.1.0', ilm: '2.20.0' };
+    stubApi({ 'GET /api/v1/status': [200, { ...status, versions }] });
+    renderPage();
+    const card = (await screen.findByRole('heading', { name: 'Versions' })).closest('div') as HTMLElement;
+    for (const [label, version] of [['Appliance', '0.2.0'], ['Talos', 'v1.14.5'], ['Kubernetes', 'v1.37.1'], ['ILM operator', 'v1.1.0'], ['ILM', '2.20.0']]) {
+      expect(within(card).getByText(label).nextElementSibling).toHaveTextContent(version);
+    }
+  });
+
+  it('groups the conditions by area', async () => {
+    const conditions = [
+      { type: 'NodeConfigured', status: 'True', reason: 'Applied' },
+      { type: 'ConnectorsReady', status: 'False', reason: 'Progressing', message: 'waiting for these connectors: ejbca-ng-connector' },
+      { type: 'PlatformReady', status: 'True', reason: 'Ready' },
+      { type: 'CertificateReady', status: 'True', reason: 'Ready' },
+    ];
+    stubApi({ 'GET /api/v1/status': [200, { ...status, conditions }] });
+    renderPage();
+    const platform = (await screen.findByRole('heading', { name: 'Platform', level: 3 })).parentElement as HTMLElement;
+    expect(within(platform).getByText('ConnectorsReady')).toBeInTheDocument();
+    expect(within(platform).getByText('PlatformReady')).toBeInTheDocument();
+    expect(within(platform).queryByText('NodeConfigured')).not.toBeInTheDocument();
+    const node = screen.getByRole('heading', { name: 'Node', level: 3 }).parentElement as HTMLElement;
+    expect(within(node).getByText('NodeConfigured')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Certificate', level: 3 })).toBeInTheDocument();
+    expect(screen.getByText('3 of 4 ready')).toBeInTheDocument();
   });
 });

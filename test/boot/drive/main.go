@@ -6,6 +6,8 @@
 //	            --host-name <fqdn> [--component <name>]
 //	drive check --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--connector <display name> --ui-url <url> --ui-addr <host:port>]
+//	drive api METHOD PATH --url <console> --user <user> --password <password> --seed-file <file>
+//	            --host-name <fqdn> [--body <json>]
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
@@ -14,6 +16,9 @@
 // check signs in and checks that the setup is complete, the built-in certificate is served and the audit log holds
 // the sign-in and the wizard. With --connector it downloads the ILM administrator's credential and checks, through
 // the ILM Core API at --ui-url reached at --ui-addr, that the connector registered.
+// api signs in to the Appliance Manager like part2, sends one request with the JSON body, if any, and prints the
+// JSON answer as it is. The caller chooses a path whose answer holds no secret: not the ILM administrator's
+// credential or a TOTP enrolment.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 and check wait until the console serves a
@@ -85,10 +90,18 @@ func main() {
 	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1)")
 	fs.StringVar(&o.serverName, "server-name", slirpNodeAddress,
 		"node address the certificate of the first-boot service is issued for (part1)")
-	_ = fs.Parse(os.Args[2:])
+	fs.StringVar(&o.body, "body", "", "JSON body of the request (api)")
+	args := os.Args[2:]
+	if cmd == "api" {
+		if len(args) < 2 {
+			usage()
+		}
+		o.method, o.path, args = args[0], args[1], args[2:]
+	}
+	_ = fs.Parse(args)
 
 	run, ok := map[string]func(context.Context, options) error{
-		"part1": part1, "part2": part2, "check": check,
+		"part1": part1, "part2": part2, "check": check, "api": apiCall,
 	}[cmd]
 	if !ok {
 		usage()
@@ -108,12 +121,14 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
 	os.Exit(2)
 }
 
 type options struct {
 	url, code, user, password, seedFile, hostName, gateway, dns string
 	component, connector, uiURL, uiAddr, caFile, serverName     string
+	method, path, body                                          string
 }
 
 func (o options) validate(cmd string) error {
@@ -127,6 +142,8 @@ func (o options) validate(cmd string) error {
 		return errors.New("--host-name is required")
 	case o.connector != "" && (o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--connector needs --ui-url and --ui-addr")
+	case o.body != "" && !json.Valid([]byte(o.body)):
+		return errors.New("--body is not valid JSON")
 	}
 	return nil
 }
@@ -280,6 +297,30 @@ func check(ctx context.Context, o options) error {
 		return err
 	}
 	return waitUntil(ctx, registerTimeout, func() error { return connectorRegistered(ctx, ui, o.uiURL, o.connector) })
+}
+
+// apiCall signs in to the Appliance Manager, sends the request of o and prints the answer.
+func apiCall(ctx context.Context, o options) error {
+	c, err := managerClient(ctx, o)
+	if err != nil {
+		return err
+	}
+	if err := c.signIn(ctx, o); err != nil {
+		return err
+	}
+	step(o.method + " " + o.path)
+	var body any
+	if o.body != "" {
+		body = json.RawMessage(o.body)
+	}
+	var answer []byte
+	if err := c.call(ctx, o.method, o.path, body, &answer); err != nil {
+		return err
+	}
+	if len(answer) > 0 {
+		fmt.Println(string(answer))
+	}
+	return nil
 }
 
 // adminCredential downloads the ILM administrator's certificate and key under a random password, waiting until the

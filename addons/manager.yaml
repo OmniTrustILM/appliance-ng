@@ -97,7 +97,9 @@ subjects:
     namespace: appliance-system
 ---
 # The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
-# It keeps the console accounts and the SMTP credentials there and deletes the hand-over Secret once it imported it.
+# It keeps the console accounts, the SMTP credentials, the uploaded certificate and a signing request's key there,
+# replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
+# Failed pods, which pile up while the node shuts down.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -106,19 +108,10 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [get, list, watch, create]
+    verbs: [get, list, watch, create, update, delete]
   - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [appliance-users]
-    verbs: [update]
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [appliance-handover]
-    verbs: [delete]
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [appliance-mail]
-    verbs: [update, delete]
+    resources: [pods]
+    verbs: [deletecollection]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -135,7 +128,8 @@ subjects:
     namespace: appliance-system
 ---
 # Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
-# the administrator certificate there and marks its Secret once handed out.
+# the administrator certificate there and marks its Secret once handed out. The copies of the trust bundle, the
+# registry credentials and the mail credentials are deleted once the Appliance no longer references them.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -145,6 +139,10 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, create, update, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-trust, appliance-registry-credentials, appliance-mail]
+    verbs: [delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -235,6 +233,10 @@ spec:
               value: 127.0.0.1
             - name: KUBERNETES_SERVICE_PORT
               value: "7445"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
             # Below the memory limit, so that the garbage collector runs before the container is killed.
             - name: GOMEMLIMIT
               value: 200MiB
@@ -383,11 +385,15 @@ spec:
                     - message: node.gateway must be empty or an IPv4 address
                       rule: self == '' || (isIP(self) && ip(self).family() == 4)
                   hostName:
-                    description: HostName is the fully qualified host name of the
-                      appliance.
+                    description: |-
+                      HostName is the fully qualified host name of the appliance. It is the Kubernetes node name, so it is fixed
+                      once set.
                     maxLength: 253
                     pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$
                     type: string
+                    x-kubernetes-validations:
+                    - message: node.hostName cannot be changed once set
+                      rule: self == oldSelf
                 required:
                 - hostName
                 type: object
