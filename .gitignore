@@ -6,3 +6,5 @@ web/node_modules/
 web/coverage/
 # The console build; web/dist/index.html is the tracked placeholder for Go builds without it.
 web/dist/app/
+test/e2e/node_modules/
+test/e2e/test-results/

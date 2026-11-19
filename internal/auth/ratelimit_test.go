@@ -12,7 +12,7 @@ import (
 func TestSignInLimiter(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 
-	t.Run("user", func(t *testing.T) {
+	t.Run("user and source IP", func(t *testing.T) {
 		l := SignInLimiter()
 		for i := range 5 {
 			if ok, _ := l.Allow("admin", "10.0.0.1", now.Add(time.Duration(i)*time.Minute)); !ok {
@@ -20,15 +20,45 @@ func TestSignInLimiter(t *testing.T) {
 			}
 		}
 		at := now.Add(5 * time.Minute)
-		ok, retry := l.Allow("admin", "10.0.0.2", at)
+		ok, retry := l.Allow("admin", "10.0.0.1", at)
 		if ok || retry != 14*time.Minute {
 			t.Fatalf("after 5 attempts Allow = %v, %s; want false, 14m (15 min from the fifth attempt)", ok, retry)
 		}
 		if ok, _ := l.Allow("other", "10.0.0.1", at); !ok {
 			t.Fatal("another user is blocked")
 		}
-		if ok, _ := l.Allow("admin", "10.0.0.2", now.Add(19*time.Minute)); !ok {
+		if ok, _ := l.Allow("admin", "10.0.0.1", now.Add(19*time.Minute)); !ok {
 			t.Fatal("still blocked after 15 min")
+		}
+	})
+
+	t.Run("a block from one address does not lock the user out from another", func(t *testing.T) {
+		l := SignInLimiter()
+		for range 5 {
+			l.Allow("admin", "10.0.0.1", now)
+		}
+		if ok, _ := l.Allow("admin", "10.0.0.1", now.Add(time.Minute)); ok {
+			t.Fatal("the blocked address may try again")
+		}
+		if ok, retry := l.Allow("admin", "10.0.0.2", now.Add(time.Minute)); !ok {
+			t.Fatalf("another address is refused for %s", retry)
+		}
+	})
+
+	t.Run("failures from any source space the next attempts of a failing source", func(t *testing.T) {
+		l := SignInLimiter()
+		for i := range 5 {
+			l.Allow("admin", fmt.Sprint("10.0.1.", i), now)
+		}
+		ok, retry := l.Allow("admin", "10.0.1.0", now.Add(time.Second))
+		if ok || retry != userDelay-time.Second {
+			t.Fatalf("Allow = %v, %s; want false, %s", ok, retry, userDelay-time.Second)
+		}
+		if ok, _ := l.Allow("admin", "10.0.1.0", now.Add(userDelay)); !ok {
+			t.Fatal("refused after the delay")
+		}
+		if ok, _ := l.Allow("admin", "10.0.0.9", now.Add(userDelay)); !ok {
+			t.Fatal("an address without failures is delayed")
 		}
 	})
 
@@ -49,7 +79,8 @@ func TestSignInLimiter(t *testing.T) {
 		for range 4 {
 			l.Allow("admin", "10.0.0.1", now)
 		}
-		l.Succeed("admin")
+		l.Allow("admin", "10.0.0.2", now)
+		l.Succeed("admin", "10.0.0.1")
 		for i := range 4 {
 			if ok, _ := l.Allow("admin", "10.0.0.1", now); !ok {
 				t.Fatalf("attempt %d after a success refused", i+1)
@@ -78,16 +109,15 @@ func TestSignInLimiter(t *testing.T) {
 
 	t.Run("the longer block wins", func(t *testing.T) {
 		l := SignInLimiter()
-		for i := range 19 {
-			l.Allow(fmt.Sprint("user", i), "10.0.0.1", now)
-		}
 		for range 5 {
-			l.Allow("admin", "10.0.0.2", now.Add(10*time.Minute))
+			l.Allow("admin", "10.0.0.1", now)
 		}
-		l.Allow("y", "10.0.0.1", now.Add(time.Minute))
-		_, retry := l.Allow("admin", "10.0.0.1", now.Add(11*time.Minute))
+		for i := range 15 {
+			l.Allow(fmt.Sprint("user", i), "10.0.0.1", now.Add(5*time.Minute))
+		}
+		_, retry := l.Allow("admin", "10.0.0.1", now.Add(6*time.Minute))
 		if retry != 14*time.Minute {
-			t.Fatalf("retry %s, want 14m (the user's block outlasts the IP's)", retry)
+			t.Fatalf("retry %s, want 14m (the address's block outlasts the user's)", retry)
 		}
 	})
 }
@@ -127,10 +157,10 @@ func TestSignInLimiterForgetsIdleEntries(t *testing.T) {
 	}
 	l.Allow("late", "10.0.0.2", now.Add(time.Hour))
 	l.mu.Lock()
-	users, ips := len(l.users), len(l.ips)
+	users, pairs, ips := len(l.users), len(l.pairs), len(l.ips)
 	l.mu.Unlock()
-	if users > pruneAbove || ips > pruneAbove {
-		t.Fatalf("kept %d users and %d IPs; idle entries are not pruned", users, ips)
+	if users > pruneAbove || pairs > pruneAbove || ips > pruneAbove {
+		t.Fatalf("kept %d users, %d user and IP pairs and %d IPs; idle entries are not pruned", users, pairs, ips)
 	}
 }
 
