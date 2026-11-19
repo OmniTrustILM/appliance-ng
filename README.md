@@ -80,9 +80,10 @@ console itself uses no client certificate.
 
 The console is at `https://<host name or node address>:8443/`. Sign in with your user name, password and the
 6-digit authenticator code (the code of the previous and next 30 seconds is also accepted, for clock drift). Five
-failed sign-ins for a user from one address within 15 minutes block that user at that address for 15 minutes, and 20
-from one address block the address; sign-in from other addresses stays open. After five failed sign-ins for a user
-from any address, an address that has failed for that user waits 2 seconds after the user's last attempt.
+failed sign-ins for a user from one address within 15 minutes block that user at that address for 15 minutes; sign-in
+from other addresses stays open. 20 sign-in attempts from one address within 15 minutes, successful or not, block the
+address for 15 minutes. After five failed sign-ins for a user from any address, an address that has failed for that
+user waits 2 seconds after the user's last attempt.
 A session ends after 30 minutes without activity or after 8 hours, and when the manager restarts.
 
 The console shows the state of the appliance on its start page, the settings below, a system page and the audit log.
