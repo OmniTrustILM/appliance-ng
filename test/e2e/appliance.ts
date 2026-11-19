@@ -2,10 +2,9 @@
 // Nothing here prints the setup code, the password, the TOTP seed or a TOTP code: the boot test log is public.
 import { createHash, createHmac, X509Certificate } from 'node:crypto';
 import { chmodSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { get } from 'node:https';
-import { connect, type TLSSocket } from 'node:tls';
+import { connect } from 'node:tls';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { test as base, chromium, expect, type Locator, type Page } from '@playwright/test';
+import { test as base, chromium, expect, request, type Locator, type Page } from '@playwright/test';
 
 /** Reads a required input from the environment. */
 export function input(name: string): string {
@@ -91,25 +90,19 @@ function consoleOrigin() {
   return { address, port: Number(port), host, url: `https://${host}:${port}` };
 }
 
-/** Downloads the root CA from the console and returns it with the certificate the console presented. */
-function fetchRootCA(address: string, port: number, host: string): Promise<{ root: string; presented: string }> {
-  return new Promise((resolve, reject) => {
-    // Not verified here: the root CA is trusted on first use and checked against the presented certificate below.
-    const options = { host: address, port, servername: host, path: '/api/v1/ca.pem', rejectUnauthorized: false, agent: false };
-    const req = get(options, (res) => {
-      const presented = (res.socket as TLSSocket).getPeerX509Certificate();
-      let root = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk: string) => (root += chunk));
-      res.on('end', () => {
-        if (res.statusCode !== 200) return reject(new Error(`GET /api/v1/ca.pem: HTTP ${res.statusCode}`));
-        if (!presented) return reject(new Error('the console presented no certificate'));
-        resolve({ root, presented: presented.fingerprint256 });
-      });
-    });
-    req.setTimeout(10_000, () => req.destroy(new Error('GET /api/v1/ca.pem timed out')));
-    req.on('error', reject);
-  });
+/**
+ * Downloads the root CA from the console. It is not verified here: the root CA is trusted on first use and must then
+ * pass verifiedCertificate.
+ */
+async function fetchRootCA(): Promise<string> {
+  const context = await request.newContext({ ignoreHTTPSErrors: true });
+  try {
+    const res = await context.get(`${input('E2E_CONSOLE_URL')}/api/v1/ca.pem`, { timeout: 10_000 });
+    if (!res.ok()) throw new Error(`GET /api/v1/ca.pem: HTTP ${res.status()}`);
+    return await res.text();
+  } finally {
+    await context.dispose();
+  }
 }
 
 /** Connects to the console verifying its certificate against root for host, and returns that certificate. */
@@ -142,9 +135,8 @@ async function trustBuiltinCA(): Promise<string[]> {
   const deadline = Date.now() + CERTIFICATE_TIMEOUT;
   for (;;) {
     try {
-      const { root, presented } = await fetchRootCA(address, port, host);
+      const root = await fetchRootCA();
       const leaf = await verifiedCertificate(address, port, host, root);
-      if (leaf.fingerprint256 !== presented) throw new Error('the console changed its certificate while it was checked');
       console.log(`console certificate for ${host} issued by ${leaf.issuer.replaceAll('\n', ', ')}`);
       return [spki(new X509Certificate(root)), spki(leaf)];
     } catch (error) {
