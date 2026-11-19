@@ -1,8 +1,8 @@
 version: 0.1.0
 talos:
-  version: v1.14.5
+  version: v1.14.6
   kubernetes: v1.37.1
-  imager: ghcr.io/siderolabs/imager:v1.14.5@sha256:ef33373986bb0765132f0558ea43c9f8fee2c3839f1d1a4232693b77092d7350
+  imager: ghcr.io/siderolabs/imager:v1.14.6@sha256:726987ad71fc86f098ed77e0fc4cdd594a21f428cefa4970517461e2e631b3b8
 platform:
   ilmVersion: 2.20.0
   hostName: ilm.appliance.internal
