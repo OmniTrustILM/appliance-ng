@@ -125,7 +125,7 @@ describe('RecoveryKitPage', () => {
     expect(click).not.toHaveBeenCalled();
   });
 
-  it('warns before replacing a lost kit that earlier backups stay readable only with it', async () => {
+  it('warns before replacing a lost kit that earlier backups stay readable only with the old kit and that only its kubeconfig is revoked', async () => {
     const { sent } = stubApi({
       'GET /appliance/api/v1/recovery-kit': [200, confirmed],
       'POST /appliance/api/v1/recovery-kit/replace': [200, kitFile],
@@ -136,7 +136,9 @@ describe('RecoveryKitPage', () => {
     await userEvent.type(within(form).getByLabelText('Repeat the new passphrase'), passphrase);
     await userEvent.click(within(form).getByRole('button', { name: 'Replace the kit' }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent(/backups made so far stay readable only with the lost kit/i);
+    expect(dialog).toHaveTextContent(/backups made so far stay readable only with the old kit/i);
+    expect(dialog).toHaveTextContent(/only the old kubeconfig is revoked/i);
+    expect(dialog).toHaveTextContent(/old talosconfig keeps node access until its expiry date/i);
     expect(sent['POST /appliance/api/v1/recovery-kit/replace']).toBeUndefined();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Replace the kit' }));
     expect(await screen.findByText(/was downloaded/)).toBeInTheDocument();

@@ -57,8 +57,10 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 		out.DataVolume = &DataVolume{SizeBytes: v.SizeBytes, FreeBytes: v.FreeBytes}
 	}
 	out.AddonStep = addonStep(st.Conditions)
+	// Without the kit the rest of the status still helps; the console reads an absent kit as unknown.
 	if out.RecoveryKit, err = s.recoveryKitInfo(ctx, st.RecoveryKit); err != nil {
-		return nil, err
+		s.deps.Log.Warn("recovery kit not read for the status", "error", err)
+		out.RecoveryKit = nil
 	}
 	// The cache serves the frequent polls; without the certificate the rest of the status still helps.
 	certificate, err := s.certificateInUse(ctx, s.deps.Client, a)

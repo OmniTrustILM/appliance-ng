@@ -100,8 +100,9 @@ export function ReplaceForm({ onIssued }: OnIssued) {
       <Button type="submit" variant="secondary" busy={busy} disabled={!passphrasesAgree(passphrase, repeat)}>Replace the kit</Button>
       {asking && (
         <ConfirmDialog title="Replace the recovery kit?" confirmLabel="Replace the kit" onConfirm={replace} onCancel={() => setAsking(false)}>
-          The new kit holds a new backup key. Backups made so far stay readable only with the lost kit; make a new
-          backup once the new kit is stored. The break-glass access of the lost kit stops working.
+          The new kit holds a new backup key. Backups made so far stay readable only with the old kit; make a new
+          backup once the new kit is stored. Only the old kubeconfig is revoked: the old talosconfig keeps node
+          access until its expiry date, because Talos cannot revoke it.
         </ConfirmDialog>
       )}
     </form>

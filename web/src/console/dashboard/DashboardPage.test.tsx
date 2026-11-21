@@ -204,6 +204,13 @@ describe('DashboardPage', () => {
     expect(screen.queryByText(/recovery kit/i)).not.toBeInTheDocument();
   });
 
+  it('shows no recovery kit warning while the status leaves the kit out', async () => {
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(screen.queryByText(/recovery kit/i)).not.toBeInTheDocument();
+  });
+
   it('warns about a recovery kit that is not confirmed once setup is complete', async () => {
     stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, recoveryKit: { issued: true, confirmed: false } }] });
     const first = renderPage();

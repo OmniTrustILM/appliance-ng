@@ -21,6 +21,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
+	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 )
 
 func TestStatus(t *testing.T) {
@@ -285,6 +286,27 @@ func TestStatusSurvivesACertificateReadError(t *testing.T) {
 		t.Errorf("status %+v, want it without the certificate", got)
 	}
 	if !strings.Contains(h.logs.String(), "certificate in use not read") {
+		t.Errorf("log %s, want the read error", h.logs)
+	}
+}
+
+func TestStatusSurvivesARecoveryKitReadError(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupComplete)
+	h.srv.deps.Reader = failingGet{Client: testClient, name: recovery.RecipientSecret}
+
+	rec := h.request(http.MethodGet, "/appliance/api/v1/status", nil, s)
+	wantStatus(t, rec, http.StatusOK)
+	var got Status
+	decode(t, rec, &got)
+	if got.RecoveryKit != nil || got.Setup != Complete {
+		t.Errorf("status %+v, want it without the recovery kit", got)
+	}
+	if strings.Contains(rec.Body.String(), "recoveryKit") {
+		t.Errorf("body %s, want no recoveryKit", rec.Body)
+	}
+	if !strings.Contains(h.logs.String(), "recovery kit not read") {
 		t.Errorf("log %s, want the read error", h.logs)
 	}
 }
