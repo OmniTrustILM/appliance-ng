@@ -144,7 +144,7 @@ func (b *browser) expect(method, path string, body any, want int) map[string]any
 
 func (b *browser) enterCode(code string) {
 	b.t.Helper()
-	out := b.expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": code}, http.StatusOK)
+	out := b.expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": code}, http.StatusOK)
 	b.csrf, _ = out["csrfToken"].(string)
 	if b.csrf == "" || b.cookie == nil {
 		b.t.Fatalf("no CSRF token or session cookie: %v", out)
@@ -153,16 +153,16 @@ func (b *browser) enterCode(code string) {
 
 func (b *browser) step() string {
 	b.t.Helper()
-	step, _ := b.expect(http.MethodGet, "/api/v1/setup/state", nil, http.StatusOK)["step"].(string)
+	step, _ := b.expect(http.MethodGet, "/appliance/api/v1/setup/state", nil, http.StatusOK)["step"].(string)
 	return step
 }
 
 // enrol sets the administrator and confirms a TOTP authenticator; it returns the seed.
 func (b *browser) enrol() string {
 	b.t.Helper()
-	b.expect(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
-	seed, _ := b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
-	b.expect(http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(seed)}, http.StatusNoContent)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
+	seed, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(seed)}, http.StatusNoContent)
 	return seed
 }
 
@@ -196,7 +196,7 @@ func TestSetupSingleSession(t *testing.T) {
 	first.enrol()
 
 	second := s.browser(t)
-	if rec := second.do(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": s.display}); rec.Code != http.StatusConflict {
+	if rec := second.do(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": s.display}); rec.Code != http.StatusConflict {
 		t.Fatalf("second browser with the code: %d, want 409", rec.Code)
 	}
 	if second.cookie != nil {
@@ -205,13 +205,13 @@ func TestSetupSingleSession(t *testing.T) {
 	if step := second.step(); step != "code" {
 		t.Errorf("second browser sees step %q, want code", step)
 	}
-	if rec := second.do(http.MethodPut, "/api/v1/setup/node", staticNode()); rec.Code != http.StatusUnauthorized {
+	if rec := second.do(http.MethodPut, "/appliance/api/v1/setup/node", staticNode()); rec.Code != http.StatusUnauthorized {
 		t.Errorf("second browser without a session: %d, want 401", rec.Code)
 	}
 
 	reloaded := s.browser(t)
 	reloaded.cookie = first.cookie
-	out := reloaded.expect(http.MethodGet, "/api/v1/setup/state", nil, http.StatusOK)
+	out := reloaded.expect(http.MethodGet, "/appliance/api/v1/setup/state", nil, http.StatusOK)
 	if out["step"] != "node" || out["csrfToken"] != first.csrf {
 		t.Errorf("state after reload %v, want step node with the session's CSRF token", out)
 	}
@@ -234,7 +234,7 @@ func TestSetupTakeoverAfterTheSessionExpired(t *testing.T) {
 	if step := second.step(); step != "admin" {
 		t.Errorf("step after a takeover %q, want admin: the answers start over", step)
 	}
-	if rec := first.do(http.MethodGet, "/api/v1/setup/dhcp", nil); rec.Code != http.StatusUnauthorized {
+	if rec := first.do(http.MethodGet, "/appliance/api/v1/setup/dhcp", nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("expired session: %d, want 401", rec.Code)
 	}
 }
@@ -244,44 +244,44 @@ func TestSetupStepsInOrder(t *testing.T) {
 	b := s.browser(t)
 	b.enterCode(s.display)
 
-	b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusConflict)
-	b.expect(http.MethodPost, "/api/v1/setup/apply", nil, http.StatusConflict)
-	b.expect(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusConflict)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusConflict)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
 	if step := b.step(); step != "totp" {
 		t.Fatalf("step %q, want totp", step)
 	}
-	b.expect(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusConflict)
-	b.expect(http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": "123456"}, http.StatusConflict)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusConflict)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": "123456"}, http.StatusConflict)
 
-	old, _ := b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
-	seed, _ := b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
+	old, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
+	seed, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
 	if seed == old {
 		t.Fatal("a second enrolment returned the same seed")
 	}
-	b.expect(http.MethodPut, "/api/v1/setup/node", staticNode(), http.StatusConflict)
-	if rec := b.do(http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(old)}); rec.Code != http.StatusBadRequest {
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusConflict)
+	if rec := b.do(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(old)}); rec.Code != http.StatusBadRequest {
 		t.Errorf("code of the discarded seed: %d, want 400", rec.Code)
 	}
-	b.expect(http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(seed)}, http.StatusNoContent)
-	b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusConflict)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(seed)}, http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusConflict)
 
-	b.expect(http.MethodPost, "/api/v1/setup/apply", nil, http.StatusConflict)
-	b.expect(http.MethodPut, "/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusConflict)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
 	if step := b.step(); step != "apply" {
 		t.Fatalf("step %q, want apply", step)
 	}
 	// The review may go back to the node settings.
-	b.expect(http.MethodPut, "/api/v1/setup/node", staticNode(), http.StatusNoContent)
-	b.expect(http.MethodPost, "/api/v1/setup/apply", nil, http.StatusAccepted)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
 	if step := b.step(); step != "applying" {
 		t.Errorf("step %q, want applying", step)
 	}
 	if step := s.browser(t).step(); step != "applying" {
 		t.Errorf("another browser sees step %q, want applying", step)
 	}
-	b.expect(http.MethodPost, "/api/v1/setup/apply", nil, http.StatusConflict)
-	b.expect(http.MethodPut, "/api/v1/setup/node", staticNode(), http.StatusConflict)
-	s.browser(t).expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": s.display}, http.StatusConflict)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusConflict)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusConflict)
+	s.browser(t).expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": s.display}, http.StatusConflict)
 
 	select {
 	case <-s.applied:
@@ -300,8 +300,8 @@ func TestSetupApplyHandsOverTheAnswers(t *testing.T) {
 	b := s.browser(t)
 	b.enterCode(s.display)
 	seed := b.enrol()
-	b.expect(http.MethodPut, "/api/v1/setup/node", staticNode(), http.StatusNoContent)
-	b.expect(http.MethodPost, "/api/v1/setup/apply", nil, http.StatusAccepted)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
 
 	in := <-s.applied
 	if in.HostName != "ilm.example.com" || in.Address != netip.MustParsePrefix("192.0.2.10/24") ||
@@ -339,8 +339,8 @@ func TestSetupKeepDHCP(t *testing.T) {
 	node := staticNode()
 	node["address"], node["gateway"], node["ntp"] = "", "", []string{}
 	delete(node, "proxy")
-	b.expect(http.MethodPut, "/api/v1/setup/node", node, http.StatusNoContent)
-	b.expect(http.MethodPost, "/api/v1/setup/apply", nil, http.StatusAccepted)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", node, http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
 	in := <-s.applied
 	if in.Address.IsValid() || in.Gateway.IsValid() || in.Proxy != nil || len(in.NTP) != 0 {
 		t.Errorf("DHCP input %+v %+v", in.Address, in.Proxy)
@@ -377,7 +377,7 @@ func TestSetupValidatesTheNode(t *testing.T) {
 	} {
 		node := staticNode()
 		node[tt.field] = tt.value
-		rec := b.do(http.MethodPut, "/api/v1/setup/node", node)
+		rec := b.do(http.MethodPut, "/appliance/api/v1/setup/node", node)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", name, rec.Code)
 			continue
@@ -390,7 +390,7 @@ func TestSetupValidatesTheNode(t *testing.T) {
 	}
 	node := staticNode()
 	node["address"] = ""
-	if rec := b.do(http.MethodPut, "/api/v1/setup/node", node); rec.Code != http.StatusBadRequest {
+	if rec := b.do(http.MethodPut, "/appliance/api/v1/setup/node", node); rec.Code != http.StatusBadRequest {
 		t.Errorf("gateway with DHCP: %d, want 400", rec.Code)
 	}
 	if step := b.step(); step != "node" {
@@ -423,7 +423,7 @@ func TestSetupBoundsConcurrentPasswordHashes(t *testing.T) {
 	for range 6 {
 		wg.Go(func() {
 			own := &browser{t: t, s: s, cookie: b.cookie, csrf: b.csrf}
-			rec := own.do(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword})
+			rec := own.do(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword})
 			if rec.Code != http.StatusNoContent && rec.Code != http.StatusConflict {
 				t.Errorf("status %d, want 204 or 409", rec.Code)
 			}
@@ -446,7 +446,7 @@ func TestSetupValidatesTheAdmin(t *testing.T) {
 		"no user":         {"user": "", "password": testPassword},
 		"bad user":        {"user": "ad min", "password": testPassword},
 	} {
-		if rec := b.do(http.MethodPut, "/api/v1/setup/admin", body); rec.Code != http.StatusBadRequest {
+		if rec := b.do(http.MethodPut, "/appliance/api/v1/setup/admin", body); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", name, rec.Code)
 		}
 	}
@@ -456,35 +456,35 @@ func TestSetupCodeLockout(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
 	for range 4 {
-		out := b.expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": "WRONG-CODE0"}, http.StatusUnauthorized)
+		out := b.expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": "WRONG-CODE0"}, http.StatusUnauthorized)
 		if _, locked := out["retryAfter"]; locked {
 			t.Fatalf("locked before the fifth failure: %v", out)
 		}
 	}
-	out := b.expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": "WRONG-CODE0"}, http.StatusUnauthorized)
+	out := b.expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": "WRONG-CODE0"}, http.StatusUnauthorized)
 	if out["retryAfter"] != float64(60) {
 		t.Errorf("retryAfter %v, want 60", out["retryAfter"])
 	}
-	b.expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": s.display}, http.StatusUnauthorized)
-	b.expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": ""}, http.StatusBadRequest)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": s.display}, http.StatusUnauthorized)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": ""}, http.StatusBadRequest)
 }
 
 func TestSetupTOTPRefusalShowsServerTime(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
 	b.enterCode(s.display)
-	b.expect(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
-	seed, _ := b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
+	seed, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
 	stale, err := totp.GenerateCode(seed, s.clock.now().Add(-5*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := b.expect(http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": stale}, http.StatusBadRequest)
+	out := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": stale}, http.StatusBadRequest)
 	if out["serverTime"] != s.clock.now().UTC().Format(time.RFC3339) || out["code"] == "" {
 		t.Errorf("refusal %v, want the code and the server time", out)
 	}
 	code := b.totp(seed)
-	b.expect(http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": code}, http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": code}, http.StatusNoContent)
 }
 
 func TestSetupRequiresCSRF(t *testing.T) {
@@ -493,19 +493,19 @@ func TestSetupRequiresCSRF(t *testing.T) {
 	b.enterCode(s.display)
 	csrf := b.csrf
 	b.csrf = ""
-	b.expect(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusForbidden)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusForbidden)
 	b.csrf = "wrong"
-	b.expect(http.MethodPost, "/api/v1/setup/totp", nil, http.StatusForbidden)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusForbidden)
 	b.csrf = csrf
-	b.expect(http.MethodPut, "/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
 }
 
 func TestSetupDHCP(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
-	b.expect(http.MethodGet, "/api/v1/setup/dhcp", nil, http.StatusUnauthorized)
+	b.expect(http.MethodGet, "/appliance/api/v1/setup/dhcp", nil, http.StatusUnauthorized)
 	b.enterCode(s.display)
-	out := b.expect(http.MethodGet, "/api/v1/setup/dhcp", nil, http.StatusOK)
+	out := b.expect(http.MethodGet, "/appliance/api/v1/setup/dhcp", nil, http.StatusOK)
 	want := map[string]any{
 		"hostName": "ilm.example.com", "address": "10.0.2.15/24", "gateway": "10.0.2.2",
 		"dns": []any{"10.0.2.3"}, "ntp": []any{"pool.ntp.org"},
@@ -529,7 +529,7 @@ func TestSetupDHCPUnavailable(t *testing.T) {
 	})
 	b := (&testServer{handler: srv.Handler, clock: &testClock{t: time.Now()}}).browser(t)
 	b.enterCode(display)
-	if out := b.expect(http.MethodGet, "/api/v1/setup/dhcp", nil, http.StatusOK); len(out) != 0 {
+	if out := b.expect(http.MethodGet, "/appliance/api/v1/setup/dhcp", nil, http.StatusOK); len(out) != 0 {
 		t.Errorf("DHCP %v, want nothing", out)
 	}
 }
@@ -537,28 +537,28 @@ func TestSetupDHCPUnavailable(t *testing.T) {
 func TestSetupRefusesMalformedRequests(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/code", strings.NewReader(`{"code": "`+strings.Repeat("A", 64<<10)+`"}`))
+	req := httptest.NewRequest(http.MethodPost, "/appliance/api/v1/setup/code", strings.NewReader(`{"code": "`+strings.Repeat("A", 64<<10)+`"}`))
 	rec := httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") {
 		t.Errorf("oversized body: %d %s, want a JSON 400", rec.Code, rec.Header().Get("Content-Type"))
 	}
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/setup/code", strings.NewReader(`{"code": SECRET-INPUT`))
+	req = httptest.NewRequest(http.MethodPost, "/appliance/api/v1/setup/code", strings.NewReader(`{"code": SECRET-INPUT`))
 	rec = httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "SECRET") {
 		t.Errorf("malformed body: %d %s", rec.Code, rec.Body.String())
 	}
-	b.expect(http.MethodPost, "/api/v1/setup/code", map[string]string{"code": "A"}, http.StatusUnauthorized)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": "A"}, http.StatusUnauthorized)
 }
 
 func TestSetupServesTheConsole(t *testing.T) {
 	s := newTestServer(t)
 	for path, want := range map[string]int{
-		"/setup/":                  http.StatusOK,
-		"/setup/node":              http.StatusOK,
-		"/api/v1/session":          http.StatusNotFound,
-		"/api/v1/appliance/status": http.StatusNotFound,
+		"/appliance/setup/":                  http.StatusOK,
+		"/appliance/setup/node":              http.StatusOK,
+		"/appliance/api/v1/session":          http.StatusNotFound,
+		"/appliance/api/v1/appliance/status": http.StatusNotFound,
 	} {
 		rec := httptest.NewRecorder()
 		s.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -567,12 +567,28 @@ func TestSetupServesTheConsole(t *testing.T) {
 		}
 	}
 	rec := httptest.NewRecorder()
-	s.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/setup/state", nil))
+	s.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/appliance/api/v1/setup/state", nil))
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("API Cache-Control %q, want no-store", got)
 	}
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("API X-Content-Type-Options %q, want nosniff", got)
+	}
+}
+
+func TestSetupOldPathsRedirect(t *testing.T) {
+	s := newTestServer(t)
+	for path, want := range map[string]string{
+		"/":                       "/appliance/",
+		"/setup/":                 "/appliance/setup/",
+		"/api/v1/setup/state?x=1": "/appliance/api/v1/setup/state?x=1",
+		"/api/v1/setup/code":      "/appliance/api/v1/setup/code",
+	} {
+		rec := httptest.NewRecorder()
+		s.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code != http.StatusPermanentRedirect || rec.Header().Get("Location") != want {
+			t.Errorf("POST %s = %d to %q, want 308 to %q", path, rec.Code, rec.Header().Get("Location"), want)
+		}
 	}
 }
 

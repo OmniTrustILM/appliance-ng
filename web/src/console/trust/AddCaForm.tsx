@@ -81,12 +81,12 @@ export function AddCaForm({ onAdded }: Readonly<{ onAdded: () => void }>) {
   async function previewUpload() {
     const requested = pem;
     const edit = edits.current;
-    const result = await run(() => api.POST('/api/v1/trust/preview', { body: { pem: requested } }));
+    const result = await run(() => api.POST('/trust/preview', { body: { pem: requested } }));
     if (result?.data && edit === edits.current) setPreview({ pem: requested, items: result.data.items });
   }
 
   async function addUpload(previewed: Previewed) {
-    if (await run(() => api.POST('/api/v1/trust', { body: { pem: previewed.pem } }))) {
+    if (await run(() => api.POST('/trust', { body: { pem: previewed.pem } }))) {
       setPem('');
       setFile(undefined);
       setPreview(undefined);

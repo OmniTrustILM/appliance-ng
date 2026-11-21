@@ -121,6 +121,9 @@ func (s *Server) GetAudit(_ context.Context, req GetAuditRequestObject) (GetAudi
 			paths = []string{}
 		}
 		items[i] = AuditEntry{Time: e.Time, User: e.User, Action: AuditEntryAction(e.Action), Result: AuditEntryResult(e.Result), Paths: paths}
+		if len(e.Details) > 0 {
+			items[i].Details = &e.Details
+		}
 	}
 	return GetAudit200JSONResponse{Items: items}, nil
 }

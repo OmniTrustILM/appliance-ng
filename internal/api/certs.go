@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 )
 
@@ -26,7 +27,7 @@ const (
 	// maxUploadBody caps the size of a certificate upload, which carries a chain.
 	maxUploadBody = 1 << 20
 	// certificatePath is the path of the certificate operations; the others are below it.
-	certificatePath = "/api/v1/certificate"
+	certificatePath = auth.APIBase + "/certificate"
 
 	csrFileName = `attachment; filename="ilm-appliance.csr"`
 
@@ -267,7 +268,7 @@ func readUpload(r *multipart.Reader, required ...string) (map[string][]byte, *re
 			return nil, &refusal{code: codeInvalid, message: messageUnreadable}
 		}
 		name := p.FormName()
-		if !slices.Contains([]string{partCertificate, partKey, partChain}, name) {
+		if !slices.Contains([]string{partCertificate, partKey, partChain, partKit, partPassphrase, partNewPassphrase}, name) {
 			continue
 		}
 		data, err := io.ReadAll(p)
@@ -285,10 +286,11 @@ func readUpload(r *multipart.Reader, required ...string) (map[string][]byte, *re
 }
 
 func (r *refusal) badRequest() BadRequestJSONResponse {
+	out := BadRequestJSONResponse{Code: r.code, Message: r.message}
 	if r.field != "" {
-		return badRequestField(r.field, r.message)
+		out.Field = &r.field
 	}
-	return BadRequestJSONResponse{Code: r.code, Message: r.message}
+	return out
 }
 
 // joinPEM is the certificate followed by its chain.

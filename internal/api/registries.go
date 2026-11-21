@@ -19,12 +19,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 const (
 	// registriesPath is the path of the registries; each registry is below it.
-	registriesPath = "/api/v1/registries"
+	registriesPath = auth.APIBase + "/registries"
 	// registrySecretPrefix starts the name of a registry's credentials Secret in SystemNamespace.
 	registrySecretPrefix = "appliance-registry-"
 	// registrySecretHashLength is how many hex digits of the SHA-256 of the host follow the prefix.

@@ -32,10 +32,10 @@ import (
 
 const (
 	certNodeAddress = "192.0.2.10"
-	pathCertificate = "/api/v1/certificate"
-	pathCSR         = "/api/v1/certificate/csr"
-	pathSigned      = "/api/v1/certificate/csr/signed"
-	pathBuiltin     = "/api/v1/certificate/builtin"
+	pathCertificate = "/appliance/api/v1/certificate"
+	pathCSR         = "/appliance/api/v1/certificate/csr"
+	pathSigned      = "/appliance/api/v1/certificate/csr/signed"
+	pathBuiltin     = "/appliance/api/v1/certificate/builtin"
 )
 
 // certIssued is when the test certificates become valid, the day before the harness clock.

@@ -31,7 +31,7 @@ func TestConsoleLinesHaveNoPresetHash(t *testing.T) {
 	lines := ConsoleLines("v1.2.3", netip.MustParseAddr("10.0.2.15"), "AB:CD", display)
 	want := []string{
 		"ILM appliance v1.2.3 setup",
-		"Open https://10.0.2.15:8443/setup/",
+		"Open https://10.0.2.15:8443/appliance/setup/",
 		"Certificate SHA-256 AB:CD",
 		"Setup code: preset by the hypervisor",
 	}

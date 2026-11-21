@@ -10,6 +10,8 @@ export const consoleLinks = [
   { to: '/registries', label: 'Registries' },
   { to: '/platform', label: 'Components' },
   { to: '/mail', label: 'Mail' },
+  { to: '/access', label: 'Cluster access' },
+  { to: '/recovery-kit', label: 'Recovery kit' },
   { to: '/system', label: 'System' },
   { to: '/audit', label: 'Audit log' },
 ] as const;

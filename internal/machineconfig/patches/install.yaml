@@ -1,4 +1,4 @@
-# Install disk selection; the rules are in diskSelector in generate.go.
+# Install disk selection; the rules are in InstallDiskSelector in generate.go.
 apiVersion: v1alpha1
 kind: UnattendedInstallConfig
 installer:

@@ -18,7 +18,7 @@ import { MailTest } from './MailTest';
 const saved = 'The change is saved. The platform picks it up within a minute.';
 const mailFields = new Set(['host', 'port', 'security', 'from', 'username', 'password']);
 
-const loadMail = () => api.GET('/api/v1/mail');
+const loadMail = () => api.GET('/mail');
 
 const same = (a: MailAnswers, b: MailAnswers) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -53,7 +53,7 @@ export function MailPage() {
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
-    const result = await attempt(() => api.PUT('/api/v1/mail', { body: mailRequest(form) }));
+    const result = await attempt(() => api.PUT('/mail', { body: mailRequest(form) }));
     setBusy(false);
     if (!result) return setError(unreachable);
     if (result.response.ok) {
@@ -70,7 +70,7 @@ export function MailPage() {
     setRemoving(false);
     setError(undefined);
     setNotice(undefined);
-    const result = await attempt(() => api.DELETE('/api/v1/mail'));
+    const result = await attempt(() => api.DELETE('/mail'));
     if (!result) return setError(unreachable);
     if (!result.response.ok) return setError(result.error?.message ?? 'The appliance could not remove the mail server.');
     setNotice('The mail server is removed.');

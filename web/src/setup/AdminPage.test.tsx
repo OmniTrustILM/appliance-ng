@@ -31,17 +31,17 @@ describe('AdminPage', () => {
   });
 
   it('saves the administrator and passes the user name on', async () => {
-    const { sent } = stubApi({ 'PUT /api/v1/setup/admin': [204] });
+    const { sent } = stubApi({ 'PUT /appliance/api/v1/setup/admin': [204] });
     const onDone = vi.fn();
     render(<AdminPage onDone={onDone} onExpired={vi.fn()} />);
     await fill('admin', 'correct horse battery', 'correct horse battery');
     expect(await vi.waitFor(() => onDone.mock.calls[0])).toEqual(['admin']);
-    expect(sent['PUT /api/v1/setup/admin']).toEqual([{ user: 'admin', password: 'correct horse battery' }]);
+    expect(sent['PUT /appliance/api/v1/setup/admin']).toEqual([{ user: 'admin', password: 'correct horse battery' }]);
     expect(location.href).not.toContain('correct');
   });
 
   it('shows a server error at its field', async () => {
-    stubApi({ 'PUT /api/v1/setup/admin': [400, { code: 'invalid', field: 'password', message: 'That password is too common.' }] });
+    stubApi({ 'PUT /appliance/api/v1/setup/admin': [400, { code: 'invalid', field: 'password', message: 'That password is too common.' }] });
     render(<AdminPage onDone={vi.fn()} onExpired={vi.fn()} />);
     await fill('admin', 'correct horse battery', 'correct horse battery');
     expect(await screen.findByText('That password is too common.')).toBeInTheDocument();
@@ -49,13 +49,13 @@ describe('AdminPage', () => {
   });
 
   it('shows a generic message for a refused CSRF token and returns to the code page when the session ends', async () => {
-    stubApi({ 'PUT /api/v1/setup/admin': [403, { code: 'csrf', message: 'x' }] });
+    stubApi({ 'PUT /appliance/api/v1/setup/admin': [403, { code: 'csrf', message: 'x' }] });
     const { unmount } = render(<AdminPage onDone={vi.fn()} onExpired={vi.fn()} />);
     await fill('admin', 'correct horse battery', 'correct horse battery');
     expect(await screen.findByRole('alert')).toHaveTextContent('Reload the page');
     unmount();
 
-    stubApi({ 'PUT /api/v1/setup/admin': [401, { code: 'unauthorized', message: 'x' }] });
+    stubApi({ 'PUT /appliance/api/v1/setup/admin': [401, { code: 'unauthorized', message: 'x' }] });
     const onExpired = vi.fn();
     render(<AdminPage onDone={vi.fn()} onExpired={onExpired} />);
     await fill('admin', 'correct horse battery', 'correct horse battery');

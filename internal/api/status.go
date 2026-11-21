@@ -53,7 +53,13 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 			LastTransitionTime: &changed,
 		}
 	}
+	if v := st.DataVolume; v != nil {
+		out.DataVolume = &DataVolume{SizeBytes: v.SizeBytes, FreeBytes: v.FreeBytes}
+	}
 	out.AddonStep = addonStep(st.Conditions)
+	if out.RecoveryKit, err = s.recoveryKitInfo(ctx, st.RecoveryKit); err != nil {
+		return nil, err
+	}
 	// The cache serves the frequent polls; without the certificate the rest of the status still helps.
 	certificate, err := s.certificateInUse(ctx, s.deps.Client, a)
 	if err != nil {

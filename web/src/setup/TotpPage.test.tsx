@@ -15,7 +15,7 @@ afterEach(() => {
 describe('TotpPage', () => {
   it('shows the QR code and the secret, and keeps neither', async () => {
     const log = vi.spyOn(console, 'log');
-    stubApi({ 'POST /api/v1/setup/totp': [200, enrolment] });
+    stubApi({ 'POST /appliance/api/v1/setup/totp': [200, enrolment] });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
     expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /QR code/ })).toBeInTheDocument();
@@ -25,20 +25,20 @@ describe('TotpPage', () => {
   });
 
   it('asks for one enrolment only when StrictMode runs the effect twice', async () => {
-    const { sent } = stubApi({ 'POST /api/v1/setup/totp': [200, enrolment] });
+    const { sent } = stubApi({ 'POST /appliance/api/v1/setup/totp': [200, enrolment] });
     render(
       <StrictMode>
         <TotpPage onDone={vi.fn()} onExpired={vi.fn()} />
       </StrictMode>,
     );
     expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
-    expect(sent['POST /api/v1/setup/totp']).toHaveLength(1);
+    expect(sent['POST /appliance/api/v1/setup/totp']).toHaveLength(1);
   });
 
   it('confirms the code and moves on', async () => {
     const { sent } = stubApi({
-      'POST /api/v1/setup/totp': [200, enrolment],
-      'POST /api/v1/setup/totp/confirm': [204],
+      'POST /appliance/api/v1/setup/totp': [200, enrolment],
+      'POST /appliance/api/v1/setup/totp/confirm': [204],
     });
     const onDone = vi.fn();
     render(<TotpPage onDone={onDone} onExpired={vi.fn()} />);
@@ -46,13 +46,13 @@ describe('TotpPage', () => {
     await userEvent.type(screen.getByLabelText('Code from the authenticator'), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
-    expect(sent['POST /api/v1/setup/totp/confirm']).toEqual([{ code: '123456' }]);
+    expect(sent['POST /appliance/api/v1/setup/totp/confirm']).toEqual([{ code: '123456' }]);
   });
 
   it('shows the appliance time after a refused code', async () => {
     stubApi({
-      'POST /api/v1/setup/totp': [200, enrolment],
-      'POST /api/v1/setup/totp/confirm': [400, { code: 'invalid_code', message: 'x', serverTime: '2026-11-18T10:00:00Z' }],
+      'POST /appliance/api/v1/setup/totp': [200, enrolment],
+      'POST /appliance/api/v1/setup/totp/confirm': [400, { code: 'invalid_code', message: 'x', serverTime: '2026-11-18T10:00:00Z' }],
     });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
     await screen.findByText('JBSWY3DPEHPK3PXP');
@@ -63,7 +63,7 @@ describe('TotpPage', () => {
   });
 
   it('rejects a code that is not six digits without a request', async () => {
-    const { mock } = stubApi({ 'POST /api/v1/setup/totp': [200, enrolment] });
+    const { mock } = stubApi({ 'POST /appliance/api/v1/setup/totp': [200, enrolment] });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
     await screen.findByText('JBSWY3DPEHPK3PXP');
     await userEvent.type(screen.getByLabelText('Code from the authenticator'), '12');
@@ -73,7 +73,7 @@ describe('TotpPage', () => {
   });
 
   it('shows a generic message when the enrolment cannot be started', async () => {
-    stubApi({ 'POST /api/v1/setup/totp': [409, { code: 'conflict', message: 'x' }] });
+    stubApi({ 'POST /appliance/api/v1/setup/totp': [409, { code: 'conflict', message: 'x' }] });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Reload the page');
   });

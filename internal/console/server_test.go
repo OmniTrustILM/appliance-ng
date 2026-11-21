@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,19 +69,74 @@ func TestRoutes(t *testing.T) {
 	if res := get(t, h, "/healthz"); res.StatusCode != http.StatusOK {
 		t.Errorf("/healthz status %d, want 200", res.StatusCode)
 	}
-	if res := get(t, h, "/no/such/page"); res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") == "" {
-		t.Errorf("unknown path status %d, want the console served", res.StatusCode)
-	}
-	if res := get(t, h, "/api/v1/status"); res.StatusCode != http.StatusTeapot {
-		t.Errorf("/api/v1/status status %d, want the API's answer", res.StatusCode)
-	}
-	for _, path := range []string{"/setup", "/setup/", "/setup/admin"} {
-		if res := get(t, h, path); res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/signin" {
-			t.Errorf("%s: status %d to %q, want 302 to /signin", path, res.StatusCode, res.Header.Get("Location"))
+	for _, path := range []string{"/appliance/setup", "/appliance/setup/", "/appliance/setup/admin"} {
+		if res := get(t, h, path); res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/appliance/signin" {
+			t.Errorf("%s: status %d to %q, want 302 to /appliance/signin", path, res.StatusCode, res.Header.Get("Location"))
 		}
 	}
-	if res := get(t, h, "/setupx"); res.StatusCode != http.StatusOK {
-		t.Errorf("/setupx status %d, want the console served", res.StatusCode)
+	if res := get(t, h, "/appliance/setupx"); res.StatusCode != http.StatusOK {
+		t.Errorf("/appliance/setupx status %d, want the console served", res.StatusCode)
+	}
+}
+
+func TestConsoleServesUnderBase(t *testing.T) {
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	h := Routes(api)
+	for _, path := range []string{"/appliance/", "/appliance/signin", "/appliance/no/such/page"} {
+		if res := get(t, h, path); res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Errorf("GET %s = %d %s, want the console page", path, res.StatusCode, res.Header.Get("Content-Type"))
+		}
+	}
+	for _, path := range []string{"/appliance/api/v1/status", "/appliance/api/v1/ca.pem", "/appliance/api/x"} {
+		if res := get(t, h, path); res.StatusCode != http.StatusTeapot {
+			t.Errorf("GET %s = %d, want the API's answer", path, res.StatusCode)
+		}
+	}
+	mux := http.NewServeMux()
+	Mount(mux, testFiles)
+	if res := get(t, mux, "/appliance/assets/app.js"); res.StatusCode != http.StatusOK || body(t, res) != "console.log(1)" {
+		t.Errorf("GET /appliance/assets/app.js = %d, want the file", res.StatusCode)
+	}
+	if res := get(t, mux, "/appliance/api/v1/session"); res.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /appliance/api/v1/session = %d, want 404 from the console", res.StatusCode)
+	}
+}
+
+func TestOldPathsRedirect(t *testing.T) {
+	h := Routes(http.NotFoundHandler())
+	for path, want := range map[string]string{
+		"/":                       "/appliance/",
+		"/setup/":                 "/appliance/setup/",
+		"/signin":                 "/appliance/signin",
+		"/api/v1/status":          "/appliance/api/v1/status",
+		"/api/v1/ca.pem":          "/appliance/api/v1/ca.pem",
+		"/api/v1/audit?limit=5":   "/appliance/api/v1/audit?limit=5",
+		"/api/v1/setup/state?a=b": "/appliance/api/v1/setup/state?a=b",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+			if rec.Code != http.StatusPermanentRedirect || rec.Header().Get("Location") != want {
+				t.Errorf("%s %s = %d to %q, want 308 to %q", method, path, rec.Code, rec.Header().Get("Location"), want)
+			}
+		}
+	}
+}
+
+func TestOldPathsRedirectStaysOnSite(t *testing.T) {
+	for _, path := range []string{"//evil.example", "//evil.example/x", "/\\evil.example", "/%2F%2Fevil.example"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.URL.Path, req.URL.RawPath = path, ""
+		if strings.HasPrefix(path, "/%2F") {
+			req.URL.Path, req.URL.RawPath = "///evil.example", path
+		}
+		req.Host = "evil.example"
+		rec := httptest.NewRecorder()
+		toBase().ServeHTTP(rec, req)
+		loc := rec.Header().Get("Location")
+		if rec.Code != http.StatusPermanentRedirect || !strings.HasPrefix(loc, "/appliance/") || strings.HasPrefix(loc, "//") {
+			t.Errorf("%s = %d to %q, want 308 under /appliance/", path, rec.Code, loc)
+		}
 	}
 }
 

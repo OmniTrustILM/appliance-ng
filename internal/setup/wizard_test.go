@@ -52,7 +52,7 @@ func TestWizardRunServesTLSUntilCancelled(t *testing.T) {
 	}
 
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
-	resp, err := client.Get("https://" + ln.Addr().String() + "/api/v1/setup/state")
+	resp, err := client.Get("https://" + ln.Addr().String() + "/appliance/api/v1/setup/state")
 	if err != nil {
 		t.Fatal(err)
 	}

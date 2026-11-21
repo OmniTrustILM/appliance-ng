@@ -8,12 +8,34 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 )
 
 const index = "index.html"
 
+// Mount serves the console files of fsys under auth.BasePath on mux and sends a request for any path outside it,
+// such as a bookmark from before the console moved there, to the same path under it.
+func Mount(mux *http.ServeMux, fsys fs.FS) {
+	mux.Handle(auth.BasePath+"/", http.StripPrefix(auth.BasePath, Handler(fsys)))
+	mux.Handle("/", toBase())
+}
+
+// toBase answers 308, which keeps the method and body, to the request's path under auth.BasePath with its query.
+// The target is built from the path alone and always starts with auth.BasePath, so it never leaves the site.
+func toBase() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := auth.BasePath + "/" + strings.TrimLeft(r.URL.EscapedPath(), "/")
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusPermanentRedirect)
+	})
+}
+
 // Handler serves the console files of fsys. A path that names no file gets index.html, so the console can route
-// on the client; paths under /api/ are left to the API and answered with 404 here.
+// on the client; paths under /api/ are left to the API and answered with 404 here. Paths are relative to the
+// console's base.
 func Handler(fsys fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

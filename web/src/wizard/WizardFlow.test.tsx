@@ -22,9 +22,9 @@ const catalogue = {
 
 function open(routes: Parameters<typeof stubApi>[0]) {
   const api = stubApi({
-    'GET /api/v1/status': [200, part2],
-    'GET /api/v1/appliance': [200, appliance],
-    'GET /api/v1/catalogue': [200, catalogue],
+    'GET /appliance/api/v1/status': [200, part2],
+    'GET /appliance/api/v1/appliance': [200, appliance],
+    'GET /appliance/api/v1/catalogue': [200, catalogue],
     ...routes,
   });
   render(
@@ -43,7 +43,7 @@ const next = () => userEvent.click(screen.getByRole('button', { name: 'Continue'
 
 describe('WizardFlow', () => {
   it('walks through the steps and submits the platform without mail', async () => {
-    const { sent } = open({ 'PUT /api/v1/wizard/platform': [202] });
+    const { sent } = open({ 'PUT /appliance/api/v1/wizard/platform': [202] });
     expect(await screen.findByLabelText('ILM host name')).toHaveValue('node1.example.test');
     await userEvent.clear(screen.getByLabelText('ILM host name'));
     await userEvent.type(screen.getByLabelText('ILM host name'), 'ilm.example.test');
@@ -70,11 +70,11 @@ describe('WizardFlow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
 
     expect(await screen.findByRole('heading', { name: 'Installing the platform' })).toBeInTheDocument();
-    expect(sent['PUT /api/v1/wizard/platform']).toEqual([{ hostName: 'ilm.example.test', components: ['ilm-core'] }]);
+    expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{ hostName: 'ilm.example.test', components: ['ilm-core'] }]);
   });
 
   it('sends the mail settings and keeps the password out of the summary', async () => {
-    const { sent } = open({ 'PUT /api/v1/wizard/platform': [202] });
+    const { sent } = open({ 'PUT /appliance/api/v1/wizard/platform': [202] });
     await screen.findByLabelText('ILM host name');
     await next();
     await next();
@@ -91,7 +91,7 @@ describe('WizardFlow', () => {
     expect(screen.queryByText(/mail secret/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
     await screen.findByRole('heading', { name: 'Installing the platform' });
-    expect(sent['PUT /api/v1/wizard/platform']).toEqual([{
+    expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{
       hostName: 'node1.example.test',
       components: [],
       mail: { host: 'smtp.example.test', port: 587, security: 'starttls', from: 'ilm@example.test', username: 'mailer', password: 'mail secret' },
@@ -100,12 +100,12 @@ describe('WizardFlow', () => {
 
   it('prefills the answers, keeps a stored mail password on re-submit and starts at the progress', async () => {
     const { sent } = open({
-      'GET /api/v1/appliance': [200, {
+      'GET /appliance/api/v1/appliance': [200, {
         ...appliance,
         mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer', passwordSet: true },
         platform: { hostName: 'ilm.example.test', components: ['scanner'] },
       }],
-      'PUT /api/v1/wizard/platform': [202],
+      'PUT /appliance/api/v1/wizard/platform': [202],
     });
     expect(await screen.findByRole('heading', { name: 'Installing the platform' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Change the answers' }));
@@ -120,7 +120,7 @@ describe('WizardFlow', () => {
     await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
     await screen.findByRole('heading', { name: 'Installing the platform' });
-    expect(sent['PUT /api/v1/wizard/platform']).toEqual([{
+    expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{
       hostName: 'ilm.example.test',
       components: ['scanner'],
       mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer' },
@@ -129,7 +129,7 @@ describe('WizardFlow', () => {
 
   it('offers to keep the stored mail password only for the server and user name it was given for', async () => {
     open({
-      'GET /api/v1/appliance': [200, {
+      'GET /appliance/api/v1/appliance': [200, {
         ...appliance,
         mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer', passwordSet: true },
       }],
@@ -156,12 +156,12 @@ describe('WizardFlow', () => {
     ['mail.username', 'User name (optional)', 'Credentials need security starttls or tls; choose one, or remove the user name.'],
   ])('sends the admin back to the step of a refused field (%s)', async (field, label, message) => {
     open({
-      'GET /api/v1/appliance': [200, {
+      'GET /appliance/api/v1/appliance': [200, {
         ...appliance,
         mail: { host: 'smtp.example.test', port: 25, security: 'none', from: 'a@b.test', passwordSet: false },
         platform: { hostName: 'ilm.example.test', components: ['scanner'] },
       }],
-      'PUT /api/v1/wizard/platform': [400, { code: 'invalid', field, message }],
+      'PUT /appliance/api/v1/wizard/platform': [400, { code: 'invalid', field, message }],
     });
     await screen.findByRole('heading', { name: 'Installing the platform' });
     await userEvent.click(screen.getByRole('button', { name: 'Change the answers' }));
@@ -172,12 +172,12 @@ describe('WizardFlow', () => {
   });
 
   it('goes to the status page when the setup is complete, on load and on a refused submit', async () => {
-    open({ 'GET /api/v1/status': [200, { ...part2, setup: 'complete' }] });
+    open({ 'GET /appliance/api/v1/status': [200, { ...part2, setup: 'complete' }] });
     expect(await screen.findByText('status page')).toBeInTheDocument();
   });
 
   it('leaves for the status page when the submit finds the setup complete', async () => {
-    open({ 'PUT /api/v1/wizard/platform': [409, { code: 'setup_complete', message: 'x' }] });
+    open({ 'PUT /appliance/api/v1/wizard/platform': [409, { code: 'setup_complete', message: 'x' }] });
     await screen.findByLabelText('ILM host name');
     for (let i = 0; i < 4; i++) await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
@@ -185,7 +185,7 @@ describe('WizardFlow', () => {
   });
 
   it('shows a general message for other answers and when the appliance cannot be reached', async () => {
-    open({ 'PUT /api/v1/wizard/platform': [409, { code: 'not_set_up', message: 'x' }] });
+    open({ 'PUT /appliance/api/v1/wizard/platform': [409, { code: 'not_set_up', message: 'x' }] });
     await screen.findByLabelText('ILM host name');
     for (let i = 0; i < 4; i++) await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
@@ -196,7 +196,7 @@ describe('WizardFlow', () => {
   });
 
   it('reports a failed load', async () => {
-    stubApi({ 'GET /api/v1/status': [500, { code: 'internal', message: 'x' } ] });
+    stubApi({ 'GET /appliance/api/v1/status': [500, { code: 'internal', message: 'x' } ] });
     render(<MemoryRouter><WizardFlow /></MemoryRouter>);
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
   });

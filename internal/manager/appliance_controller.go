@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/addons"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
@@ -91,6 +92,8 @@ type ApplianceReconciler struct {
 	Recorder  events.EventRecorder
 	// Version is the manager's own version, set when it is built.
 	Version string
+	// DataDir is the directory the data volume is mounted at, whose free space the status reports.
+	DataDir string
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -184,11 +187,21 @@ func (r *ApplianceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	before := a.Status.DeepCopy()
 	r.setReleaseVersions(a)
+	r.setDataVolume(ctx, a)
+	r.removeExpiredAccess(ctx)
 	result, err := r.reconcile(ctx, a)
 	if serr := r.writeStatus(ctx, a, before); serr != nil {
 		return ctrl.Result{}, errors.Join(err, serr)
 	}
 	return result, err
+}
+
+// removeExpiredAccess revokes the issued kubeconfigs that expired and drops the records of expired talosconfigs. A
+// failure is logged and tried again on the next pass; it does not hold up the appliance.
+func (r *ApplianceReconciler) removeExpiredAccess(ctx context.Context) {
+	if err := access.RemoveExpired(ctx, r.Client, time.Now()); err != nil {
+		log.FromContext(ctx).Error(err, "remove the expired cluster access")
+	}
 }
 
 func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Appliance) (ctrl.Result, error) {

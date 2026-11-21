@@ -29,7 +29,7 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
   useEffect(() => {
     if (requested.current) return;
     requested.current = true;
-    void attempt(() => api.POST('/api/v1/setup/totp')).then((result) => {
+    void attempt(() => api.POST('/setup/totp')).then((result) => {
       if (!result) return setError(unreachable);
       if (result.data) return setEnrolment(result.data);
       if (result.response.status === 401) return onExpired();
@@ -44,7 +44,7 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
     if (!/^\d{6}$/.test(code)) return setFieldError('Enter the 6 digits shown by the authenticator.');
     setFieldError(undefined);
     setBusy(true);
-    const result = await attempt(() => api.POST('/api/v1/setup/totp/confirm', { body: { code } }));
+    const result = await attempt(() => api.POST('/setup/totp/confirm', { body: { code } }));
     setBusy(false);
     if (!result) return setError(unreachable);
     const { response, error: body } = result;

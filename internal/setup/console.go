@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/netip"
 	"strings"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 )
 
 // Port is the port wizard part 1 is served on.
@@ -42,7 +44,7 @@ func ConsoleLines(version string, ip netip.Addr, fingerprint, display string) []
 	}
 	return []string{
 		"ILM appliance " + version + " setup",
-		"Open https://" + ip.String() + ":" + Port + "/setup/",
+		"Open https://" + ip.String() + ":" + Port + auth.BasePath + "/setup/",
 		"Certificate SHA-256 " + fingerprint,
 		code,
 	}

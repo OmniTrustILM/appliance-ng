@@ -14,15 +14,15 @@ import (
 func TestSignInNeedsPasswordAndTOTP(t *testing.T) {
 	h := newHarness(t)
 
-	rec := h.request(http.MethodPost, "/api/v1/session", map[string]string{"user": testUser, "password": testPassword}, nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/session", map[string]string{"user": testUser, "password": testPassword}, nil)
 	wantStatus(t, rec, http.StatusBadRequest)
 	h.now = h.now.Add(30 * time.Second)
-	rec = h.request(http.MethodPost, "/api/v1/session", map[string]string{"user": testUser, "totp": h.code()}, nil)
+	rec = h.request(http.MethodPost, "/appliance/api/v1/session", map[string]string{"user": testUser, "totp": h.code()}, nil)
 	wantStatus(t, rec, http.StatusBadRequest)
 	h.now = h.now.Add(30 * time.Second)
 
 	s := h.signIn()
-	rec = h.request(http.MethodGet, "/api/v1/session", nil, s)
+	rec = h.request(http.MethodGet, "/appliance/api/v1/session", nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	var got Session
 	decode(t, rec, &got)
@@ -33,15 +33,15 @@ func TestSignInNeedsPasswordAndTOTP(t *testing.T) {
 
 func TestSignInSetsAStrictCookie(t *testing.T) {
 	h := newHarness(t)
-	rec := h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	wantStatus(t, rec, http.StatusOK)
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("cookies = %v, want one", cookies)
 	}
 	c := cookies[0]
-	if c.Name != auth.SessionCookieName || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteStrictMode || c.Path != "/" {
-		t.Errorf("cookie = %+v, want %s HttpOnly Secure SameSite=Strict Path=/", c, auth.SessionCookieName)
+	if c.Name != auth.SessionCookieName || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteStrictMode || c.Path != "/appliance/" {
+		t.Errorf("cookie = %+v, want %s HttpOnly Secure SameSite=Strict Path=/appliance/", c, auth.SessionCookieName)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestSignInFailuresLookAlike(t *testing.T) {
 	}
 	var first *SignInError
 	for name, body := range cases {
-		rec := h.request(http.MethodPost, "/api/v1/session", body, nil)
+		rec := h.request(http.MethodPost, "/appliance/api/v1/session", body, nil)
 		wantStatus(t, rec, http.StatusBadRequest)
 		var got SignInError
 		decode(t, rec, &got)
@@ -79,8 +79,8 @@ func TestSignInFailuresLookAlike(t *testing.T) {
 func TestSignInRefusesAReplayedCode(t *testing.T) {
 	h := newHarness(t)
 	code := h.code()
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, code), nil), http.StatusOK)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, code), nil), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, code), nil), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, code), nil), http.StatusBadRequest)
 }
 
 func TestSignInHashesForUnknownUsers(t *testing.T) {
@@ -90,7 +90,7 @@ func TestSignInHashesForUnknownUsers(t *testing.T) {
 		hashes = append(hashes, hash)
 		return auth.CheckPassword(hash, pw)
 	}
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody("nobody", testPassword, h.code()), nil), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody("nobody", testPassword, h.code()), nil), http.StatusBadRequest)
 	if len(hashes) != 1 || hashes[0] == "" {
 		t.Fatalf("password checks for an unknown user = %q, want one against a dummy hash", hashes)
 	}
@@ -102,11 +102,11 @@ func TestSignInHashesForUnknownUsers(t *testing.T) {
 func TestSignInRateLimited(t *testing.T) {
 	h := newHarness(t)
 	for i := range 5 {
-		rec := h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", h.code()), nil)
+		rec := h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, "wrong password value", h.code()), nil)
 		wantStatus(t, rec, http.StatusBadRequest)
 		_ = i
 	}
-	rec := h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	wantStatus(t, rec, http.StatusUnauthorized)
 	var locked LockedError
 	decode(t, rec, &locked)
@@ -121,10 +121,10 @@ func TestSignInRateLimited(t *testing.T) {
 func TestSignInLockedFromOnePeerOnly(t *testing.T) {
 	h := newHarness(t)
 	for range 5 {
-		wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
+		wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
 	}
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
-	rec := h.requestFrom("192.0.2.11:40000", http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
+	rec := h.requestFrom("192.0.2.11:40000", http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	wantStatus(t, rec, http.StatusOK)
 }
 
@@ -132,22 +132,22 @@ func TestSignInRateLimitedPerPeer(t *testing.T) {
 	h := newHarness(t)
 	for i := range 20 {
 		user := "nobody" + string(rune('a'+i))
-		wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(user, testPassword, "000000"), nil), http.StatusBadRequest)
+		wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(user, testPassword, "000000"), nil), http.StatusBadRequest)
 	}
-	rec := h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	wantStatus(t, rec, http.StatusUnauthorized)
-	rec = h.requestFrom("192.0.2.11:40000", http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	rec = h.requestFrom("192.0.2.11:40000", http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	wantStatus(t, rec, http.StatusOK)
 }
 
 func TestSuccessfulSignInClearsUserFailures(t *testing.T) {
 	h := newHarness(t)
 	for range 4 {
-		wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
+		wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
 	}
 	h.signIn()
 	for range 4 {
-		wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
+		wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
 	}
 	h.signIn()
 }
@@ -155,7 +155,7 @@ func TestSuccessfulSignInClearsUserFailures(t *testing.T) {
 func TestSignOut(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
-	rec := h.request(http.MethodDelete, "/api/v1/session", nil, s)
+	rec := h.request(http.MethodDelete, "/appliance/api/v1/session", nil, s)
 	wantStatus(t, rec, http.StatusNoContent)
 	cleared := false
 	for _, c := range rec.Result().Cookies() {
@@ -164,19 +164,19 @@ func TestSignOut(t *testing.T) {
 	if !cleared {
 		t.Error("sign-out does not clear the session cookie")
 	}
-	wantStatus(t, h.request(http.MethodGet, "/api/v1/session", nil, s), http.StatusUnauthorized)
+	wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/session", nil, s), http.StatusUnauthorized)
 }
 
 func TestSessionEndsWhenIdle(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
 	h.now = h.now.Add(auth.IdleTimeout + time.Minute)
-	wantStatus(t, h.request(http.MethodGet, "/api/v1/session", nil, s), http.StatusUnauthorized)
+	wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/session", nil, s), http.StatusUnauthorized)
 }
 
 func TestSignInWithAMalformedBody(t *testing.T) {
 	h := newHarness(t)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", "{", nil), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", "{", nil), http.StatusBadRequest)
 }
 
 // TestSignInBoundsConcurrentPasswordChecks checks that parallel sign-ins, which each need tens of MiB for the
@@ -202,7 +202,7 @@ func TestSignInBoundsConcurrentPasswordChecks(t *testing.T) {
 	for i := range 8 {
 		wg.Go(func() {
 			peer := fmt.Sprintf("192.0.2.%d:40000", 20+i)
-			rec := h.requestFrom(peer, http.MethodPost, "/api/v1/session", signInBody(fmt.Sprintf("nobody%d", i), testPassword, "000000"), nil)
+			rec := h.requestFrom(peer, http.MethodPost, "/appliance/api/v1/session", signInBody(fmt.Sprintf("nobody%d", i), testPassword, "000000"), nil)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("sign-in %d: status %d, want 400", i, rec.Code)
 			}

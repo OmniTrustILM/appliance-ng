@@ -27,9 +27,9 @@ type Loaded = { answers: Answers; catalogue: CatalogueItem[]; passwordSet: boole
 
 async function load(): Promise<Loaded | 'complete' | undefined> {
   const [status, appliance, catalogue] = await Promise.all([
-    attempt(() => api.GET('/api/v1/status')),
-    attempt(() => api.GET('/api/v1/appliance')),
-    attempt(() => api.GET('/api/v1/catalogue')),
+    attempt(() => api.GET('/status')),
+    attempt(() => api.GET('/appliance')),
+    attempt(() => api.GET('/catalogue')),
   ]);
   if (status?.data?.setup === 'complete') return 'complete';
   if (!status?.data || !appliance?.data || !catalogue?.data) return undefined;

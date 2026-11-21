@@ -6,7 +6,7 @@ import { Card } from '../../components/Card';
 import { PageHeading } from '../../components/PageHeading';
 import { PageWidth } from '../../components/PageWidth';
 import { Loading } from '../../components/Spinner';
-import { expiryNotice } from '../certificate/expiry';
+import { expiryNotice, warnWithinMs } from '../certificate/expiry';
 import { ConditionAreas } from './ConditionAreas';
 import { useStatus, type Status } from './useStatus';
 
@@ -20,16 +20,59 @@ const versionLabels: ReadonlyArray<readonly [keyof Status['versions'], string]> 
   ['ilm', 'ILM'],
 ];
 
-/** The warnings that ask the administrator to act: a certificate near its expiry and a pending restart. */
+/** The share of free space below which the data volume counts as running low. */
+const lowFreeShare = 0.2;
+
+const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+
+/** Formats a size in binary multiples with one decimal, such as 60.0 GB. */
+function formatBytes(bytes: number) {
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < byteUnits.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(unit === 0 ? 0 : 1)} ${byteUnits[unit]}`;
+}
+
+/** The warning about the recovery kit: not confirmed once setup is complete, or its talosconfig near its expiry. */
+function recoveryKitNotice(status: Status, now: number) {
+  const kit = status.recoveryKit;
+  if (!kit || status.setup !== 'complete') return undefined;
+  if (!kit.confirmed) return 'The recovery kit is not confirmed. Issue and store it before you rely on backups.';
+  const notAfter = kit.talosconfigNotAfter ? new Date(kit.talosconfigNotAfter).getTime() : Infinity;
+  if (notAfter <= now) return 'The talosconfig in the recovery kit has expired. Issue the kit again now.';
+  if (notAfter - now <= warnWithinMs) {
+    return 'The talosconfig in the recovery kit expires within 30 days. Issue the kit again before then.';
+  }
+  return undefined;
+}
+
+/**
+ * The warnings that ask the administrator to act: a certificate near its expiry, the recovery kit, a data volume
+ * running low and a pending restart.
+ */
 function Warnings({ status }: Readonly<{ status: Status }>) {
   const [now] = useState(Date.now);
+  const volume = status.dataVolume;
+  const lowSpace = volume && volume.sizeBytes > 0 && volume.freeBytes < volume.sizeBytes * lowFreeShare;
   const certificate = status.certificate && expiryNotice(new Date(status.certificate.notAfter), now);
+  const recoveryKit = recoveryKitNotice(status, now);
   return (
     <>
+      {recoveryKit && (
+        <Alert tone="warning">
+          {recoveryKit} <Link className={LINK} to="/recovery-kit">Open the recovery kit page</Link>
+        </Alert>
+      )}
       {certificate && (
         <Alert tone="warning">
           {certificate} <Link className={LINK} to="/certificate">Open the certificate page</Link>
         </Alert>
+      )}
+      {lowSpace && (
+        <Alert tone="warning">The data volume's free space is running low.</Alert>
       )}
       {status.rebootRequired && (
         <Alert tone="warning">
@@ -77,6 +120,11 @@ export function DashboardPage() {
                   : <Link className={LINK} to="/wizard/">Continue the setup</Link>}
               </p>
               {status.addonStep && <p className="mt-3 text-sm text-content-muted">Installing add-on: {status.addonStep}</p>}
+              {status.dataVolume && (
+                <p className="mt-3 text-sm text-content-muted">
+                  Data volume: {formatBytes(status.dataVolume.freeBytes)} free of {formatBytes(status.dataVolume.sizeBytes)}
+                </p>
+              )}
               {status.certificate && (
                 <p className="mt-3 text-sm text-content-muted">
                   Certificate valid until <span>{new Date(status.certificate.notAfter).toLocaleDateString()}</span>

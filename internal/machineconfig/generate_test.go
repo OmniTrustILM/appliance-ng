@@ -131,7 +131,7 @@ func TestGenerateContainsApplianceDocuments(t *testing.T) {
 	for name, want := range map[string][2]uint64{
 		"EPHEMERAL":  {0, 24 * gib},
 		"IMAGECACHE": {8 * gib, 8 * gib},
-		"data":       {8 * gib, 12 * gib},
+		"data":       {8 * gib, 0},
 	} {
 		if volumeMin[name] != want[0] || volumeMax[name] != want[1] {
 			t.Errorf("volume %s min/max = %d/%d, want %d/%d", name, volumeMin[name], volumeMax[name], want[0], want[1])
@@ -307,7 +307,7 @@ func TestWriteSample(t *testing.T) {
 // diskSelectorMatches evaluates the install disk selector against one disk.
 func diskSelectorMatches(disk *blockapi.DiskSpec) (bool, error) {
 	expr := cel.Expression{}
-	if err := expr.UnmarshalText([]byte(diskSelector)); err != nil {
+	if err := expr.UnmarshalText([]byte(InstallDiskSelector)); err != nil {
 		return false, err
 	}
 
@@ -351,5 +351,101 @@ func TestControlPlaneImagesAreInRelease(t *testing.T) {
 		if !pinned[ref] {
 			t.Errorf("%s image %q is not in release.yaml", name, ref)
 		}
+	}
+}
+
+// dataVolume returns the "data" user volume of a generated configuration.
+func dataVolume(t *testing.T, in Input) *block.UserVolumeConfigV1Alpha1 {
+	t.Helper()
+
+	cfg, err := configloader.NewFromBytes(mustGenerate(t, in))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, doc := range cfg.Documents() {
+		if d, ok := doc.(*block.UserVolumeConfigV1Alpha1); ok && d.MetaName == "data" {
+			return d
+		}
+	}
+
+	t.Fatal("data volume missing")
+
+	return nil
+}
+
+func dataVolumeMatches(t *testing.T, vol *block.UserVolumeConfigV1Alpha1, d *blockapi.DiskSpec, system bool) bool {
+	t.Helper()
+
+	got, err := vol.ProvisioningSpec.DiskSelectorSpec.Match.EvalBool(celenv.DiskLocator(),
+		map[string]any{"disk": d, "system_disk": system})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return got
+}
+
+func TestGenerateDataVolumeUncapped(t *testing.T) {
+	vol := dataVolume(t, testInput())
+	spec := vol.ProvisioningSpec
+
+	if spec.ProvisioningMaxSize.Value() != 0 {
+		t.Errorf("data volume maxSize = %d, want none", spec.ProvisioningMaxSize.Value())
+	}
+
+	if spec.ProvisioningMinSize.Value() != 8<<30 {
+		t.Errorf("data volume minSize = %d, want 8GiB", spec.ProvisioningMinSize.Value())
+	}
+
+	if spec.ProvisioningGrow == nil || !*spec.ProvisioningGrow {
+		t.Error("data volume must grow")
+	}
+
+	if !dataVolumeMatches(t, vol, disk("/dev/vda", 50<<30, "virtio", false, false), true) {
+		t.Error("selector must match the system disk")
+	}
+
+	if dataVolumeMatches(t, vol, disk("/dev/vdb", 50<<30, "virtio", false, false), false) {
+		t.Error("selector must not match another disk")
+	}
+}
+
+func TestGenerateDataVolumeOnSecondDisk(t *testing.T) {
+	in := testInput()
+	in.DataDisk = "ilm-data"
+	vol := dataVolume(t, in)
+
+	bySerial := &blockapi.DiskSpec{DevPath: "/dev/vdb", Serial: "ilm-data"}
+	byWWID := &blockapi.DiskSpec{DevPath: "/dev/sdb", Wwid: "ilm-data"}
+	other := &blockapi.DiskSpec{DevPath: "/dev/vdc", Serial: "other"}
+
+	for name, tt := range map[string]struct {
+		disk   *blockapi.DiskSpec
+		system bool
+		want   bool
+	}{
+		"serial":      {bySerial, false, true},
+		"wwid":        {byWWID, false, true},
+		"other disk":  {other, false, false},
+		"system disk": {bySerial, true, false},
+	} {
+		if got := dataVolumeMatches(t, vol, tt.disk, tt.system); got != tt.want {
+			t.Errorf("%s: match = %v, want %v", name, got, tt.want)
+		}
+	}
+
+	if vol.ProvisioningSpec.ProvisioningMaxSize.Value() != 0 {
+		t.Error("data volume must not be capped")
+	}
+}
+
+func TestGenerateQuotesDataDisk(t *testing.T) {
+	in := testInput()
+	in.DataDisk = `se"rial' x\`
+	vol := dataVolume(t, in)
+
+	if !dataVolumeMatches(t, vol, &blockapi.DiskSpec{Serial: in.DataDisk}, false) {
+		t.Error("selector does not match the quoted ID")
 	}
 }

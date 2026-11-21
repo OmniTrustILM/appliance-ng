@@ -34,11 +34,12 @@ func TestStatus(t *testing.T) {
 	}
 	a.Status.Versions = v1alpha1.Versions{Appliance: "0.2.0", ILM: "2.20.0"}
 	a.Status.NodeAddress = "192.0.2.5"
+	a.Status.DataVolume = &v1alpha1.VolumeStatus{SizeBytes: 100, FreeBytes: 40}
 	if err := testClient.Status().Update(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := h.request(http.MethodGet, "/api/v1/status", nil, s)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/status", nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	var got Status
 	decode(t, rec, &got)
@@ -55,6 +56,9 @@ func TestStatus(t *testing.T) {
 	if got.NodeAddress == nil || *got.NodeAddress != "192.0.2.5" {
 		t.Errorf("node address = %v", got.NodeAddress)
 	}
+	if got.DataVolume == nil || got.DataVolume.SizeBytes != 100 || got.DataVolume.FreeBytes != 40 {
+		t.Errorf("data volume = %+v", got.DataVolume)
+	}
 }
 
 func TestStatusCertificate(t *testing.T) {
@@ -69,7 +73,7 @@ func TestStatusCertificate(t *testing.T) {
 	}
 	status := func() Status {
 		var got Status
-		rec := h.request(http.MethodGet, "/api/v1/status", nil, s)
+		rec := h.request(http.MethodGet, "/appliance/api/v1/status", nil, s)
 		wantStatus(t, rec, http.StatusOK)
 		decode(t, rec, &got)
 		return got
@@ -134,7 +138,7 @@ func TestStatusOnceAddonsAreReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got Status
-	decode(t, h.request(http.MethodGet, "/api/v1/status", nil, s), &got)
+	decode(t, h.request(http.MethodGet, "/appliance/api/v1/status", nil, s), &got)
 	if got.Setup != Complete || got.AddonStep != nil {
 		t.Errorf("status = %+v, want complete without an add-on step", got)
 	}
@@ -145,7 +149,7 @@ func TestStatusBeforeTheManagerReconciled(t *testing.T) {
 	s := h.signIn()
 	createAppliance(t, "")
 	var got Status
-	decode(t, h.request(http.MethodGet, "/api/v1/status", nil, s), &got)
+	decode(t, h.request(http.MethodGet, "/appliance/api/v1/status", nil, s), &got)
 	if got.Setup != Part2 || got.Conditions == nil {
 		t.Errorf("status = %+v, want part2 with an empty condition list", got)
 	}
@@ -165,9 +169,9 @@ func TestGetAppliance(t *testing.T) {
 	if err := testClient.Update(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}, Mail: validMail()}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}, Mail: validMail()}, s), http.StatusAccepted)
 
-	rec := h.request(http.MethodGet, "/api/v1/appliance", nil, s)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/appliance", nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	var got ApplianceSettings
 	decode(t, rec, &got)
@@ -192,7 +196,7 @@ func TestGetApplianceWithoutOptionalSettings(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
 	createAppliance(t, v1alpha1.SetupPart2)
-	rec := h.request(http.MethodGet, "/api/v1/appliance", nil, s)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/appliance", nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	var got ApplianceSettings
 	decode(t, rec, &got)
@@ -203,7 +207,7 @@ func TestGetApplianceWithoutOptionalSettings(t *testing.T) {
 
 func TestCaPem(t *testing.T) {
 	h := newHarness(t)
-	wantStatus(t, h.request(http.MethodGet, "/api/v1/ca.pem", nil, nil), http.StatusNotFound)
+	wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/ca.pem", nil, nil), http.StatusNotFound)
 
 	root := selfSignedPEM(t)
 	secret := &corev1.Secret{
@@ -213,7 +217,7 @@ func TestCaPem(t *testing.T) {
 	if err := testClient.Create(context.Background(), secret); err != nil {
 		t.Fatal(err)
 	}
-	rec := h.request(http.MethodGet, "/api/v1/ca.pem", nil, nil)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/ca.pem", nil, nil)
 	wantStatus(t, rec, http.StatusOK)
 	if got := rec.Header().Get("Content-Type"); got != "application/x-pem-file" {
 		t.Errorf("Content-Type %q", got)
@@ -264,7 +268,7 @@ func TestStatusSurvivesACertificateReadError(t *testing.T) {
 	createTLSSecret(t, certs.SecretName, builtin)
 	status := func() Status {
 		var got Status
-		rec := h.request(http.MethodGet, "/api/v1/status", nil, s)
+		rec := h.request(http.MethodGet, "/appliance/api/v1/status", nil, s)
 		wantStatus(t, rec, http.StatusOK)
 		decode(t, rec, &got)
 		return got

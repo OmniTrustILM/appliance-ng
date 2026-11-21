@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
@@ -118,7 +119,7 @@ func setup() error {
 	if testRelease, err = release.Load(filepath.Join("..", "..", "release.yaml")); err != nil {
 		return err
 	}
-	for _, ns := range []string{SystemNamespace, platform.Namespace, certs.ClusterResourceNamespace} {
+	for _, ns := range []string{SystemNamespace, platform.Namespace, certs.ClusterResourceNamespace, access.Namespace} {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
 			return err
 		}
@@ -261,6 +262,35 @@ func getPlatform(t *testing.T) *otilm.Platform {
 
 func platformSpec(components ...string) *v1alpha1.PlatformSpec {
 	return &v1alpha1.PlatformSpec{Components: components}
+}
+
+func TestReconcileRemovesExpiredAccess(t *testing.T) {
+	ctx := context.Background()
+	createAppliance(t, v1alpha1.ApplianceSpec{})
+	accounts := map[string]string{"kc-expired": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), "kc-current": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+	for name, expires := range accounts {
+		sa := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Namespace: access.Namespace, Name: name,
+			Labels:      map[string]string{access.LabelKind: access.KindKubeconfig},
+			Annotations: map[string]string{access.AnnotationRole: access.RoleView, access.AnnotationExpires: expires},
+		}}
+		if err := testClient.Create(ctx, sa); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = testClient.DeleteAllOf(ctx, &corev1.ServiceAccount{}, client.InNamespace(access.Namespace))
+	})
+	r, _ := newReconciler(testClient, &fakeCluster{unready: "cert-manager"})
+	runReconcile(t, r)
+
+	list := &corev1.ServiceAccountList{}
+	if err := testClient.List(ctx, list, client.InNamespace(access.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || list.Items[0].Name != "kc-current" {
+		t.Errorf("ServiceAccounts after the pass: %v", list.Items)
+	}
 }
 
 func TestReconcileWaitsForAddons(t *testing.T) {

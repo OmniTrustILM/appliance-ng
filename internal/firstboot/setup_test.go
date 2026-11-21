@@ -59,7 +59,7 @@ func (c *setupClient) call(method, path string, body any, want int) map[string]a
 			c.t.Fatal(err)
 		}
 	}
-	req, err := http.NewRequest(method, c.base+"/api/v1/setup/"+path, bytes.NewReader(data))
+	req, err := http.NewRequest(method, c.base+"/appliance/api/v1/setup/"+path, bytes.NewReader(data))
 	if err != nil {
 		c.t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestSetupApplyGeneratesConfig(t *testing.T) {
 		t.Errorf("node IP %q link %q, want the static address on eth0", h.inputs[0].NodeIP, h.inputs[0].Link)
 	}
 	eventually(t, "installing line", func() bool {
-		return strings.Contains(h.console.String(), "Installing, the console moves to https://10.0.2.20:8443/\n")
+		return strings.Contains(h.console.String(), "Installing, the console moves to https://10.0.2.20:8443/appliance/\n")
 	})
 	if c, err := net.Dial("tcp", addr); err == nil {
 		_ = c.Close()

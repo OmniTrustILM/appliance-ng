@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	pathPlatform      = "/api/v1/platform"
+	pathPlatform      = "/appliance/api/v1/platform"
 	testMailComponent = "email-notification-provider"
 	privateComponent  = "external-authority-provider"
 )
@@ -189,7 +189,7 @@ func TestWizardAcceptsComponentsWithWhatTheyNeed(t *testing.T) {
 	createAppliance(t, v1alpha1.SetupPart2)
 	wantStatus(t, h.request(http.MethodPut, pathTestRegistry, RegistryCredentialsUpdate{Username: "robot", Password: ptr(registryPassword)}, s), http.StatusAccepted)
 	body := PlatformSettings{HostName: "ilm.example.com", Components: []string{privateComponent, testMailComponent}, Mail: validMail()}
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
 	if got := getAppliance(t).Spec.Platform.Components; !slices.Equal(got, body.Components) {
 		t.Errorf("components %v", got)
 	}

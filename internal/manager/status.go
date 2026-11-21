@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/storage"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
@@ -97,6 +99,30 @@ func (r *ApplianceReconciler) setReleaseVersions(a *v1alpha1.Appliance) {
 	if i := slices.IndexFunc(r.Release.Addons, func(f release.AddonFile) bool { return f.Name == operatorAddon }); i >= 0 {
 		keepKnown(&a.Status.Versions.Operator, r.Release.Addons[i].Version)
 	}
+}
+
+// minVolumeStep is the smallest step the free space of the data volume is reported in.
+const minVolumeStep = 1 << 20
+
+// setDataVolume records the size and free space of the data volume; a volume that cannot be read is left unset, so
+// that the status shows no free space rather than a wrong one.
+func (r *ApplianceReconciler) setDataVolume(ctx context.Context, a *v1alpha1.Appliance) {
+	size, free, err := storage.Usage(r.DataDir)
+	if err != nil {
+		log.FromContext(ctx).Info("could not read the free space of the data volume", "error", err)
+		a.Status.DataVolume = nil
+		return
+	}
+	a.Status.DataVolume = volumeStatus(size, free)
+}
+
+// volumeStatus rounds the free space down to a step of 1% of the size, at least 1 MiB, so that the status changes,
+// and the Appliance is reconciled again, only when the free space has moved by a visible step.
+func volumeStatus(size, free uint64) *v1alpha1.VolumeStatus {
+	size = min(size, math.MaxInt64)
+	step := max(size/100, minVolumeStep)
+	free = min(free, size)
+	return &v1alpha1.VolumeStatus{SizeBytes: int64(size), FreeBytes: int64(free / step * step)} //nolint:gosec
 }
 
 // nodeObservation is what the node reports of itself for the status; an empty field keeps the last known value.

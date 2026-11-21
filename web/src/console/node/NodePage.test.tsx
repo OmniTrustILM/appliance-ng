@@ -18,7 +18,7 @@ const appliance = {
 };
 
 async function loaded(routes: Parameters<typeof stubApi>[0] = {}, settings: object = appliance) {
-  const api = stubApi({ 'GET /api/v1/appliance': [200, settings], ...routes });
+  const api = stubApi({ 'GET /appliance/api/v1/appliance': [200, settings], ...routes });
   render(<MemoryRouter><NodePage /></MemoryRouter>);
   await screen.findByDisplayValue('node1.example.com');
   return api;
@@ -47,19 +47,19 @@ describe('console NodePage', () => {
   });
 
   it('shows a field error without a field of its own as a form message', async () => {
-    await loaded({ 'PUT /api/v1/node': [400, { code: 'invalid', message: 'The node address is fixed at setup.', field: 'address' }] });
+    await loaded({ 'PUT /appliance/api/v1/node': [400, { code: 'invalid', message: 'The node address is fixed at setup.', field: 'address' }] });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The node address is fixed at setup.');
   });
 
   it('saves without the host name and address and without a restart hint when the proxy is unchanged', async () => {
-    const { sent } = await loaded({ 'PUT /api/v1/node': [202] });
+    const { sent } = await loaded({ 'PUT /appliance/api/v1/node': [202] });
     const dns = screen.getByLabelText('DNS servers');
     await userEvent.clear(dns);
     await userEvent.type(dns, '10.0.0.3, 10.0.0.4');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText(/saved/i)).toBeInTheDocument();
-    expect(sent['PUT /api/v1/node']).toEqual([{
+    expect(sent['PUT /appliance/api/v1/node']).toEqual([{
       gateway: '10.0.0.1',
       dns: ['10.0.0.3', '10.0.0.4'],
       ntp: ['time.example.com'],
@@ -69,7 +69,7 @@ describe('console NodePage', () => {
   });
 
   it('points to the System page when the proxy changed', async () => {
-    await loaded({ 'PUT /api/v1/node': [202] });
+    await loaded({ 'PUT /appliance/api/v1/node': [202] });
     const https = screen.getByLabelText('HTTPS proxy');
     await userEvent.type(https, 'https://proxy.example.com:3129');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -77,33 +77,33 @@ describe('console NodePage', () => {
   });
 
   it('shows a field error from a 400 response', async () => {
-    await loaded({ 'PUT /api/v1/node': [400, { code: 'invalid', message: 'A gateway needs a static address.', field: 'gateway' }] });
+    await loaded({ 'PUT /appliance/api/v1/node': [400, { code: 'invalid', message: 'A gateway needs a static address.', field: 'gateway' }] });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('A gateway needs a static address.')).toBeInTheDocument();
     expect(screen.getByLabelText('Gateway')).toBeInvalid();
   });
 
   it('maps a proxy field error to the proxy group', async () => {
-    await loaded({ 'PUT /api/v1/node': [400, { code: 'invalid', message: 'Bad proxy.', field: 'noProxy' }] });
+    await loaded({ 'PUT /appliance/api/v1/node': [400, { code: 'invalid', message: 'Bad proxy.', field: 'noProxy' }] });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Bad proxy.')).toBeInTheDocument();
     expect(screen.getByLabelText('HTTP proxy')).toBeInvalid();
   });
 
   it('shows other failures as a form message', async () => {
-    await loaded({ 'PUT /api/v1/node': [409, { code: 'conflict', message: 'The setup is not complete.' }] });
+    await loaded({ 'PUT /appliance/api/v1/node': [409, { code: 'conflict', message: 'The setup is not complete.' }] });
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The setup is not complete.');
   });
 
   it('validates before sending', async () => {
-    const { sent } = await loaded({ 'PUT /api/v1/node': [202] });
+    const { sent } = await loaded({ 'PUT /appliance/api/v1/node': [202] });
     const gateway = screen.getByLabelText('Gateway');
     await userEvent.clear(gateway);
     await userEvent.type(gateway, 'nope');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(screen.getByLabelText('Gateway')).toBeInvalid();
-    expect(sent['PUT /api/v1/node']).toBeUndefined();
+    expect(sent['PUT /appliance/api/v1/node']).toBeUndefined();
   });
 
   it('says so when the appliance cannot be read', async () => {
@@ -114,7 +114,7 @@ describe('console NodePage', () => {
   });
 
   it('says so when saving cannot reach the appliance', async () => {
-    const { mock } = await loaded({ 'PUT /api/v1/node': [202] });
+    const { mock } = await loaded({ 'PUT /appliance/api/v1/node': [202] });
     mock.mockRejectedValueOnce(new TypeError('down'));
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be reached/i);

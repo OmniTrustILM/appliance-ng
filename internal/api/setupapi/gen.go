@@ -187,28 +187,28 @@ type PostSetupTotpConfirmJSONRequestBody = TotpCode
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// PutSetupAdmin Set the first administrator
-	// (PUT /api/v1/setup/admin)
+	// (PUT /setup/admin)
 	PutSetupAdmin(w http.ResponseWriter, r *http.Request)
 	// PostSetupApply Apply the saved settings and finish wizard part 1
-	// (POST /api/v1/setup/apply)
+	// (POST /setup/apply)
 	PostSetupApply(w http.ResponseWriter, r *http.Request)
 	// PostSetupCode Start the setup session with the one-time setup code
-	// (POST /api/v1/setup/code)
+	// (POST /setup/code)
 	PostSetupCode(w http.ResponseWriter, r *http.Request)
 	// GetSetupDhcp The values DHCP delivered, to prefill the network settings
-	// (GET /api/v1/setup/dhcp)
+	// (GET /setup/dhcp)
 	GetSetupDhcp(w http.ResponseWriter, r *http.Request)
 	// PutSetupNode Set the network settings of the node
-	// (PUT /api/v1/setup/node)
+	// (PUT /setup/node)
 	PutSetupNode(w http.ResponseWriter, r *http.Request)
 	// GetSetupState The step wizard part 1 resumes from
-	// (GET /api/v1/setup/state)
+	// (GET /setup/state)
 	GetSetupState(w http.ResponseWriter, r *http.Request)
 	// PostSetupTotp Enrol the administrator's TOTP authenticator
-	// (POST /api/v1/setup/totp)
+	// (POST /setup/totp)
 	PostSetupTotp(w http.ResponseWriter, r *http.Request)
 	// PostSetupTotpConfirm Confirm the enrolment with a code from the authenticator
-	// (POST /api/v1/setup/totp/confirm)
+	// (POST /setup/totp/confirm)
 	PostSetupTotpConfirm(w http.ResponseWriter, r *http.Request)
 }
 
@@ -453,14 +453,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/setup/code", wrapper.PostSetupCode)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/setup/state", wrapper.GetSetupState)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/setup/admin", wrapper.PutSetupAdmin)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/setup/totp", wrapper.PostSetupTotp)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/setup/totp/confirm", wrapper.PostSetupTotpConfirm)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/setup/node", wrapper.PutSetupNode)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/setup/dhcp", wrapper.GetSetupDhcp)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/setup/apply", wrapper.PostSetupApply)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/code", wrapper.PostSetupCode)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/setup/state", wrapper.GetSetupState)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/setup/admin", wrapper.PutSetupAdmin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/totp", wrapper.PostSetupTotp)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/totp/confirm", wrapper.PostSetupTotpConfirm)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/setup/node", wrapper.PutSetupNode)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/setup/dhcp", wrapper.GetSetupDhcp)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/apply", wrapper.PostSetupApply)
 
 	return m
 }
@@ -948,28 +948,28 @@ func (response PostSetupTotpConfirm409JSONResponse) VisitPostSetupTotpConfirmRes
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// PutSetupAdmin Set the first administrator
-	// (PUT /api/v1/setup/admin)
+	// (PUT /setup/admin)
 	PutSetupAdmin(ctx context.Context, request PutSetupAdminRequestObject) (PutSetupAdminResponseObject, error)
 	// PostSetupApply Apply the saved settings and finish wizard part 1
-	// (POST /api/v1/setup/apply)
+	// (POST /setup/apply)
 	PostSetupApply(ctx context.Context, request PostSetupApplyRequestObject) (PostSetupApplyResponseObject, error)
 	// PostSetupCode Start the setup session with the one-time setup code
-	// (POST /api/v1/setup/code)
+	// (POST /setup/code)
 	PostSetupCode(ctx context.Context, request PostSetupCodeRequestObject) (PostSetupCodeResponseObject, error)
 	// GetSetupDhcp The values DHCP delivered, to prefill the network settings
-	// (GET /api/v1/setup/dhcp)
+	// (GET /setup/dhcp)
 	GetSetupDhcp(ctx context.Context, request GetSetupDhcpRequestObject) (GetSetupDhcpResponseObject, error)
 	// PutSetupNode Set the network settings of the node
-	// (PUT /api/v1/setup/node)
+	// (PUT /setup/node)
 	PutSetupNode(ctx context.Context, request PutSetupNodeRequestObject) (PutSetupNodeResponseObject, error)
 	// GetSetupState The step wizard part 1 resumes from
-	// (GET /api/v1/setup/state)
+	// (GET /setup/state)
 	GetSetupState(ctx context.Context, request GetSetupStateRequestObject) (GetSetupStateResponseObject, error)
 	// PostSetupTotp Enrol the administrator's TOTP authenticator
-	// (POST /api/v1/setup/totp)
+	// (POST /setup/totp)
 	PostSetupTotp(ctx context.Context, request PostSetupTotpRequestObject) (PostSetupTotpResponseObject, error)
 	// PostSetupTotpConfirm Confirm the enrolment with a code from the authenticator
-	// (POST /api/v1/setup/totp/confirm)
+	// (POST /setup/totp/confirm)
 	PostSetupTotpConfirm(ctx context.Context, request PostSetupTotpConfirmRequestObject) (PostSetupTotpConfirmResponseObject, error)
 }
 

@@ -1,4 +1,5 @@
-const warnWithinMs = 30 * 24 * 60 * 60 * 1000;
+/** How long before an expiry the console warns. */
+export const warnWithinMs = 30 * 24 * 60 * 60 * 1000;
 
 /** The warning for a certificate that expired or expires within 30 days of now, or undefined for none. */
 export function expiryNotice(notAfter: Date, now: number) {

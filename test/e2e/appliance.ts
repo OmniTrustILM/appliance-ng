@@ -97,8 +97,8 @@ function consoleOrigin() {
 async function fetchRootCA(): Promise<string> {
   const context = await request.newContext({ ignoreHTTPSErrors: true });
   try {
-    const res = await context.get(`${input('E2E_CONSOLE_URL')}/api/v1/ca.pem`, { timeout: 10_000 });
-    if (!res.ok()) throw new Error(`GET /api/v1/ca.pem: HTTP ${res.status()}`);
+    const res = await context.get(`${input('E2E_CONSOLE_URL')}/appliance/api/v1/ca.pem`, { timeout: 10_000 });
+    if (!res.ok()) throw new Error(`GET /appliance/api/v1/ca.pem: HTTP ${res.status()}`);
     return await res.text();
   } finally {
     await context.dispose();
@@ -175,7 +175,7 @@ export async function signIn(page: Page) {
   const signInButton = page.getByRole('button', { name: 'Sign in' });
   const signedIn = page.getByRole('button', { name: 'Sign out' });
   const lockedOut = page.getByText('Too many failed attempts.');
-  await page.goto('/signin');
+  await page.goto('/appliance/signin');
   for (let attempt = 1; ; attempt++) {
     await page.getByLabel('User name').fill(input('E2E_USER'));
     await fillSecret(page.getByLabel('Password'), input('E2E_PASSWORD'), 'the password');

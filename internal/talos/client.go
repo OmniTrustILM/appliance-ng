@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // Stage is the coarse lifecycle stage of the node.
@@ -86,8 +87,14 @@ type Node interface {
 	// is dropped. The result is persisted and applied in no-reboot mode; a failed apply returns an error that names
 	// the changed documents.
 	ReplaceDocuments(ctx context.Context, docs []configdoc.Document, remove []string) error
+	// Disks lists the disks of the node, ordered by device path; before the install, the disk installSelector
+	// matches first is marked as the system disk.
+	Disks(ctx context.Context, installSelector string) ([]Disk, error)
 	// Versions returns the Talos version of the node and the Kubernetes version of its machine configuration.
 	Versions(ctx context.Context) (talos, kubernetes string, err error)
+	// ClientConfig generates a talosconfig for the node with a client certificate of roles, valid for ttl; the node's
+	// CA signs it, so its key never leaves the node.
+	ClientConfig(ctx context.Context, roles []string, ttl time.Duration) ([]byte, error)
 	Reboot(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 }
@@ -326,6 +333,21 @@ func (n *node) Kubeconfig(ctx context.Context) ([]byte, error) {
 	}
 
 	return kc, nil
+}
+
+func (n *node) ClientConfig(ctx context.Context, roles []string, ttl time.Duration) ([]byte, error) {
+	resp, err := n.c.GenerateClientConfiguration(ctx, &machineapi.GenerateClientConfigurationRequest{
+		Roles:  roles,
+		CrtTtl: durationpb.New(ttl),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate a client configuration: %w", err)
+	}
+	msgs := resp.GetMessages()
+	if len(msgs) == 0 || len(msgs[0].GetTalosconfig()) == 0 {
+		return nil, errors.New("the node returned no client configuration")
+	}
+	return msgs[0].GetTalosconfig(), nil
 }
 
 // Reboot reboots the node.

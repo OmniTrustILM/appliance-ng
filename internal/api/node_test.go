@@ -39,7 +39,7 @@ func TestPutNodeChangesTheNodeSettings(t *testing.T) {
 	s := h.signIn()
 	createStaticAppliance(t)
 
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", validNodeUpdate(), s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", validNodeUpdate(), s), http.StatusAccepted)
 	spec := getAppliance(t).Spec
 	want := v1alpha1.ApplianceSpec{
 		TLS:   v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
@@ -61,7 +61,7 @@ func TestPutNodeChangesTheNodeSettings(t *testing.T) {
 	// Without a proxy and an unchanged rest, only the proxy is removed; the host name may be left out.
 	body := validNodeUpdate()
 	body.Proxy, body.HostName = nil, nil
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", body, s), http.StatusAccepted)
 	if got := getAppliance(t).Spec.Proxy; got != nil {
 		t.Errorf("proxy %+v, want it removed", got)
 	}
@@ -72,7 +72,7 @@ func TestPutNodeChangesTheNodeSettings(t *testing.T) {
 
 	// The same settings again change nothing.
 	generation := getAppliance(t).Generation
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", body, s), http.StatusAccepted)
 	if got := getAppliance(t).Generation; got != generation {
 		t.Errorf("generation %d, want %d after an unchanged request", got, generation)
 	}
@@ -85,7 +85,7 @@ func TestNodeAddressReadOnly(t *testing.T) {
 	for _, address := range []string{"192.0.2.11/24", "192.0.2.10/24", ""} {
 		body := validNodeUpdate()
 		body.Address = ptr(address)
-		rec := h.request(http.MethodPut, "/api/v1/node", body, s)
+		rec := h.request(http.MethodPut, "/appliance/api/v1/node", body, s)
 		wantStatus(t, rec, http.StatusBadRequest)
 		var got Error
 		decode(t, rec, &got)
@@ -120,7 +120,7 @@ func TestPutNodeValidates(t *testing.T) {
 		{"proxy credentials", edit(func(b *NodeUpdate) { b.Proxy.Http = ptr("http://u:p@proxy.example.com") }), "proxy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := h.request(http.MethodPut, "/api/v1/node", tc.body, s)
+			rec := h.request(http.MethodPut, "/appliance/api/v1/node", tc.body, s)
 			wantStatus(t, rec, http.StatusBadRequest)
 			var got Error
 			decode(t, rec, &got)
@@ -129,7 +129,7 @@ func TestPutNodeValidates(t *testing.T) {
 			}
 		})
 	}
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", "null", s), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", "null", s), http.StatusBadRequest)
 	if got := getAppliance(t).Spec.Node.HostName; got != "appliance.example.com" {
 		t.Errorf("host name %q changed by a refused request", got)
 	}
@@ -140,7 +140,7 @@ func TestPutNodeWithDHCP(t *testing.T) {
 	s := h.signIn()
 	createAppliance(t, v1alpha1.SetupComplete)
 	body := validNodeUpdate()
-	rec := h.request(http.MethodPut, "/api/v1/node", body, s)
+	rec := h.request(http.MethodPut, "/appliance/api/v1/node", body, s)
 	wantStatus(t, rec, http.StatusBadRequest)
 	var got Error
 	decode(t, rec, &got)
@@ -148,7 +148,7 @@ func TestPutNodeWithDHCP(t *testing.T) {
 		t.Errorf("field = %v, want gateway: a gateway needs a static address", got.Field)
 	}
 	body.Gateway = ptr("")
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", body, s), http.StatusAccepted)
 	if a := getAppliance(t); a.Spec.Node.Gateway != "" || a.Spec.Node.HostName != "appliance.example.com" {
 		t.Errorf("node %+v", a.Spec.Node)
 	}
@@ -157,7 +157,7 @@ func TestPutNodeWithDHCP(t *testing.T) {
 func TestPutNodeBeforeTheAppliance(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", validNodeUpdate(), s), http.StatusConflict)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", validNodeUpdate(), s), http.StatusConflict)
 }
 
 func TestNodeHostNameReadOnly(t *testing.T) {
@@ -167,7 +167,7 @@ func TestNodeHostNameReadOnly(t *testing.T) {
 	for _, name := range []string{"pki.example.com", "ilm", ""} {
 		body := validNodeUpdate()
 		body.HostName = ptr(name)
-		rec := h.request(http.MethodPut, "/api/v1/node", body, s)
+		rec := h.request(http.MethodPut, "/appliance/api/v1/node", body, s)
 		wantStatus(t, rec, http.StatusBadRequest)
 		wantField(t, rec.Body.Bytes(), "hostName", "fixed after setup")
 	}

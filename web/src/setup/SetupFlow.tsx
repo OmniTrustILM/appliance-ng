@@ -33,7 +33,7 @@ export function SetupFlow() {
 
   useEffect(() => {
     let active = true;
-    void attempt(() => api.GET('/api/v1/setup/state')).then((result) => {
+    void attempt(() => api.GET('/setup/state')).then((result) => {
       if (!active) return;
       if (!result?.data) return setError(unreachable);
       setCsrfToken(result.data.csrfToken);

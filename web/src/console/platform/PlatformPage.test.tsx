@@ -18,8 +18,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('PlatformPage', () => {
   it('shows the version read-only and saves the host name and the toggled components', async () => {
     const { sent } = stubApi({
-      'GET /api/v1/platform': platform([component('scanner', { chosen: true }), component('discovery')]),
-      'PUT /api/v1/platform': [202],
+      'GET /appliance/api/v1/platform': platform([component('scanner', { chosen: true }), component('discovery')]),
+      'PUT /appliance/api/v1/platform': [202],
     });
     open();
     expect(await screen.findByLabelText('ILM version')).toHaveValue('2.17.0');
@@ -32,12 +32,12 @@ describe('PlatformPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText(/install in the background/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'dashboard' })).toHaveAttribute('href', '/');
-    expect(sent['PUT /api/v1/platform']).toEqual([{ hostName: 'new.example.test', components: ['discovery'] }]);
+    expect(sent['PUT /appliance/api/v1/platform']).toEqual([{ hostName: 'new.example.test', components: ['discovery'] }]);
   });
 
   it('disables a private component that needs credentials and links to the registries', async () => {
     stubApi({
-      'GET /api/v1/platform': platform([
+      'GET /appliance/api/v1/platform': platform([
         component('vault', { private: true, needsCredentials: true }),
         component('scanner', { private: true, chosen: true }),
       ]),
@@ -51,8 +51,8 @@ describe('PlatformPage', () => {
 
   it('keeps a chosen component that lost its credentials enabled, so it can be removed', async () => {
     const { sent } = stubApi({
-      'GET /api/v1/platform': platform([component('vault', { private: true, chosen: true, needsCredentials: true })]),
-      'PUT /api/v1/platform': [202],
+      'GET /appliance/api/v1/platform': platform([component('vault', { private: true, chosen: true, needsCredentials: true })]),
+      'PUT /appliance/api/v1/platform': [202],
     });
     open();
     const vault = await screen.findByRole('checkbox', { name: /Vault/ });
@@ -61,11 +61,11 @@ describe('PlatformPage', () => {
     await userEvent.click(vault);
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText(/install in the background/i)).toBeInTheDocument();
-    expect(sent['PUT /api/v1/platform']).toEqual([{ hostName: 'ilm.example.test', components: [] }]);
+    expect(sent['PUT /appliance/api/v1/platform']).toEqual([{ hostName: 'ilm.example.test', components: [] }]);
   });
 
   it('describes only the components that need something', async () => {
-    stubApi({ 'GET /api/v1/platform': platform([component('scanner')]) });
+    stubApi({ 'GET /appliance/api/v1/platform': platform([component('scanner')]) });
     open();
     const row = (await screen.findByRole('checkbox', { name: 'Scanner' })).closest('label');
     expect(row?.querySelector('.text-content-muted')).toBeNull();
@@ -73,8 +73,8 @@ describe('PlatformPage', () => {
 
   it('keeps the saved choice on screen until the new state is loaded', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/platform': platform([component('scanner'), component('discovery')]),
-      'PUT /api/v1/platform': [202],
+      'GET /appliance/api/v1/platform': platform([component('scanner'), component('discovery')]),
+      'PUT /appliance/api/v1/platform': [202],
     });
     open();
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Discovery' }));
@@ -86,7 +86,7 @@ describe('PlatformPage', () => {
   });
 
   it('hints at the mail page for a component that needs mail', async () => {
-    stubApi({ 'GET /api/v1/platform': platform([component('email', { needsMail: true })]) });
+    stubApi({ 'GET /appliance/api/v1/platform': platform([component('email', { needsMail: true })]) });
     open();
     expect(await screen.findByRole('link', { name: /mail server/i })).toHaveAttribute('href', '/mail');
     expect(screen.getByRole('checkbox', { name: /Email/ })).toBeEnabled();
@@ -94,8 +94,8 @@ describe('PlatformPage', () => {
 
   it('shows a refused component and a refused host name at their place', async () => {
     stubApi({
-      'GET /api/v1/platform': platform([component('email')]),
-      'PUT /api/v1/platform': (body) => (body as { hostName: string }).hostName === 'bad'
+      'GET /appliance/api/v1/platform': platform([component('email')]),
+      'PUT /appliance/api/v1/platform': (body) => (body as { hostName: string }).hostName === 'bad'
         ? [400, { code: 'invalid', field: 'hostName', message: 'Name is not valid.' }]
         : [400, { code: 'invalid', field: 'components', message: 'The component "email" sends mail and needs the mail server settings.' }],
     });
@@ -112,11 +112,11 @@ describe('PlatformPage', () => {
   });
 
   it('reports a page that cannot be loaded and a save that cannot reach the appliance', async () => {
-    stubApi({ 'GET /api/v1/platform': [409, { code: 'conflict', message: 'Setup is not done.' }] });
+    stubApi({ 'GET /appliance/api/v1/platform': [409, { code: 'conflict', message: 'Setup is not done.' }] });
     const first = open();
     expect(await screen.findByRole('alert')).toHaveTextContent('Setup is not done.');
     first.unmount();
-    const { mock } = stubApi({ 'GET /api/v1/platform': platform([]) });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/platform': platform([]) });
     open();
     await screen.findByLabelText('ILM version');
     mock.mockRejectedValueOnce(new TypeError('offline'));

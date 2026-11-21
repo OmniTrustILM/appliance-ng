@@ -26,7 +26,7 @@ export function MailTest({ disabled, settings }: Readonly<{ disabled: boolean; s
   async function send() {
     setBusy(true);
     setResult(undefined);
-    const sent = await attempt(() => api.POST('/api/v1/mail/test', { body: { to: to.trim() } }));
+    const sent = await attempt(() => api.POST('/mail/test', { body: { to: to.trim() } }));
     setBusy(false);
     if (!sent) return setResult({ tone: 'error', message: unreachable, settings });
     if (sent.response.ok) return setResult({ tone: 'success', message: `The test mail was sent to ${to.trim()}.`, settings });

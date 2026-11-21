@@ -23,7 +23,7 @@ const proxyFields = new Set(['proxy', 'http', 'https', 'noProxy']);
 /** The form fields that show their own error; the server's other fields go to the form message. */
 const fieldsWithError = new Set(['gateway', 'dns', 'ntp', 'proxy']);
 
-const loadAppliance = () => api.GET('/api/v1/appliance');
+const loadAppliance = () => api.GET('/appliance');
 
 const sameProxy = (a?: Proxy, b?: Proxy) => JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
 
@@ -66,7 +66,7 @@ export function NodePage() {
     const proxy = proxyOf(network);
     setBusy(true);
     const result = await attempt(() =>
-      api.PUT('/api/v1/node', {
+      api.PUT('/node', {
         body: {
           gateway: gateway.trim(),
           dns: splitList(network.dns),

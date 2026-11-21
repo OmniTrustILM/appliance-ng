@@ -192,6 +192,33 @@ type ApplianceStatus struct {
 	NodeAddress string `json:"nodeAddress,omitempty"`
 	// +optional
 	RebootRequired bool `json:"rebootRequired,omitempty"`
+	// DataVolume is the size and free space of the data volume; unset while the manager cannot read it.
+	// +optional
+	DataVolume *VolumeStatus `json:"dataVolume,omitempty"`
+	// RecoveryKit describes the latest recovery kit; unset until one is issued.
+	// +optional
+	RecoveryKit *RecoveryKitStatus `json:"recoveryKit,omitempty"`
+}
+
+// RecoveryKitStatus describes the latest recovery kit, never its key or passphrase.
+type RecoveryKitStatus struct {
+	// +optional
+	IssuedAt *metav1.Time `json:"issuedAt,omitempty"`
+	// Confirmed is set once the administrator confirms that the latest kit is stored safely.
+	// +optional
+	Confirmed bool `json:"confirmed,omitempty"`
+	// TalosconfigNotAfter is when the kit's talosconfig expires.
+	// +optional
+	TalosconfigNotAfter *metav1.Time `json:"talosconfigNotAfter,omitempty"`
+	// Recipient is the public key the backups are encrypted to.
+	// +optional
+	Recipient string `json:"recipient,omitempty"`
+}
+
+// VolumeStatus is the size and free space of a volume, in bytes.
+type VolumeStatus struct {
+	SizeBytes int64 `json:"sizeBytes"`
+	FreeBytes int64 `json:"freeBytes"`
 }
 
 // Appliance is the single cluster-scoped resource that describes the whole appliance.

@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -14,8 +16,12 @@ import (
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	"github.com/go-logr/logr"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crmanager "sigs.k8s.io/controller-runtime/pkg/manager"
@@ -96,12 +102,16 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err != nil {
 		return err
 	}
-	// One replica: no leader election. Metrics are off; the console listener serves the health check.
+	// One replica: no leader election. Metrics are off; the console listener serves the health check. The issued
+	// cluster access is read past the cache, so that no informer watches every ServiceAccount and ConfigMap.
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: "0",
 		Cache:                  manager.CacheOptions(),
+		Client: client.Options{Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&corev1.ServiceAccount{}, &corev1.ConfigMap{}, &rbacv1.ClusterRoleBinding{}},
+		}},
 	})
 	if err != nil {
 		return fmt.Errorf("create the controller manager: %w", err)
@@ -115,6 +125,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Release:   rel,
 		Recorder:  mgr.GetEventRecorder(kube.ManagerFieldManager),
 		Version:   version,
+		DataDir:   data,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the Appliance controller: %w", err)
@@ -137,25 +148,40 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		return fmt.Errorf("set up the node controller: %w", err)
 	}
 
+	kubeClient, clusterCA, err := clusterAccess(cfg)
+	if err != nil {
+		return err
+	}
+
 	auditLog, err := audit.Open(data)
 	if err != nil {
 		return fmt.Errorf("open the audit log: %w", err)
 	}
 	defer func() { _ = auditLog.Close() }()
 	api := apiserver.NewServer(apiserver.Deps{
-		Client:  mgr.GetClient(),
-		Reader:  mgr.GetAPIReader(),
-		Users:   users,
-		Audit:   auditLog,
-		Release: rel,
-		Log:     log,
-		Talos:   talosAccess,
+		Client:    mgr.GetClient(),
+		Reader:    mgr.GetAPIReader(),
+		Kube:      kubeClient,
+		ClusterCA: clusterCA,
+		Users:     users,
+		Audit:     auditLog,
+		Release:   rel,
+		Log:       log,
+		Talos:     talosAccess,
 	})
 	cert, err := console.NewCertificate(log, mgr.GetClient())
 	if err != nil {
 		return err
 	}
 	srv := console.NewServer(log, listen, console.Routes(api.Handler()), cert)
+	if err := addRunnables(mgr, log, cert, srv); err != nil {
+		return err
+	}
+	return mgr.Start(ctx)
+}
+
+// addRunnables adds the console certificate refresh, the console server and the failed pod sweep to mgr.
+func addRunnables(mgr crmanager.Manager, log *slog.Logger, cert *console.Certificate, srv *http.Server) error {
 	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error { return cert.Run(ctx, certificateRefresh) })); err != nil {
 		return fmt.Errorf("add the console certificate: %w", err)
 	}
@@ -167,5 +193,30 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	})); err != nil {
 		return fmt.Errorf("add the failed pod sweep: %w", err)
 	}
-	return mgr.Start(ctx)
+	return nil
+}
+
+// clusterAccess returns the clientset the API issues cluster access with and the CA the issued kubeconfigs trust.
+func clusterAccess(cfg *rest.Config) (kubernetes.Interface, []byte, error) {
+	kubeClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create the Kubernetes clientset: %w", err)
+	}
+	ca, err := clusterCA(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return kubeClient, ca, nil
+}
+
+// clusterCA returns the CA of the API server the configuration trusts: in the cluster, the CA of its ServiceAccount.
+func clusterCA(cfg *rest.Config) ([]byte, error) {
+	loaded := rest.CopyConfig(cfg)
+	if err := rest.LoadTLSFiles(loaded); err != nil {
+		return nil, fmt.Errorf("read the cluster CA: %w", err)
+	}
+	if len(loaded.CAData) == 0 {
+		return nil, errors.New("the Kubernetes configuration names no cluster CA")
+	}
+	return loaded.CAData, nil
 }

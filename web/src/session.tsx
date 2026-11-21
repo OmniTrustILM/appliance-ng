@@ -54,7 +54,7 @@ export function SessionProvider({ children }: Readonly<{ children: ReactNode }>)
     });
     let active = true;
     const before = changes.current;
-    void attempt(() => api.GET('/api/v1/session')).then((result) => {
+    void attempt(() => api.GET('/session')).then((result) => {
       if (!active || changes.current !== before) return;
       const data = result?.data;
       setCsrfToken(data?.csrfToken);

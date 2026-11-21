@@ -1,4 +1,4 @@
-# EPHEMERAL, IMAGECACHE and the "data" volume together fit on a 50 GB disk.
+# EPHEMERAL and IMAGECACHE are capped; the "data" volume takes the rest of its disk.
 apiVersion: v1alpha1
 kind: VolumeConfig
 name: EPHEMERAL
@@ -19,9 +19,9 @@ kind: UserVolumeConfig
 name: data
 provisioning:
   diskSelector:
-    match: system_disk
+    match: {{ .DataSelector }}
   minSize: 8GiB
-  maxSize: 12GiB
+  grow: true
 ---
 apiVersion: v1alpha1
 kind: ImageCacheConfig

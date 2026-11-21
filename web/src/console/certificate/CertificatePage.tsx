@@ -16,9 +16,9 @@ import { UploadForm } from './UploadForm';
 
 const switching = 'The console and ILM switch to the new certificate within about a minute. Reload the page then and accept the new certificate if the browser asks.';
 
-const loadCertificate = () => api.GET('/api/v1/certificate');
-const uploadCertificate = (form: FormData) => api.PUT('/api/v1/certificate', { body: form as never });
-const uploadSigned = (form: FormData) => api.PUT('/api/v1/certificate/csr/signed', { body: form as never });
+const loadCertificate = () => api.GET('/certificate');
+const uploadCertificate = (form: FormData) => api.PUT('/certificate', { body: form as never });
+const uploadSigned = (form: FormData) => api.PUT('/certificate/csr/signed', { body: form as never });
 
 /** Shows the certificate in use and replaces it: an uploaded certificate, a signed request or the built-in one. */
 export function CertificatePage() {
@@ -37,7 +37,7 @@ export function CertificatePage() {
   async function createRequest() {
     setCreating(true);
     setCsrError(undefined);
-    const result = await attempt(() => api.POST('/api/v1/certificate/csr', { parseAs: 'text' }));
+    const result = await attempt(() => api.POST('/certificate/csr', { parseAs: 'text' }));
     setCreating(false);
     if (!result) return setCsrError(unreachable);
     if (!result.response.ok) {
@@ -50,7 +50,7 @@ export function CertificatePage() {
   async function goBuiltin() {
     setAsking(false);
     setBuiltinError(undefined);
-    const result = await attempt(() => api.PUT('/api/v1/certificate/builtin'));
+    const result = await attempt(() => api.PUT('/certificate/builtin'));
     if (!result) return setBuiltinError(unreachable);
     if (!result.response.ok) {
       return setBuiltinError(result.error?.message ?? 'The appliance could not switch to the built-in certificate.');

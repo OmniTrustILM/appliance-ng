@@ -19,7 +19,7 @@ export function SignOutButton() {
   async function click() {
     setError(undefined);
     setBusy(true);
-    const result = await attempt(() => api.DELETE('/api/v1/session'));
+    const result = await attempt(() => api.DELETE('/session'));
     setBusy(false);
     if (!result) return setError(unreachable);
     const { status, ok } = result.response;

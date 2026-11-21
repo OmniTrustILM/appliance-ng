@@ -1,8 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import { basePath } from './src/base';
 
 export default defineConfig({
+  base: `${basePath}/`,
   plugins: [react(), tailwindcss()],
   build: {
     // dist/index.html is the placeholder the Go build embeds when the console is not built; the build goes

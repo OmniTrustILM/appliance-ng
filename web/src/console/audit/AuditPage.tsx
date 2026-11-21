@@ -16,6 +16,12 @@ const results = {
 
 const CELL = 'px-3 py-2.5 align-top';
 
+/** The changed paths of an entry, or what an issued or revoked credential grants. */
+function changes(entry: AuditEntry) {
+  if (entry.paths.length > 0) return entry.paths.join(', ');
+  return Object.entries(entry.details ?? {}).map(([key, value]) => `${key}: ${value}`).join(', ');
+}
+
 function EntryRow({ entry }: Readonly<{ entry: AuditEntry }>) {
   const result = results[entry.result];
   return (
@@ -23,7 +29,7 @@ function EntryRow({ entry }: Readonly<{ entry: AuditEntry }>) {
       <td className={`${CELL} whitespace-nowrap`}>{new Date(entry.time).toLocaleString()}</td>
       <td className={CELL}>{entry.user || '—'}</td>
       <td className={`${CELL} whitespace-nowrap font-mono text-[13px]`}>{entry.action}</td>
-      <td className={`${CELL} font-mono text-[13px] [overflow-wrap:anywhere]`}>{entry.paths.join(', ') || '—'}</td>
+      <td className={`${CELL} font-mono text-[13px] [overflow-wrap:anywhere]`}>{changes(entry) || '—'}</td>
       <td className={CELL}><Badge tone={result.tone}>{result.label}</Badge></td>
     </tr>
   );
@@ -38,7 +44,7 @@ function EntryTable({ entries }: Readonly<{ entries: readonly AuditEntry[] }>) {
             <th scope="col" className={`${CELL} font-semibold`}>Time</th>
             <th scope="col" className={`${CELL} font-semibold`}>User</th>
             <th scope="col" className={`${CELL} font-semibold`}>Action</th>
-            <th scope="col" className={`${CELL} font-semibold`}>Changed paths</th>
+            <th scope="col" className={`${CELL} font-semibold`}>Changes</th>
             <th scope="col" className={`${CELL} font-semibold`}>Result</th>
           </tr>
         </thead>

@@ -13,7 +13,7 @@ const base = { setup: 'part2', conditions: [], versions: {}, rebootRequired: fal
 describe('ProgressPage', () => {
   it('shows the add-on step and the conditions with their reasons and messages', async () => {
     stubApi({
-      'GET /api/v1/status': [200, {
+      'GET /appliance/api/v1/status': [200, {
         ...base,
         addonStep: 'cert-manager',
         conditions: [
@@ -34,15 +34,15 @@ describe('ProgressPage', () => {
 
   it('offers the root certificate once the certificate is issued', async () => {
     stubApi({
-      'GET /api/v1/status': [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }],
+      'GET /appliance/api/v1/status': [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }],
     });
     render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
-    expect(await screen.findByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/api/v1/ca.pem');
+    expect(await screen.findByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/appliance/api/v1/ca.pem');
   });
 
   it('says before the switch that the console certificate is about to change', async () => {
     stubApi({
-      'GET /api/v1/status': [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }],
+      'GET /appliance/api/v1/status': [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }],
     });
     render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
     expect(await screen.findByText(/switches from its self-signed certificate/i)).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe('ProgressPage', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let calls = 0;
     const { mock } = stubApi({
-      'GET /api/v1/status': () => {
+      'GET /appliance/api/v1/status': () => {
         calls++;
         return [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }];
       },
@@ -68,7 +68,7 @@ describe('ProgressPage', () => {
   });
 
   it('waits while there are no conditions yet', async () => {
-    stubApi({ 'GET /api/v1/status': [200, base] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, base] });
     render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
     expect(await screen.findByText(/not reported anything yet/i)).toBeInTheDocument();
   });
@@ -76,7 +76,7 @@ describe('ProgressPage', () => {
   it('polls every five seconds and finishes when the setup is complete', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let calls = 0;
-    stubApi({ 'GET /api/v1/status': () => [200, { ...base, setup: ++calls < 2 ? 'part2' : 'complete' }] });
+    stubApi({ 'GET /appliance/api/v1/status': () => [200, { ...base, setup: ++calls < 2 ? 'part2' : 'complete' }] });
     const onComplete = vi.fn();
     render(<ProgressPage onBack={vi.fn()} onComplete={onComplete} />);
     await vi.waitFor(() => expect(calls).toBe(1));
@@ -86,7 +86,7 @@ describe('ProgressPage', () => {
   });
 
   it('shows an error when the appliance cannot be reached', async () => {
-    stubApi({ 'GET /api/v1/status': [500, { code: 'internal', message: 'x' }] });
+    stubApi({ 'GET /appliance/api/v1/status': [500, { code: 'internal', message: 'x' }] });
     render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
   });

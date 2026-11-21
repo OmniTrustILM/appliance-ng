@@ -18,7 +18,7 @@ type Platform = components['schemas']['PlatformState'];
 type Component = Platform['components'][number];
 
 const link = 'text-brand hover:underline';
-const loadPlatform = () => api.GET('/api/v1/platform');
+const loadPlatform = () => api.GET('/platform');
 
 /** What a component still needs, or undefined when it needs nothing. */
 function hintOf({ chosen, needsCredentials, needsMail }: Component): ReactNode {
@@ -64,7 +64,7 @@ export function PlatformPage() {
     setSaved(false);
     setHostError(undefined);
     setError(undefined);
-    const result = await attempt(() => api.PUT('/api/v1/platform', { body: { hostName: hostName.trim(), components: chosen } }));
+    const result = await attempt(() => api.PUT('/platform', { body: { hostName: hostName.trim(), components: chosen } }));
     setBusy(false);
     if (!result) return setError(unreachable);
     if (result.response.ok) {

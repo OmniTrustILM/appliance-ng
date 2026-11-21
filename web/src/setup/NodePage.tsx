@@ -43,7 +43,7 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
 
   useEffect(() => {
     let active = true;
-    void attempt(() => api.GET('/api/v1/setup/dhcp')).then((result) => {
+    void attempt(() => api.GET('/setup/dhcp')).then((result) => {
       if (!active) return;
       if (result?.response.status === 401) return onExpired();
       const values = result?.data ?? {};
@@ -99,7 +99,7 @@ export function NodePage({ initial, onDone, onExpired }: Readonly<Props>) {
     if (Object.keys(found).length > 0) return;
     const node = settings();
     setBusy(true);
-    const result = await attempt(() => api.PUT('/api/v1/setup/node', { body: node }));
+    const result = await attempt(() => api.PUT('/setup/node', { body: node }));
     setBusy(false);
     if (!result) return setErrors({ form: unreachable });
     const { response, error } = result;

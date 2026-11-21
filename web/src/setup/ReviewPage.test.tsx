@@ -36,7 +36,7 @@ describe('ReviewPage', () => {
   });
 
   it('applies and moves on', async () => {
-    stubApi({ 'POST /api/v1/setup/apply': [202] });
+    stubApi({ 'POST /appliance/api/v1/setup/apply': [202] });
     const onDone = vi.fn();
     render(<ReviewPage answers={answers} onBack={vi.fn()} onDone={onDone} onExpired={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
@@ -51,7 +51,7 @@ describe('ReviewPage', () => {
   });
 
   it('can still apply after a reload, when the answers are not known to the page', async () => {
-    stubApi({ 'POST /api/v1/setup/apply': [202] });
+    stubApi({ 'POST /appliance/api/v1/setup/apply': [202] });
     const onDone = vi.fn();
     render(<ReviewPage onBack={vi.fn()} onDone={onDone} onExpired={vi.fn()} />);
     expect(screen.getByText(/saved before the page was reloaded/)).toBeInTheDocument();
@@ -60,7 +60,7 @@ describe('ReviewPage', () => {
   });
 
   it('shows a generic message when the apply fails', async () => {
-    stubApi({ 'POST /api/v1/setup/apply': [409, { code: 'conflict', message: 'x' }] });
+    stubApi({ 'POST /appliance/api/v1/setup/apply': [409, { code: 'conflict', message: 'x' }] });
     render(<ReviewPage answers={answers} onBack={vi.fn()} onDone={vi.fn()} onExpired={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Reload the page');
