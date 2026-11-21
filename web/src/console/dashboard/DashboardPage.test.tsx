@@ -40,18 +40,27 @@ describe('DashboardPage', () => {
 
   it('shows the free space of the data volume', async () => {
     const GB = 1024 ** 3;
-    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 60 * GB } }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 60 * GB, lowSpace: false } }] });
     renderPage();
     expect(await screen.findByText(/60\.0 GB free of 100\.0 GB/)).toBeInTheDocument();
     expect(screen.queryByText(/running low/i)).not.toBeInTheDocument();
   });
 
-  it('warns when less than a fifth of the data volume is free', async () => {
+  it('warns when the manager reports the data volume as low on space', async () => {
     const GB = 1024 ** 3;
-    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 19 * GB } }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 19 * GB, lowSpace: true } }] });
     renderPage();
     expect(await screen.findByText(/19\.0 GB free of 100\.0 GB/)).toBeInTheDocument();
     expect(screen.getByText(/running low/i)).toBeInTheDocument();
+  });
+
+  it('does not judge low space on the rounded free space', async () => {
+    const GB = 1024 ** 3;
+    // The rounded free space is below a fifth, but the exact one was not.
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB + 99, freeBytes: 20 * GB, lowSpace: false } }] });
+    renderPage();
+    expect(await screen.findByText(/20\.0 GB free/)).toBeInTheDocument();
+    expect(screen.queryByText(/running low/i)).not.toBeInTheDocument();
   });
 
   it('shows no free-space line without the data volume', async () => {
@@ -188,6 +197,20 @@ describe('DashboardPage', () => {
     renderPage();
     expect(await screen.findByText(/talosconfig in the recovery kit expires within 30 days/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open the recovery kit page' })).toHaveAttribute('href', '/recovery-kit');
+  });
+
+  it('judges the expiry dates again on each refresh while the dashboard stays open', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const day = 24 * 60 * 60 * 1000;
+    const certificate = { notAfter: new Date(Date.now() + 10_000).toISOString() };
+    const recoveryKit = { issued: true, confirmed: true, talosconfigNotAfter: new Date(Date.now() + 30 * day + 10_000).toISOString() };
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, rebootRequired: false, certificate, recoveryKit }] });
+    renderPage();
+    expect(await screen.findByText(/certificate expires within 30 days/i)).toBeInTheDocument();
+    expect(screen.queryByText(/talosconfig in the recovery kit/i)).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    expect(screen.getByText(/certificate has expired/i)).toBeInTheDocument();
+    expect(screen.getByText(/talosconfig in the recovery kit expires within 30 days/i)).toBeInTheDocument();
   });
 
   it('says when the recovery kit\'s talosconfig has expired', async () => {

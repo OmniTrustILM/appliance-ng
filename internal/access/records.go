@@ -116,25 +116,29 @@ func RecordTalosconfig(ctx context.Context, c client.Client, role string, notAft
 }
 
 // RemoveExpired revokes the kubeconfigs that expired by at, never the break-glass one, and drops the talosconfig
-// records that did. A failed revoke and corrupt records hold up nothing else.
-func RemoveExpired(ctx context.Context, c client.Client, at time.Time) error {
+// records that did. It returns the kubeconfigs it revoked. A failed revoke and corrupt records hold up nothing else.
+func RemoveExpired(ctx context.Context, c client.Client, at time.Time) ([]Credential, error) {
 	creds, err := kubeconfigs(ctx, c)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var revoked []Credential
 	var errs []error
 	for _, cred := range creds {
 		if cred.BreakGlass || cred.Expires == nil || cred.Expires.After(at) {
 			continue
 		}
-		if err := Revoke(ctx, c, cred.Name); err != nil && !errors.Is(err, ErrNotFound) {
+		switch err := Revoke(ctx, c, cred.Name); {
+		case err == nil:
+			revoked = append(revoked, cred)
+		case !errors.Is(err, ErrNotFound):
 			errs = append(errs, err)
 		}
 	}
 	errs = append(errs, updateRecords(ctx, c, func(rs []talosRecord) []talosRecord {
 		return slices.DeleteFunc(rs, func(r talosRecord) bool { return !r.NotAfter.After(at) })
 	}))
-	return errors.Join(errs...)
+	return revoked, errors.Join(errs...)
 }
 
 // updateRecords applies change to the talosconfig records, after dropping those that expired, and writes them only

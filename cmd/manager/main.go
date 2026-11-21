@@ -116,6 +116,11 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err != nil {
 		return fmt.Errorf("create the controller manager: %w", err)
 	}
+	auditLog, err := audit.Open(data)
+	if err != nil {
+		return fmt.Errorf("open the audit log: %w", err)
+	}
+	defer func() { _ = auditLog.Close() }()
 	reconciler := &manager.ApplianceReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
@@ -126,6 +131,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Recorder:  mgr.GetEventRecorder(kube.ManagerFieldManager),
 		Version:   version,
 		DataDir:   data,
+		Audit:     auditLog,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the Appliance controller: %w", err)
@@ -153,11 +159,6 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		return err
 	}
 
-	auditLog, err := audit.Open(data)
-	if err != nil {
-		return fmt.Errorf("open the audit log: %w", err)
-	}
-	defer func() { _ = auditLog.Close() }()
 	api := apiserver.NewServer(apiserver.Deps{
 		Client:    mgr.GetClient(),
 		Reader:    mgr.GetAPIReader(),

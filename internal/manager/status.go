@@ -104,6 +104,9 @@ func (r *ApplianceReconciler) setReleaseVersions(a *v1alpha1.Appliance) {
 // minVolumeStep is the smallest step the free space of the data volume is reported in.
 const minVolumeStep = 1 << 20
 
+// lowSpaceDivisor sets the share of the data volume, a fifth, below which its free space counts as low.
+const lowSpaceDivisor = 5
+
 // setDataVolume records the size and free space of the data volume; a volume that cannot be read is left unset, so
 // that the status shows no free space rather than a wrong one.
 func (r *ApplianceReconciler) setDataVolume(ctx context.Context, a *v1alpha1.Appliance) {
@@ -117,12 +120,15 @@ func (r *ApplianceReconciler) setDataVolume(ctx context.Context, a *v1alpha1.App
 }
 
 // volumeStatus rounds the free space down to a step of 1% of the size, at least 1 MiB, so that the status changes,
-// and the Appliance is reconciled again, only when the free space has moved by a visible step.
+// and the Appliance is reconciled again, only when the free space has moved by a visible step. Whether the space is
+// low is judged on the exact free space, so the rounding cannot raise the warning early.
 func volumeStatus(size, free uint64) *v1alpha1.VolumeStatus {
 	size = min(size, math.MaxInt64)
 	step := max(size/100, minVolumeStep)
 	free = min(free, size)
-	return &v1alpha1.VolumeStatus{SizeBytes: int64(size), FreeBytes: int64(free / step * step)} //nolint:gosec
+	// free*5 < size, without overflowing; size is at most MaxInt64.
+	low := free < (size+lowSpaceDivisor-1)/lowSpaceDivisor
+	return &v1alpha1.VolumeStatus{SizeBytes: int64(size), FreeBytes: int64(free / step * step), LowSpace: low} //nolint:gosec
 }
 
 // nodeObservation is what the node reports of itself for the status; an empty field keeps the last known value.

@@ -218,10 +218,13 @@ type RecoveryKitStatus struct {
 	Issuance string `json:"issuance,omitempty"`
 }
 
-// VolumeStatus is the size and free space of a volume, in bytes.
+// VolumeStatus is the size and free space of a volume, in bytes. FreeBytes is rounded down to coarse steps.
 type VolumeStatus struct {
 	SizeBytes int64 `json:"sizeBytes"`
 	FreeBytes int64 `json:"freeBytes"`
+	// LowSpace is set while less than a fifth of the volume is free, judged on the exact free space.
+	// +optional
+	LowSpace bool `json:"lowSpace,omitempty"`
 }
 
 // Appliance is the single cluster-scoped resource that describes the whole appliance.

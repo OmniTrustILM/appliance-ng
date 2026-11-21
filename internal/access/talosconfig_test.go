@@ -121,7 +121,7 @@ func TestRecordTalosconfigPrunesExpired(t *testing.T) {
 	}
 
 	clock = clock.Add(2 * time.Hour)
-	if err := RemoveExpired(ctx, testClient, clock); err != nil {
+	if _, err := RemoveExpired(ctx, testClient, clock); err != nil {
 		t.Fatal(err)
 	}
 	if err := testClient.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: TalosconfigRecords}, cm); err != nil {

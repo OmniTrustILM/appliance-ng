@@ -38,6 +38,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/addons"
+	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
@@ -94,6 +95,8 @@ type ApplianceReconciler struct {
 	Version string
 	// DataDir is the directory the data volume is mounted at, whose free space the status reports.
 	DataDir string
+	// Audit records the expired kubeconfigs the reconciler revokes.
+	Audit AuditWriter
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -107,6 +110,19 @@ type ApplianceReconciler struct {
 	passedGen int64
 	now       func() time.Time
 }
+
+// AuditWriter appends entries to the audit log.
+type AuditWriter interface {
+	Write(e audit.Entry) error
+}
+
+// AuditActor is the user of the audit entries the manager writes on its own.
+const AuditActor = "system:manager"
+
+const (
+	auditKubeconfigRevoke = "kubeconfig-revoke"
+	auditSuccess          = "success"
+)
 
 // CacheOptions limits the informer cache of Secrets to the system namespace: the reconciler reads only the
 // Secrets the Appliance references there, and its RBAC grants no cluster-wide read of Secrets.
@@ -199,8 +215,19 @@ func (r *ApplianceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // removeExpiredAccess revokes the issued kubeconfigs that expired and drops the records of expired talosconfigs. A
 // failure is logged and tried again on the next pass; it does not hold up the appliance.
 func (r *ApplianceReconciler) removeExpiredAccess(ctx context.Context) {
-	if err := access.RemoveExpired(ctx, r.Client, time.Now()); err != nil {
+	revoked, err := access.RemoveExpired(ctx, r.Client, time.Now())
+	if err != nil {
 		log.FromContext(ctx).Error(err, "remove the expired cluster access")
+	}
+	for _, c := range revoked {
+		log.FromContext(ctx).Info("expired kubeconfig revoked", "name", c.Name, "role", c.Role)
+		entry := audit.Entry{
+			Time: time.Now().UTC(), User: AuditActor, Action: auditKubeconfigRevoke, Result: auditSuccess,
+			Details: map[string]string{"name": c.Name, "role": c.Role, "expires": c.Expires.UTC().Format(time.RFC3339)},
+		}
+		if err := r.Audit.Write(entry); err != nil {
+			log.FromContext(ctx).Error(err, "record the revoked kubeconfig in the audit log", "name", c.Name)
+		}
 	}
 }
 

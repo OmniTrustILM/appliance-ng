@@ -616,6 +616,10 @@ spec:
                   freeBytes:
                     format: int64
                     type: integer
+                  lowSpace:
+                    description: LowSpace is set while less than a fifth of the volume
+                      is free, judged on the exact free space.
+                    type: boolean
                   sizeBytes:
                     format: int64
                     type: integer

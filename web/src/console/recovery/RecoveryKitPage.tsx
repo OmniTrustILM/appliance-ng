@@ -22,12 +22,14 @@ const superseded =
 /**
  * The latest kit: when it was issued, until when its talosconfig works, and its confirmation. Confirming names the
  * issuance of the kit downloaded on this page, or else of the kit the page loaded, so that a kit issued meanwhile
- * elsewhere is not confirmed in its place.
+ * elsewhere is not confirmed in its place. A kit downloaded here counts as confirmed only once the loaded state
+ * names its issuance, so that a state that could not be read again does not pass for the new kit's.
  */
 function KitState({ kit, downloaded, onConfirmed }: Readonly<{ kit: Kit; downloaded?: string; onConfirmed: () => void }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [loaded] = useState(kit.issuance);
+  const confirmed = kit.confirmed && (downloaded === undefined || kit.issuance === downloaded);
 
   async function confirm() {
     setBusy(true);
@@ -52,7 +54,7 @@ function KitState({ kit, downloaded, onConfirmed }: Readonly<{ kit: Kit; downloa
       {kit.recipient && <p className="mt-1 break-all font-mono text-[13px] text-content-muted">Backup key {kit.recipient}</p>}
       <div className="mt-4">
         {error && <Alert tone="error">{error}</Alert>}
-        {kit.confirmed ? (
+        {confirmed ? (
           <Alert tone="success">The kit is confirmed.</Alert>
         ) : (
           <>

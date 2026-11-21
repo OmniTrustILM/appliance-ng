@@ -35,7 +35,7 @@ func TestStatus(t *testing.T) {
 	}
 	a.Status.Versions = v1alpha1.Versions{Appliance: "0.2.0", ILM: "2.20.0"}
 	a.Status.NodeAddress = "192.0.2.5"
-	a.Status.DataVolume = &v1alpha1.VolumeStatus{SizeBytes: 100, FreeBytes: 40}
+	a.Status.DataVolume = &v1alpha1.VolumeStatus{SizeBytes: 100, FreeBytes: 40, LowSpace: true}
 	if err := testClient.Status().Update(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestStatus(t *testing.T) {
 	if got.NodeAddress == nil || *got.NodeAddress != "192.0.2.5" {
 		t.Errorf("node address = %v", got.NodeAddress)
 	}
-	if got.DataVolume == nil || got.DataVolume.SizeBytes != 100 || got.DataVolume.FreeBytes != 40 {
+	if got.DataVolume == nil || got.DataVolume.SizeBytes != 100 || got.DataVolume.FreeBytes != 40 || !got.DataVolume.LowSpace {
 		t.Errorf("data volume = %+v", got.DataVolume)
 	}
 }

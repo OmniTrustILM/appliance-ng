@@ -39,6 +39,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
+	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
@@ -198,7 +199,16 @@ func newReconciler(c client.Client, cluster kube.Cluster) (*ApplianceReconciler,
 		Addons:    testAddons,
 		Release:   testRelease,
 		Recorder:  recorder,
+		Audit:     &fakeAudit{},
 	}, recorder
+}
+
+// fakeAudit keeps the audit entries in memory.
+type fakeAudit struct{ entries []audit.Entry }
+
+func (a *fakeAudit) Write(e audit.Entry) error {
+	a.entries = append(a.entries, e)
+	return nil
 }
 
 // createAppliance stores the appliance and removes it and everything the reconciler wrote when the test ends;
@@ -290,6 +300,19 @@ func TestReconcileRemovesExpiredAccess(t *testing.T) {
 	}
 	if len(list.Items) != 1 || list.Items[0].Name != "kc-current" {
 		t.Errorf("ServiceAccounts after the pass: %v", list.Items)
+	}
+	entries := r.Audit.(*fakeAudit).entries
+	if len(entries) != 1 {
+		t.Fatalf("audit entries %+v, want one", entries)
+	}
+	e := entries[0]
+	want := map[string]string{"name": "kc-expired", "role": access.RoleView, "expires": accounts["kc-expired"]}
+	if e.User != AuditActor || e.Action != "kubeconfig-revoke" || e.Result != "success" || !maps.Equal(e.Details, want) || e.Time.IsZero() {
+		t.Errorf("audit entry %+v, want the manager's revoke of kc-expired with %v", e, want)
+	}
+	line, _ := json.Marshal(e)
+	if strings.Contains(strings.ToLower(string(line)), "token") {
+		t.Errorf("audit entry carries a token: %s", line)
 	}
 }
 

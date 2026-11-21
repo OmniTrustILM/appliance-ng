@@ -393,7 +393,7 @@ type AuditEntry struct {
 	Result AuditEntryResult `json:"result"`
 	Time   time.Time        `json:"time"`
 
-	// User The signed-in user, or the existing account a sign-in attempt named; empty otherwise.
+	// User The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise.
 	User string `json:"user"`
 }
 
@@ -485,7 +485,11 @@ type CsrfToken struct {
 
 // DataVolume The size and free space of the data volume; absent while the manager cannot read it.
 type DataVolume struct {
+	// FreeBytes The free space, rounded down to steps of 1% of the size.
 	FreeBytes int64 `json:"freeBytes"`
+
+	// LowSpace Less than a fifth of the volume is free, judged on the exact free space.
+	LowSpace  bool  `json:"lowSpace"`
 	SizeBytes int64 `json:"sizeBytes"`
 }
 

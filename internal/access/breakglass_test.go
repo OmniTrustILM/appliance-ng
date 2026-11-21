@@ -92,7 +92,7 @@ func TestExpiryLeavesBreakGlass(t *testing.T) {
 	if _, err := IssueBreakGlass(ctx, testClient, testKube, testServer, testCA, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err := RemoveExpired(ctx, testClient, time.Now().Add(100*365*24*time.Hour)); err != nil {
+	if _, err := RemoveExpired(ctx, testClient, time.Now().Add(100*365*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := testClient.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: BreakGlass}, &corev1.ServiceAccount{}); err != nil {

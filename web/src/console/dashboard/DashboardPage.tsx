@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Link } from 'react-router';
 import { Alert } from '../../components/Alert';
 import { Badge } from '../../components/Badge';
@@ -19,9 +18,6 @@ const versionLabels: ReadonlyArray<readonly [keyof Status['versions'], string]> 
   ['operator', 'ILM operator'],
   ['ilm', 'ILM'],
 ];
-
-/** The share of free space below which the data volume counts as running low. */
-const lowFreeShare = 0.2;
 
 const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
 
@@ -51,12 +47,10 @@ function recoveryKitNotice(status: Status, now: number) {
 
 /**
  * The warnings that ask the administrator to act: a certificate near its expiry, the recovery kit, a data volume
- * running low and a pending restart.
+ * running low and a pending restart. Expiry dates are judged against now, the time of the last status read.
  */
-function Warnings({ status }: Readonly<{ status: Status }>) {
-  const [now] = useState(Date.now);
-  const volume = status.dataVolume;
-  const lowSpace = volume && volume.sizeBytes > 0 && volume.freeBytes < volume.sizeBytes * lowFreeShare;
+function Warnings({ status, now }: Readonly<{ status: Status; now: number }>) {
+  const lowSpace = status.dataVolume?.lowSpace;
   const certificate = status.certificate && expiryNotice(new Date(status.certificate.notAfter), now);
   const recoveryKit = recoveryKitNotice(status, now);
   return (
@@ -85,7 +79,7 @@ function Warnings({ status }: Readonly<{ status: Status }>) {
 
 /** The console's start page: the state of the appliance, refreshed every five seconds. */
 export function DashboardPage() {
-  const { status, error } = useStatus();
+  const { status, error, checkedAt } = useStatus();
   const complete = status?.setup === 'complete';
   const ready = status?.conditions.filter((c) => c.status === 'True').length ?? 0;
 
@@ -109,7 +103,7 @@ export function DashboardPage() {
       {!status && !error && <Loading />}
       {status && (
         <>
-          <Warnings status={status} />
+          <Warnings status={status} now={checkedAt} />
           <div className="grid gap-4 sm:grid-cols-2">
             <Card>
               <h2 className="mb-3 text-base font-semibold">Setup</h2>

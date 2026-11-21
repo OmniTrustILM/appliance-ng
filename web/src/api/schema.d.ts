@@ -981,8 +981,13 @@ export interface components {
         DataVolume: {
             /** Format: int64 */
             sizeBytes: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The free space, rounded down to steps of 1% of the size.
+             */
             freeBytes: number;
+            /** @description Less than a fifth of the volume is free, judged on the exact free space. */
+            lowSpace: boolean;
         };
         /** @description The certificate the console and ILM serve; absent while none is issued or installed. */
         StatusCertificate: {
@@ -1051,7 +1056,7 @@ export interface components {
         AuditEntry: {
             /** Format: date-time */
             time: string;
-            /** @description The signed-in user, or the existing account a sign-in attempt named; empty otherwise. */
+            /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise. */
             user: string;
             /** @enum {string} */
             action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm";

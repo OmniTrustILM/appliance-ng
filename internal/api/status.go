@@ -54,7 +54,7 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 		}
 	}
 	if v := st.DataVolume; v != nil {
-		out.DataVolume = &DataVolume{SizeBytes: v.SizeBytes, FreeBytes: v.FreeBytes}
+		out.DataVolume = &DataVolume{SizeBytes: v.SizeBytes, FreeBytes: v.FreeBytes, LowSpace: v.LowSpace}
 	}
 	out.AddonStep = addonStep(st.Conditions)
 	// Without the kit the rest of the status still helps; the console reads an absent kit as unknown.

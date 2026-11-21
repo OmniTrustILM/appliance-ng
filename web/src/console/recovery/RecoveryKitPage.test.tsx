@@ -168,6 +168,27 @@ describe('RecoveryKitPage', () => {
     expect(screen.queryByText(/the kit is confirmed/i)).not.toBeInTheDocument();
   });
 
+  it('asks to confirm a kit issued again over a confirmed one when the state cannot be read again', async () => {
+    let reads = 0;
+    const { sent } = stubApi({
+      'GET /appliance/api/v1/recovery-kit': () => (++reads === 1 ? [200, confirmed] : [500, { code: 'internal', message: 'The request failed.' }]),
+      'POST /appliance/api/v1/recovery-kit/replace': [200, kitFile, { [issuanceHeader]: 'issuance-2' }],
+      'POST /appliance/api/v1/recovery-kit/confirm': [204],
+    });
+    renderPage();
+    expect(await screen.findByText(/the kit is confirmed/i)).toBeInTheDocument();
+    const form = screen.getByRole('form', { name: 'Replace a lost kit' });
+    await userEvent.type(within(form).getByLabelText('New passphrase'), passphrase);
+    await userEvent.type(within(form).getByLabelText('Repeat the new passphrase'), passphrase);
+    await userEvent.click(within(form).getByRole('button', { name: 'Replace the kit' }));
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Replace the kit' }));
+    expect(await screen.findByText(/was downloaded/)).toBeInTheDocument();
+    expect(await screen.findByText('The request failed.')).toBeInTheDocument();
+    expect(screen.queryByText(/the kit is confirmed/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'I have stored the kit safely' }));
+    expect(sent['POST /appliance/api/v1/recovery-kit/confirm']).toEqual([{ issuance: 'issuance-2' }]);
+  });
+
   it('confirms the kit the page loaded when none was downloaded here', async () => {
     const { sent } = stubApi({
       'GET /appliance/api/v1/recovery-kit': [200, issued],

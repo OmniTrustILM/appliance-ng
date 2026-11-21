@@ -274,8 +274,12 @@ func TestExpiredAccountsRemoved(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := RemoveExpired(ctx, testClient, time.Now().Add(2*time.Hour)); err != nil {
+	revoked, err := RemoveExpired(ctx, testClient, time.Now().Add(2*time.Hour))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(revoked) != 1 || revoked[0].Role != RoleView || revoked[0].Expires == nil {
+		t.Errorf("revoked %+v, want the expired view kubeconfig", revoked)
 	}
 	creds, err := List(ctx, testClient)
 	if err != nil {
@@ -331,7 +335,7 @@ func TestCorruptRecordsDoNotHoldUpKubeconfigs(t *testing.T) {
 	if !errors.Is(err, ErrCorruptRecords) || len(creds) != 1 || creds[0].Kind != KindKubeconfig {
 		t.Errorf("List: %+v, %v; want the kubeconfig and ErrCorruptRecords", creds, err)
 	}
-	if err := RemoveExpired(ctx, testClient, time.Now().Add(2*time.Hour)); !errors.Is(err, ErrCorruptRecords) {
+	if _, err := RemoveExpired(ctx, testClient, time.Now().Add(2*time.Hour)); !errors.Is(err, ErrCorruptRecords) {
 		t.Errorf("RemoveExpired: %v, want ErrCorruptRecords", err)
 	}
 	list := &corev1.ServiceAccountList{}
@@ -397,7 +401,7 @@ func TestRemoveExpiredGoesOnAfterAFailedRevoke(t *testing.T) {
 		}
 	}
 	c := failingBindingDelete{testClient, bindingName(namedPrefix + "a")}
-	if err := RemoveExpired(ctx, c, time.Now().Add(2*time.Hour)); err == nil {
+	if _, err := RemoveExpired(ctx, c, time.Now().Add(2*time.Hour)); err == nil {
 		t.Error("RemoveExpired hid the failed revoke")
 	}
 	err := testClient.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: namedPrefix + "b"}, &corev1.ServiceAccount{})

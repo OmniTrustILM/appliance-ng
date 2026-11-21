@@ -193,3 +193,25 @@ func TestVolumeStatusOfSmallAndOddVolumes(t *testing.T) {
 		t.Errorf("volume = %+v, want free within the size", got)
 	}
 }
+
+func TestVolumeStatusJudgesLowSpaceOnTheExactFreeSpace(t *testing.T) {
+	// A size that is no multiple of 100, so that the rounded free space of 20.5% falls below a fifth.
+	const size = 100<<30 + 99
+	for _, tc := range []struct {
+		name string
+		free uint64
+		low  bool
+	}{
+		{"20.5% free", size * 205 / 1000, false},
+		{"just below a fifth free", size / 5, true},
+		{"19.9% free", size * 199 / 1000, true},
+	} {
+		got := volumeStatus(size, tc.free)
+		if got.LowSpace != tc.low {
+			t.Errorf("%s: low space = %v, want %v (%+v)", tc.name, got.LowSpace, tc.low, got)
+		}
+	}
+	if got := volumeStatus(size, size*205/1000); got.FreeBytes*5 >= got.SizeBytes {
+		t.Errorf("the rounded free space %d is not below a fifth of %d; the test no longer covers the rounding", got.FreeBytes, got.SizeBytes)
+	}
+}
