@@ -79,8 +79,9 @@ export function AccessPage() {
         {talosconfigs?.length === 0 && <p className="text-content-muted">No talosconfigs are valid.</p>}
         {talosconfigs && talosconfigs.length > 0 && (
           <ul className="m-0 list-none p-0">
-            {talosconfigs.map((credential) => (
-              <li key={`${credential.issuedAt}|${credential.role}|${credential.expires}`} className="border-b border-divider py-3 text-sm last:border-b-0">
+            {talosconfigs.map((credential, index) => (
+              // Records carry no identity of their own and two can match to the second; the rows hold no state.
+              <li key={`${credential.issuedAt}|${credential.role}|${credential.expires}|${index}`} className="border-b border-divider py-3 text-sm last:border-b-0">
                 <CredentialDetails credential={credential} />
               </li>
             ))}
