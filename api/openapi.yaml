@@ -1240,11 +1240,22 @@ paths:
       tags: [recovery]
       operationId: postRecoveryKitConfirm
       summary: Confirm that the recovery kit is stored safely
+      description: |
+        Confirms the kit with the given issuance, which must be the latest: answered with 409 and code
+        `kit_superseded` when the kit was issued again or replaced since, and the latest kit must be downloaded first.
       security:
         - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKitConfirm'
       responses:
         '204':
           description: The kit is confirmed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1324,6 +1335,10 @@ components:
       description: The recovery kit, an age file encrypted with the passphrase; the appliance does not keep it.
       headers:
         Content-Disposition:
+          schema:
+            type: string
+        X-Recovery-Kit-Issuance:
+          description: The issuance of this kit, to confirm it with.
           schema:
             type: string
       content:
@@ -1936,6 +1951,18 @@ components:
         recipient:
           type: string
           description: The public key the backups are encrypted to.
+        issuance:
+          type: string
+          description: >-
+            A random identifier of the latest kit, new with every issue, reissue and replace; absent while the latest
+            kit was not handed out.
+    RecoveryKitConfirm:
+      type: object
+      required: [issuance]
+      properties:
+        issuance:
+          type: string
+          description: The issuance of the kit that was stored, as its download answer named it.
     RecoveryKitRequest:
       type: object
       required: [passphrase]

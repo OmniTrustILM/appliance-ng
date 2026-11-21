@@ -5,6 +5,8 @@ package recovery
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -16,10 +18,12 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 )
 
-// The Secret in kube.SystemNamespace that holds the public key the backups are encrypted to.
+// The Secret in kube.SystemNamespace that holds the public key the backups are encrypted to and the issuance of the
+// latest kit.
 const (
 	RecipientSecret = "appliance-backup-recipient"
 	RecipientKey    = "recipient"
+	IssuanceKey     = "issuance"
 )
 
 // ErrNoRecipient is returned while no recovery kit was issued.
@@ -34,19 +38,39 @@ func GenerateKey() (*age.X25519Identity, error) {
 	return key, nil
 }
 
+// NewIssuance returns a random identifier for a newly issued kit; it is not derived from the kit's key.
+func NewIssuance() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate the kit issuance: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// Stored is what the appliance keeps of the latest kit: the public backup key and the kit's issuance.
+type Stored struct {
+	Recipient, Issuance string
+}
+
 // StoredRecipient reads the public backup key, or returns ErrNoRecipient.
 func StoredRecipient(ctx context.Context, r client.Reader) (string, error) {
+	stored, err := StoredKit(ctx, r)
+	return stored.Recipient, err
+}
+
+// StoredKit reads the public backup key and the issuance of the latest kit, or returns ErrNoRecipient.
+func StoredKit(ctx context.Context, r client.Reader) (Stored, error) {
 	secret := &corev1.Secret{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: RecipientSecret}, secret)
 	switch {
 	case apierrors.IsNotFound(err):
-		return "", ErrNoRecipient
+		return Stored{}, ErrNoRecipient
 	case err != nil:
-		return "", fmt.Errorf("read Secret %s/%s: %w", kube.SystemNamespace, RecipientSecret, err)
+		return Stored{}, fmt.Errorf("read Secret %s/%s: %w", kube.SystemNamespace, RecipientSecret, err)
 	}
-	recipient := string(secret.Data[RecipientKey])
-	if recipient == "" {
-		return "", ErrNoRecipient
+	stored := Stored{Recipient: string(secret.Data[RecipientKey]), Issuance: string(secret.Data[IssuanceKey])}
+	if stored.Recipient == "" {
+		return Stored{}, ErrNoRecipient
 	}
-	return recipient, nil
+	return stored, nil
 }

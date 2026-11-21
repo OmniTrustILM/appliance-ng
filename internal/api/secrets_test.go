@@ -198,7 +198,7 @@ func recoverySecretAnswers(t *testing.T, h *harness, s *session, answers *bytes.
 	answers.Write(reissue(h, s, first, nextPassphrase, kitPassphrase).Body.Bytes())
 	answers.Write(reissue(h, s, first, kitPassphrase, "short").Body.Bytes())
 	wantStatus(t, reissue(h, s, first, kitPassphrase, nextPassphrase), http.StatusOK)
-	answers.Write(h.request(http.MethodPost, pathConfirm, nil, s).Body.Bytes())
+	answers.Write(confirmStored(t, h, s).Body.Bytes())
 	answers.Write(h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(nextPassphrase)}, s).Body.Bytes())
 	wantStatus(t, h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(nextPassphrase), Confirm: true}, s), http.StatusOK)
 	return key

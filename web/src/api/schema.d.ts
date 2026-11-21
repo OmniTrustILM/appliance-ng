@@ -840,7 +840,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Confirm that the recovery kit is stored safely */
+        /**
+         * Confirm that the recovery kit is stored safely
+         * @description Confirms the kit with the given issuance, which must be the latest: answered with 409 and code
+         *     `kit_superseded` when the kit was issued again or replaced since, and the latest kit must be downloaded first.
+         */
         post: operations["postRecoveryKitConfirm"];
         delete?: never;
         options?: never;
@@ -1181,6 +1185,12 @@ export interface components {
             talosconfigNotAfter?: string;
             /** @description The public key the backups are encrypted to. */
             recipient?: string;
+            /** @description A random identifier of the latest kit, new with every issue, reissue and replace; absent while the latest kit was not handed out. */
+            issuance?: string;
+        };
+        RecoveryKitConfirm: {
+            /** @description The issuance of the kit that was stored, as its download answer named it. */
+            issuance: string;
         };
         RecoveryKitRequest: {
             /**
@@ -1382,6 +1392,8 @@ export interface components {
         RecoveryKitFile: {
             headers: {
                 "Content-Disposition"?: string;
+                /** @description The issuance of this kit, to confirm it with. */
+                "X-Recovery-Kit-Issuance"?: string;
                 [name: string]: unknown;
             };
             content: {
@@ -2584,7 +2596,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryKitConfirm"];
+            };
+        };
         responses: {
             /** @description The kit is confirmed. */
             204: {
@@ -2593,6 +2609,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];

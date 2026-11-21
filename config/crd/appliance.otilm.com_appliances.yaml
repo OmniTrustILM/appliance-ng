@@ -286,6 +286,10 @@ spec:
                     description: Confirmed is set once the administrator confirms
                       that the latest kit is stored safely.
                     type: boolean
+                  issuance:
+                    description: Issuance identifies the kit among the kits issued
+                      with the recipient.
+                    type: string
                   issuedAt:
                     format: date-time
                     type: string

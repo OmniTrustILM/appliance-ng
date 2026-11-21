@@ -646,6 +646,9 @@ type RecoveryKit struct {
 	// Confirmed The administrator confirmed that the latest kit is stored safely.
 	Confirmed bool `json:"confirmed"`
 
+	// Issuance A random identifier of the latest kit, new with every issue, reissue and replace; absent while the latest kit was not handed out.
+	Issuance *string `json:"issuance,omitempty"`
+
 	// Issued A backup key is stored. When the latest kit was not handed out, the other fields but the recipient are absent and the kit can only be replaced.
 	Issued   bool       `json:"issued"`
 	IssuedAt *time.Time `json:"issuedAt,omitempty"`
@@ -655,6 +658,12 @@ type RecoveryKit struct {
 
 	// TalosconfigNotAfter When the kit's talosconfig expires; issue the kit again before then.
 	TalosconfigNotAfter *time.Time `json:"talosconfigNotAfter,omitempty"`
+}
+
+// RecoveryKitConfirm defines model for RecoveryKitConfirm.
+type RecoveryKitConfirm struct {
+	// Issuance The issuance of the kit that was stored, as its download answer named it.
+	Issuance string `json:"issuance"`
 }
 
 // RecoveryKitReissue defines model for RecoveryKitReissue.
@@ -887,6 +896,9 @@ type PostPlatformAdminCredentialJSONRequestBody = AdminCredentialRequest
 
 // PostRecoveryKitJSONRequestBody defines body for PostRecoveryKit for application/json ContentType.
 type PostRecoveryKitJSONRequestBody = RecoveryKitRequest
+
+// PostRecoveryKitConfirmJSONRequestBody defines body for PostRecoveryKitConfirm for application/json ContentType.
+type PostRecoveryKitConfirmJSONRequestBody = RecoveryKitConfirm
 
 // PostRecoveryKitReissueMultipartRequestBody defines body for PostRecoveryKitReissue for multipart/form-data ContentType.
 type PostRecoveryKitReissueMultipartRequestBody = RecoveryKitReissue
@@ -1907,7 +1919,8 @@ type GoneJSONResponse Error
 type NotFoundJSONResponse Error
 
 type RecoveryKitFileResponseHeaders struct {
-	ContentDisposition *string
+	ContentDisposition   *string
+	XRecoveryKitIssuance *string
 }
 type RecoveryKitFileApplicationoctetStreamResponse struct {
 	Body io.Reader
@@ -3330,6 +3343,9 @@ func (response PostRecoveryKit200ApplicationoctetStreamResponse) VisitPostRecove
 	if response.Headers.ContentDisposition != nil {
 		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
 	}
+	if response.Headers.XRecoveryKitIssuance != nil {
+		w.Header().Set("X-Recovery-Kit-Issuance", fmt.Sprint(*response.Headers.XRecoveryKitIssuance))
+	}
 	w.WriteHeader(200)
 
 	if closer, ok := response.Body.(io.ReadCloser); ok {
@@ -3410,6 +3426,7 @@ func (response PostRecoveryKit503JSONResponse) VisitPostRecoveryKitResponse(w ht
 }
 
 type PostRecoveryKitConfirmRequestObject struct {
+	Body *PostRecoveryKitConfirmJSONRequestBody
 }
 
 type PostRecoveryKitConfirmResponseObject interface {
@@ -3422,6 +3439,20 @@ type PostRecoveryKitConfirm204Response struct {
 func (response PostRecoveryKitConfirm204Response) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type PostRecoveryKitConfirm400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRecoveryKitConfirm400JSONResponse) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type PostRecoveryKitConfirm401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -3486,6 +3517,9 @@ func (response PostRecoveryKitReissue200ApplicationoctetStreamResponse) VisitPos
 	}
 	if response.Headers.ContentDisposition != nil {
 		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.XRecoveryKitIssuance != nil {
+		w.Header().Set("X-Recovery-Kit-Issuance", fmt.Sprint(*response.Headers.XRecoveryKitIssuance))
 	}
 	w.WriteHeader(200)
 
@@ -3586,6 +3620,9 @@ func (response PostRecoveryKitReplace200ApplicationoctetStreamResponse) VisitPos
 	}
 	if response.Headers.ContentDisposition != nil {
 		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.XRecoveryKitIssuance != nil {
+		w.Header().Set("X-Recovery-Kit-Issuance", fmt.Sprint(*response.Headers.XRecoveryKitIssuance))
 	}
 	w.WriteHeader(200)
 
@@ -5388,6 +5425,13 @@ func (sh *strictHandler) PostRecoveryKit(w http.ResponseWriter, r *http.Request)
 // PostRecoveryKitConfirm operation middleware
 func (sh *strictHandler) PostRecoveryKitConfirm(w http.ResponseWriter, r *http.Request) {
 	var request PostRecoveryKitConfirmRequestObject
+
+	var body PostRecoveryKitConfirmJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.PostRecoveryKitConfirm(ctx, request.(PostRecoveryKitConfirmRequestObject))

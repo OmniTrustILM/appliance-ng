@@ -45,6 +45,9 @@ var (
 	refusedKitUnavailable  = &refusal{code: codeUnavailable, message: messageUnavailable}
 	refusedKitNotDelivered = &refusal{conflict: true, code: "kit_not_delivered",
 		message: "The latest kit was not handed out; replace it."}
+	refusedKitSuperseded = &refusal{conflict: true, code: "kit_superseded",
+		message: "A newer kit was issued since this one; download the latest kit and confirm that one."}
+	refusedNoIssuance = &refusal{code: codeInvalid, message: "Name the issuance of the kit to confirm."}
 )
 
 // GetRecoveryKit describes the latest recovery kit.
@@ -64,21 +67,22 @@ func (s *Server) GetRecoveryKit(ctx context.Context, _ GetRecoveryKitRequestObje
 }
 
 // recoveryKitInfo describes the kit of the stored recipient, which decides whether a kit was issued. The details
-// and the confirmation in st count only when st records that recipient: otherwise its kit was not handed out.
+// and the confirmation in st count only when st records that recipient and issuance: otherwise its kit was not
+// handed out.
 func (s *Server) recoveryKitInfo(ctx context.Context, st *v1alpha1.RecoveryKitStatus) (*RecoveryKit, error) {
 	out := &RecoveryKit{}
-	stored, err := recovery.StoredRecipient(ctx, s.deps.Reader)
+	stored, err := recovery.StoredKit(ctx, s.deps.Reader)
 	if errors.Is(err, recovery.ErrNoRecipient) {
 		return out, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	out.Issued, out.Recipient = true, &stored
-	if st == nil || st.Recipient != stored {
+	out.Issued, out.Recipient = true, &stored.Recipient
+	if !handedOut(st, stored) {
 		return out, nil
 	}
-	out.Confirmed = st.Confirmed
+	out.Confirmed, out.Issuance = st.Confirmed, &stored.Issuance
 	if st.IssuedAt != nil {
 		out.IssuedAt = &st.IssuedAt.Time
 	}
@@ -88,13 +92,18 @@ func (s *Server) recoveryKitInfo(ctx context.Context, st *v1alpha1.RecoveryKitSt
 	return out, nil
 }
 
+// handedOut tells whether st records the stored kit, which it does once that kit was handed out.
+func handedOut(st *v1alpha1.RecoveryKitStatus, stored recovery.Stored) bool {
+	return st != nil && st.Recipient == stored.Recipient && st.Issuance == stored.Issuance
+}
+
 // PostRecoveryKit issues the first recovery kit with a new backup key.
 func (s *Server) PostRecoveryKit(ctx context.Context, req PostRecoveryKitRequestObject) (PostRecoveryKitResponseObject, error) {
 	var passphrase string
 	if req.Body != nil {
 		passphrase = deref(req.Body.Passphrase)
 	}
-	return s.kitRequest(func() ([]byte, *refusal, error) { return s.newKit(ctx, passphrase, false) })
+	return s.kitRequest(func() (issuedKit, *refusal, error) { return s.newKit(ctx, passphrase, false) })
 }
 
 // PostRecoveryKitReplace issues a kit with a new backup key in place of a lost one.
@@ -102,29 +111,35 @@ func (s *Server) PostRecoveryKitReplace(ctx context.Context, req PostRecoveryKit
 	if req.Body == nil || !req.Body.Confirm {
 		return kitAnswer{ref: refusedUnconfirmed}, nil
 	}
-	return s.kitRequest(func() ([]byte, *refusal, error) { return s.newKit(ctx, deref(req.Body.Passphrase), true) })
+	return s.kitRequest(func() (issuedKit, *refusal, error) { return s.newKit(ctx, deref(req.Body.Passphrase), true) })
 }
 
 // kitRequest runs issue, one kit change at a time, and answers with the kit or the refusal. Checking the stored
 // recipient and writing it happen under the same lock, so concurrent requests cannot hand out kits with different
 // keys; the manager runs as one replica.
-func (s *Server) kitRequest(issue func() ([]byte, *refusal, error)) (kitAnswer, error) {
+func (s *Server) kitRequest(issue func() (issuedKit, *refusal, error)) (kitAnswer, error) {
 	s.kitMu.Lock()
 	defer s.kitMu.Unlock()
-	data, ref, err := issue()
-	return kitAnswer{data: data, ref: ref}, err
+	kit, ref, err := issue()
+	return kitAnswer{kit: kit, ref: ref}, err
+}
+
+// issuedKit is an encrypted kit and its issuance.
+type issuedKit struct {
+	data     []byte
+	issuance string
 }
 
 // kitAnswer answers issue, reissue and replace: the kit, or the refusal with its status.
 type kitAnswer struct {
-	data []byte
-	ref  *refusal
+	kit issuedKit
+	ref *refusal
 }
 
 func (a kitAnswer) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
 	switch {
 	case a.ref == nil:
-		return PostRecoveryKit200ApplicationoctetStreamResponse{kitFile(a.data)}.VisitPostRecoveryKitResponse(w)
+		return PostRecoveryKit200ApplicationoctetStreamResponse{kitFile(a.kit)}.VisitPostRecoveryKitResponse(w)
 	case a.ref == refusedKitUnavailable:
 		return PostRecoveryKit503JSONResponse{ServiceUnavailableJSONResponse(a.ref.badRequest())}.VisitPostRecoveryKitResponse(w)
 	case a.ref.conflict:
@@ -143,22 +158,22 @@ func (a kitAnswer) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) er
 
 // newKit issues a kit with a new backup key and stores its public key: the first kit, or with replace one in place
 // of an issued kit.
-func (s *Server) newKit(ctx context.Context, passphrase string, replace bool) ([]byte, *refusal, error) {
+func (s *Server) newKit(ctx context.Context, passphrase string, replace bool) (issuedKit, *refusal, error) {
 	if ref := checkPassphrase(partPassphrase, passphrase); ref != nil {
-		return nil, ref, nil
+		return issuedKit{}, ref, nil
 	}
 	_, err := recovery.StoredRecipient(ctx, s.deps.Reader)
 	switch {
 	case err == nil && !replace:
-		return nil, refusedKitIssued, nil
+		return issuedKit{}, refusedKitIssued, nil
 	case errors.Is(err, recovery.ErrNoRecipient) && replace:
-		return nil, refusedKitNotIssued, nil
+		return issuedKit{}, refusedKitNotIssued, nil
 	case err != nil && !errors.Is(err, recovery.ErrNoRecipient):
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	key, err := recovery.GenerateKey()
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	return s.issueKit(ctx, key, passphrase, true)
 }
@@ -170,31 +185,31 @@ func (s *Server) PostRecoveryKitReissue(ctx context.Context, req PostRecoveryKit
 	if ref != nil {
 		return kitAnswer{ref: ref}, nil
 	}
-	return s.kitRequest(func() ([]byte, *refusal, error) { return s.reissueKit(ctx, parts) })
+	return s.kitRequest(func() (issuedKit, *refusal, error) { return s.reissueKit(ctx, parts) })
 }
 
 // reissueKit issues a kit with the backup key of the uploaded kit, which must be the stored recipient's.
-func (s *Server) reissueKit(ctx context.Context, parts map[string][]byte) ([]byte, *refusal, error) {
+func (s *Server) reissueKit(ctx context.Context, parts map[string][]byte) (issuedKit, *refusal, error) {
 	if ref := checkPassphrase(partNewPassphrase, string(parts[partNewPassphrase])); ref != nil {
-		return nil, ref, nil
+		return issuedKit{}, ref, nil
 	}
 	stored, err := recovery.StoredRecipient(ctx, s.deps.Reader)
 	if errors.Is(err, recovery.ErrNoRecipient) {
-		return nil, refusedKitNotIssued, nil
+		return issuedKit{}, refusedKitNotIssued, nil
 	}
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	kit, err := s.openKit(ctx, parts[partKit], string(parts[partPassphrase]))
 	switch {
 	case errors.Is(err, recovery.ErrWrongPassphrase):
-		return nil, refusedWrongPassphrase, nil
+		return issuedKit{}, refusedWrongPassphrase, nil
 	case errors.Is(err, recovery.ErrInvalidKit):
-		return nil, refusedInvalidKit, nil
+		return issuedKit{}, refusedInvalidKit, nil
 	case err != nil:
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	case kit.BackupKey.Recipient().String() != stored:
-		return nil, refusedForeignKit, nil
+		return issuedKit{}, refusedForeignKit, nil
 	}
 	return s.issueKit(ctx, kit.BackupKey, string(parts[partNewPassphrase]), false)
 }
@@ -207,42 +222,43 @@ func checkPassphrase(field, passphrase string) *refusal {
 	return nil
 }
 
-// issueKit issues new break-glass credentials and returns them with key in a kit encrypted with passphrase; with
-// store, key's public key becomes the backups' recipient. Nothing is handed out without its audit entry.
-func (s *Server) issueKit(ctx context.Context, key *age.X25519Identity, passphrase string, store bool) ([]byte, *refusal, error) {
+// issueKit issues new break-glass credentials and returns them with key in a kit encrypted with passphrase, under a
+// new issuance stored with key's public key, which becomes the backups' recipient; newKey only tells the log. Nothing
+// is handed out without its audit entry.
+func (s *Server) issueKit(ctx context.Context, key *age.X25519Identity, passphrase string, newKey bool) (issuedKit, *refusal, error) {
 	address, conflict, err := s.nodeAddress(ctx)
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	if conflict != nil {
-		return nil, &refusal{conflict: true, code: conflict.Code, message: conflict.Message}, nil
+		return issuedKit{}, &refusal{conflict: true, code: conflict.Code, message: conflict.Message}, nil
 	}
 	if s.deps.Talos == nil {
-		return nil, refusedKitUnavailable, nil
+		return issuedKit{}, refusedKitUnavailable, nil
 	}
 	node, err := s.deps.Talos(ctx)
 	if err != nil {
 		s.deps.Log.Warn("no access to the Talos API", "action", "recovery kit", "error", err)
-		return nil, refusedKitUnavailable, nil
+		return issuedKit{}, refusedKitUnavailable, nil
 	}
 	talosconfig, notAfter, err := access.BreakGlassTalosconfig(ctx, node, address)
 	if err != nil {
 		// The error names no secret: a talosconfig that does not parse is reported without its content.
 		s.deps.Log.Error("the node did not generate the recovery kit's talosconfig", "error", err)
-		return nil, refusedKitUnavailable, nil
+		return issuedKit{}, refusedKitUnavailable, nil
 	}
 	user := requestFrom(ctx).user
 	if err := access.RecordTalosconfig(ctx, s.deps.Client, access.RoleOSAdmin, notAfter, user); err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	a, err := s.appliance(ctx)
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	server := "https://" + net.JoinHostPort(address, apiServerPort)
 	kubeconfig, err := access.IssueBreakGlass(ctx, s.deps.Client, s.deps.Kube, server, s.deps.ClusterCA, user)
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
 	kit := recovery.Kit{BackupKey: key, Kubeconfig: kubeconfig, Talosconfig: talosconfig, Identity: recovery.Identity{
 		HostName: a.Spec.Node.HostName, Address: address, ApplianceVersion: a.Status.Versions.Appliance,
@@ -252,31 +268,36 @@ func (s *Server) issueKit(ctx context.Context, key *age.X25519Identity, passphra
 	}
 	data, err := s.buildKit(ctx, kit, passphrase)
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
+	}
+	issuance, err := recovery.NewIssuance()
+	if err != nil {
+		return issuedKit{}, nil, err
 	}
 	recipient := key.Recipient().String()
-	if store {
-		if err := s.writeSystemSecret(ctx, recovery.RecipientSecret, corev1.SecretTypeOpaque, map[string][]byte{recovery.RecipientKey: []byte(recipient)}); err != nil {
-			return nil, nil, err
-		}
+	err = s.writeSystemSecret(ctx, recovery.RecipientSecret, corev1.SecretTypeOpaque, map[string][]byte{
+		recovery.RecipientKey: []byte(recipient), recovery.IssuanceKey: []byte(issuance),
+	})
+	if err != nil {
+		return issuedKit{}, nil, err
 	}
 	recordDetails(ctx, map[string]string{
 		"name": access.BreakGlass, "role": access.RoleClusterAdmin, "expires": notAfter.UTC().Format(time.RFC3339), "recipient": recipient,
 	})
 	if err := s.writeAudit(ctx, Success); err != nil {
-		return nil, nil, fmt.Errorf("record the issued recovery kit in the audit log: %w", err)
+		return issuedKit{}, nil, fmt.Errorf("record the issued recovery kit in the audit log: %w", err)
 	}
 	// The status names the recipient last: a kit whose status write fails is not handed out and cannot be confirmed.
 	issued := metav1.NewTime(s.deps.Now().UTC().Truncate(time.Second))
 	expires := metav1.NewTime(notAfter)
 	err = s.updateRecoveryKit(ctx, func(*v1alpha1.RecoveryKitStatus) *v1alpha1.RecoveryKitStatus {
-		return &v1alpha1.RecoveryKitStatus{IssuedAt: &issued, TalosconfigNotAfter: &expires, Recipient: recipient}
+		return &v1alpha1.RecoveryKitStatus{IssuedAt: &issued, TalosconfigNotAfter: &expires, Recipient: recipient, Issuance: issuance}
 	})
 	if err != nil {
-		return nil, nil, err
+		return issuedKit{}, nil, err
 	}
-	s.deps.Log.Info("recovery kit issued", "recipient", recipient, "newKey", store, "talosconfigNotAfter", notAfter)
-	return data, nil, nil
+	s.deps.Log.Info("recovery kit issued", "recipient", recipient, "issuance", issuance, "newKey", newKey, "talosconfigNotAfter", notAfter)
+	return issuedKit{data: data, issuance: issuance}, nil, nil
 }
 
 // buildKit encrypts the kit; it takes a password slot, as its scrypt takes as much memory as a password hash.
@@ -298,34 +319,51 @@ func (s *Server) openKit(ctx context.Context, data []byte, passphrase string) (r
 }
 
 // PostRecoveryKitConfirm records that the administrator stored the latest kit safely: the kit of the stored
-// recipient, which the status names once it was handed out.
-func (s *Server) PostRecoveryKitConfirm(ctx context.Context, _ PostRecoveryKitConfirmRequestObject) (PostRecoveryKitConfirmResponseObject, error) {
+// recipient and issuance, which the status names once it was handed out. A kit superseded since it was downloaded
+// is refused, so that only a kit the administrator holds counts as confirmed.
+func (s *Server) PostRecoveryKitConfirm(ctx context.Context, req PostRecoveryKitConfirmRequestObject) (PostRecoveryKitConfirmResponseObject, error) {
+	if req.Body == nil {
+		return PostRecoveryKitConfirm400JSONResponse{BadRequestJSONResponse(refusedNoIssuance.badRequest())}, nil
+	}
 	s.kitMu.Lock()
 	defer s.kitMu.Unlock()
-	stored, err := recovery.StoredRecipient(ctx, s.deps.Reader)
+	stored, err := recovery.StoredKit(ctx, s.deps.Reader)
 	if errors.Is(err, recovery.ErrNoRecipient) {
-		return PostRecoveryKitConfirm409JSONResponse{ConflictJSONResponse: ConflictJSONResponse(refusedKitNotIssued.badRequest())}, nil
+		return confirmRefused(refusedKitNotIssued), nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	a, err := s.appliance(ctx)
+	switch {
+	case apierrors.IsNotFound(err):
+		return PostRecoveryKitConfirm409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
+	case err != nil:
+		return nil, err
+	case !handedOut(a.Status.RecoveryKit, stored):
+		return confirmRefused(refusedKitNotDelivered), nil
+	case req.Body.Issuance != stored.Issuance:
+		return confirmRefused(refusedKitSuperseded), nil
+	}
 	err = s.updateRecoveryKit(ctx, func(st *v1alpha1.RecoveryKitStatus) *v1alpha1.RecoveryKitStatus {
-		if st == nil || st.Recipient != stored {
+		if !handedOut(st, stored) {
 			return nil
 		}
 		st.Confirmed = true
 		return st
 	})
-	switch {
-	case apierrors.IsNotFound(err):
-		return PostRecoveryKitConfirm409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
-	case errors.Is(err, recovery.ErrNoRecipient):
-		return PostRecoveryKitConfirm409JSONResponse{ConflictJSONResponse: ConflictJSONResponse(refusedKitNotDelivered.badRequest())}, nil
-	case err != nil:
+	if errors.Is(err, recovery.ErrNoRecipient) {
+		return confirmRefused(refusedKitNotDelivered), nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	s.deps.Log.Info("recovery kit confirmed")
+	s.deps.Log.Info("recovery kit confirmed", "issuance", stored.Issuance)
 	return PostRecoveryKitConfirm204Response{}, nil
+}
+
+func confirmRefused(ref *refusal) PostRecoveryKitConfirm409JSONResponse {
+	return PostRecoveryKitConfirm409JSONResponse{ConflictJSONResponse: ConflictJSONResponse(ref.badRequest())}
 }
 
 // updateRecoveryKit replaces the recovery kit status with what change makes of it; recovery.ErrNoRecipient when it
@@ -343,12 +381,12 @@ func (s *Server) updateRecoveryKit(ctx context.Context, change func(*v1alpha1.Re
 	})
 }
 
-// kitFile is the answer that hands out a kit.
-func kitFile(data []byte) RecoveryKitFileApplicationoctetStreamResponse {
+// kitFile is the answer that hands out a kit, naming its issuance.
+func kitFile(kit issuedKit) RecoveryKitFileApplicationoctetStreamResponse {
 	disposition := recoveryKitFileName
 	return RecoveryKitFileApplicationoctetStreamResponse{
-		Body:          bytes.NewReader(data),
-		ContentLength: int64(len(data)),
-		Headers:       RecoveryKitFileResponseHeaders{ContentDisposition: &disposition},
+		Body:          bytes.NewReader(kit.data),
+		ContentLength: int64(len(kit.data)),
+		Headers:       RecoveryKitFileResponseHeaders{ContentDisposition: &disposition, XRecoveryKitIssuance: &kit.issuance},
 	}
 }

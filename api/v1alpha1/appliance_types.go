@@ -213,6 +213,9 @@ type RecoveryKitStatus struct {
 	// Recipient is the public key the backups are encrypted to.
 	// +optional
 	Recipient string `json:"recipient,omitempty"`
+	// Issuance identifies the kit among the kits issued with the recipient.
+	// +optional
+	Issuance string `json:"issuance,omitempty"`
 }
 
 // VolumeStatus is the size and free space of a volume, in bytes.

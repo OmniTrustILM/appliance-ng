@@ -76,6 +76,64 @@ func storedRecipient(t *testing.T) string {
 	return string(systemSecret(t, recovery.RecipientSecret).Data[recovery.RecipientKey])
 }
 
+func storedIssuance(t *testing.T) string {
+	t.Helper()
+	return string(systemSecret(t, recovery.RecipientSecret).Data[recovery.IssuanceKey])
+}
+
+func confirm(h *harness, s *session, issuance string) *httptest.ResponseRecorder {
+	return h.request(http.MethodPost, pathConfirm, RecoveryKitConfirm{Issuance: issuance}, s)
+}
+
+// confirmStored confirms the kit of the stored issuance, or of an unknown one while no kit was issued.
+func confirmStored(t *testing.T, h *harness, s *session) *httptest.ResponseRecorder {
+	t.Helper()
+	issuance := "unknown"
+	if _, err := recovery.StoredRecipient(context.Background(), testClient); err == nil {
+		issuance = storedIssuance(t)
+	}
+	return confirm(h, s, issuance)
+}
+
+func TestConfirmOnlyTheDownloadedKit(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	withKitAccess(t, h)
+	rec := h.request(http.MethodPost, pathRecoveryKit, RecoveryKitRequest{Passphrase: ptr(kitPassphrase)}, s)
+	wantStatus(t, rec, http.StatusOK)
+	first := rec.Header().Get("X-Recovery-Kit-Issuance")
+	if first == "" || first != storedIssuance(t) || strings.Contains(first, storedRecipient(t)) {
+		t.Fatalf("issuance %q, stored %q", first, storedIssuance(t))
+	}
+	if k := kitState(t, h, s); k.Issuance == nil || *k.Issuance != first {
+		t.Errorf("kit %+v, want issuance %s", k, first)
+	}
+
+	rec = reissue(h, s, rec.Body.Bytes(), kitPassphrase, nextPassphrase)
+	wantStatus(t, rec, http.StatusOK)
+	second := rec.Header().Get("X-Recovery-Kit-Issuance")
+	if second == "" || second == first || second != storedIssuance(t) {
+		t.Fatalf("issuance after reissue %q, first %q, stored %q", second, first, storedIssuance(t))
+	}
+
+	rec = confirm(h, s, first)
+	wantStatus(t, rec, http.StatusConflict)
+	var e Error
+	decode(t, rec, &e)
+	if e.Code != "kit_superseded" {
+		t.Errorf("confirm of the earlier kit refused with %s, want kit_superseded", e.Code)
+	}
+	if k := kitState(t, h, s); k.Confirmed || k.Issuance == nil || *k.Issuance != second {
+		t.Errorf("kit after a stale confirm %+v", k)
+	}
+	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusBadRequest)
+
+	wantStatus(t, confirm(h, s, second), http.StatusNoContent)
+	if k := kitState(t, h, s); !k.Confirmed {
+		t.Errorf("kit after confirm %+v", k)
+	}
+}
+
 func TestIssueAndConfirmTheKit(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
@@ -131,7 +189,7 @@ func TestIssueAndConfirmTheKit(t *testing.T) {
 	}
 
 	wantStatus(t, h.request(http.MethodPost, pathRecoveryKit, RecoveryKitRequest{Passphrase: ptr(kitPassphrase)}, s), http.StatusConflict)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusNoContent)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 	if e := lastEntry(h); e.Action != string(AuditEntryActionRecoveryKitConfirm) || e.Result != string(Success) {
 		t.Errorf("audit entry %+v", e)
 	}
@@ -206,7 +264,7 @@ func wantKitFollowsSecret(t *testing.T, h *harness, s *session) {
 	}
 	rec := h.request(http.MethodPost, pathRecoveryKit, RecoveryKitRequest{Passphrase: ptr(kitPassphrase)}, s)
 	wantStatus(t, rec, http.StatusConflict)
-	rec = h.request(http.MethodPost, pathConfirm, nil, s)
+	rec = confirmStored(t, h, s)
 	wantStatus(t, rec, http.StatusConflict)
 	var e Error
 	decode(t, rec, &e)
@@ -223,7 +281,7 @@ func wantReplaceRepairs(t *testing.T, h *harness, s *session) {
 	if st := getAppliance(t).Status.RecoveryKit; storedRecipient(t) != recipient || st == nil || st.Recipient != recipient {
 		t.Errorf("after replace: stored %s, status %+v, kit %s", storedRecipient(t), st, recipient)
 	}
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusNoContent)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 }
 
 func TestFailedStatusWriteLeavesReplace(t *testing.T) {
@@ -231,7 +289,7 @@ func TestFailedStatusWriteLeavesReplace(t *testing.T) {
 	s := h.signIn()
 	withKitAccess(t, h)
 	issueKit(t, h, s)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusNoContent)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 	before := storedRecipient(t)
 
 	restore := h.srv.deps.Client
@@ -276,7 +334,7 @@ func TestReissueKeepsBackupKey(t *testing.T) {
 	s := h.signIn()
 	withKitAccess(t, h)
 	first := issueKit(t, h, s)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusNoContent)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 	recipient := storedRecipient(t)
 
 	for _, tc := range []struct {
@@ -383,7 +441,7 @@ func TestReplaceNewKey(t *testing.T) {
 	withKitAccess(t, h)
 	wantStatus(t, h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(kitPassphrase), Confirm: true}, s), http.StatusConflict)
 	first := recoveryKey(t, issueKit(t, h, s), kitPassphrase)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusNoContent)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 
 	rec := h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(nextPassphrase)}, s)
 	wantStatus(t, rec, http.StatusBadRequest)
@@ -481,13 +539,13 @@ func TestKitNeedsTheNode(t *testing.T) {
 	s := h.signIn()
 	body := RecoveryKitRequest{Passphrase: ptr(kitPassphrase)}
 	wantStatus(t, h.request(http.MethodPost, pathRecoveryKit, body, s), http.StatusConflict)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusConflict)
+	wantStatus(t, confirmStored(t, h, s), http.StatusConflict)
 	withAccess(t)
 	fillAccessTokens(t)
 	wantStatus(t, h.request(http.MethodPost, pathRecoveryKit, body, s), http.StatusServiceUnavailable)
 	h.withTalos(&talosNode{err: errors.New("rpc error: code = Unavailable")}, nil)
 	wantStatus(t, h.request(http.MethodPost, pathRecoveryKit, body, s), http.StatusServiceUnavailable)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusConflict)
+	wantStatus(t, confirmStored(t, h, s), http.StatusConflict)
 	wantStatus(t, h.request(http.MethodPost, pathRecoveryKit, nil, s), http.StatusBadRequest)
 	wantStatus(t, h.request(http.MethodPost, pathReplace, nil, s), http.StatusBadRequest)
 	if items := accessList(t, h, s); len(items) != 0 {

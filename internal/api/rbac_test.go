@@ -121,7 +121,7 @@ func accessAnswers(t *testing.T, h *harness, s *session) {
 	wantStatus(t, h.request(http.MethodGet, pathRecoveryKit, nil, s), http.StatusOK)
 	wantStatus(t, reissue(h, s, first, kitPassphrase, nextPassphrase), http.StatusOK)
 	wantStatus(t, h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(kitPassphrase), Confirm: true}, s), http.StatusOK)
-	wantStatus(t, h.request(http.MethodPost, pathConfirm, nil, s), http.StatusNoContent)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 }
 
 func clientFor(t *testing.T, cfg *rest.Config) client.Client {

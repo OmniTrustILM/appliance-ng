@@ -15,18 +15,29 @@ type Kit = components['schemas']['RecoveryKit'];
 
 const loadKit = () => api.GET('/recovery-kit');
 
-/** The latest kit: when it was issued, until when its talosconfig works, and its confirmation. */
-function KitState({ kit, onConfirmed }: Readonly<{ kit: Kit; onConfirmed: () => void }>) {
+const superseded =
+  'A newer kit was issued since this one, so this one is not confirmed. Download the latest kit by issuing it ' +
+  'again or replacing it below, then confirm that one.';
+
+/**
+ * The latest kit: when it was issued, until when its talosconfig works, and its confirmation. Confirming names the
+ * issuance of the kit downloaded on this page, or else of the kit the page loaded, so that a kit issued meanwhile
+ * elsewhere is not confirmed in its place.
+ */
+function KitState({ kit, downloaded, onConfirmed }: Readonly<{ kit: Kit; downloaded?: string; onConfirmed: () => void }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [loaded] = useState(kit.issuance);
 
   async function confirm() {
     setBusy(true);
     setError(undefined);
-    const result = await attempt(() => api.POST('/recovery-kit/confirm'));
+    const issuance = downloaded ?? loaded ?? '';
+    const result = await attempt(() => api.POST('/recovery-kit/confirm', { body: { issuance } }));
     setBusy(false);
     if (!result) return setError(unreachable);
     if (result.response.ok) return onConfirmed();
+    if (result.error?.code === 'kit_superseded') return setError(superseded);
     setError(result.error?.message ?? failureMessage(result.response.status));
   }
 
@@ -60,9 +71,11 @@ function KitState({ kit, onConfirmed }: Readonly<{ kit: Kit; onConfirmed: () => 
 export function RecoveryKitPage() {
   const { data: kit, error, reload } = useLoaded(loadKit);
   const [issued, setIssued] = useState<string>();
+  const [downloaded, setDownloaded] = useState<string>();
 
-  function onIssued(filename: string) {
+  function onIssued(filename: string, issuance: string | undefined) {
     setIssued(filename);
+    setDownloaded(issuance);
     reload();
   }
 
@@ -83,7 +96,7 @@ export function RecoveryKitPage() {
             <IssueForm onIssued={onIssued} />
           </>
         )}
-        {kit?.issued && <KitState kit={kit} onConfirmed={reload} />}
+        {kit?.issued && <KitState kit={kit} downloaded={downloaded} onConfirmed={reload} />}
       </Card>
 
       {kit?.issued && (

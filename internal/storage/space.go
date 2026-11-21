@@ -31,9 +31,14 @@ func Check(path string, expected uint64) error {
 	if err != nil {
 		return err
 	}
-	// Equal to free < 2*expected, without the overflow.
-	if free/2 < expected {
+	if !enough(free, expected) {
 		return fmt.Errorf("%w: %d bytes needed twice over, %d bytes free", ErrNoSpace, expected, free)
 	}
 	return nil
+}
+
+// enough tells whether free bytes hold expected bytes twice over.
+func enough(free, expected uint64) bool {
+	// Equal to free >= 2*expected, without the overflow.
+	return free/2 >= expected
 }

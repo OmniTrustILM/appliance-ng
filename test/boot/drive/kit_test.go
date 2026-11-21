@@ -62,6 +62,8 @@ func (f *fakeCluster) checkManager(_ context.Context, _ []byte, secrets ...strin
 	return nil
 }
 
+const testIssuance = "issuance-of-the-issued-kit"
+
 // kitConsole serves the recovery kit API: the first POST issues kit, a refusal body is echoed by refuse.
 func kitConsole(t *testing.T, kit []byte, recipient, refuse string) *httptest.Server {
 	t.Helper()
@@ -69,7 +71,11 @@ func kitConsole(t *testing.T, kit []byte, recipient, refuse string) *httptest.Se
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /appliance/api/v1/recovery-kit":
-			_ = json.NewEncoder(w).Encode(map[string]any{"issued": issued, "confirmed": confirmed, "recipient": recipient})
+			state := map[string]any{"issued": issued, "confirmed": confirmed, "recipient": recipient}
+			if issued {
+				state["issuance"] = testIssuance
+			}
+			_ = json.NewEncoder(w).Encode(state)
 		case "POST /appliance/api/v1/recovery-kit":
 			if refuse != "" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -79,6 +85,12 @@ func kitConsole(t *testing.T, kit []byte, recipient, refuse string) *httptest.Se
 			issued = true
 			_, _ = w.Write(kit)
 		case "POST /appliance/api/v1/recovery-kit/confirm":
+			var body struct{ Issuance string }
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Issuance != testIssuance {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": "kit_superseded", "message": "superseded"})
+				return
+			}
 			confirmed = true
 			w.WriteHeader(http.StatusNoContent)
 		default:

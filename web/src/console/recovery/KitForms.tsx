@@ -10,13 +10,15 @@ import { PassphraseFields, passphrasesAgree } from './PassphraseFields';
 
 export const kitFileName = 'ilm-appliance-recovery-kit.tar.age';
 
-type OnIssued = Readonly<{ onIssued: (filename: string) => void }>;
+/** Takes the downloaded kit's file name and its issuance, which confirms that very kit. */
+type IssuedHandler = (filename: string, issuance: string | undefined) => void;
+type OnIssued = Readonly<{ onIssued: IssuedHandler }>;
 
 /** Calls onIssued once the passphrase fields are cleared, so that no passphrase stays on screen. */
-function clearing(onIssued: (filename: string) => void, ...clear: ((value: string) => void)[]) {
-  return (filename: string) => {
+function clearing(onIssued: IssuedHandler, ...clear: ((value: string) => void)[]) {
+  return (filename: string, headers: Headers) => {
     for (const set of clear) set('');
-    onIssued(filename);
+    onIssued(filename, headers.get('X-Recovery-Kit-Issuance') ?? undefined);
   };
 }
 

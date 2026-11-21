@@ -31,25 +31,38 @@ func TestCheckAllowsZeroExpected(t *testing.T) {
 	}
 }
 
-func TestCheckRefusesBelowTwiceExpected(t *testing.T) {
+func TestEnoughNeedsTwiceExpected(t *testing.T) {
+	const most = ^uint64(0)
+	for _, tc := range []struct {
+		free, expected uint64
+		want           bool
+	}{
+		{free: 200, expected: 100, want: true},
+		{free: 199, expected: 100, want: false},
+		{free: 201, expected: 100, want: true},
+		{free: 0, expected: 1, want: false},
+		{free: 2, expected: 1, want: true},
+		{free: most, expected: most / 2, want: true},
+		{free: most, expected: most/2 + 1, want: false},
+		{free: most, expected: most, want: false},
+	} {
+		if got := enough(tc.free, tc.expected); got != tc.want {
+			t.Errorf("enough(%d, %d) = %t, want %t", tc.free, tc.expected, got, tc.want)
+		}
+	}
+}
+
+func TestCheckRefusesMoreThanTheVolumeHolds(t *testing.T) {
 	dir := t.TempDir()
-	_, free, err := Usage(dir)
-	if err != nil {
-		t.Fatal(err)
+	if err := Check(dir, 1); err != nil {
+		t.Errorf("Check(1) = %v", err)
 	}
-	if err := Check(dir, 1); err != nil && free >= 2 {
-		t.Errorf("Check(1) = %v with %d free", err, free)
-	}
-	// More than half of the free space expected: twice as much is not there.
-	err = Check(dir, free/2+1)
+	err := Check(dir, ^uint64(0)/2+1)
 	if !errors.Is(err, ErrNoSpace) {
-		t.Fatalf("Check(free/2+1) = %v, want ErrNoSpace", err)
+		t.Fatalf("Check(an absurd size) = %v, want ErrNoSpace", err)
 	}
 	if !strings.Contains(err.Error(), "free") {
 		t.Errorf("error %q names no sizes", err)
-	}
-	if err := Check(dir, free/2); err != nil {
-		t.Errorf("Check(free/2) = %v, want nil", err)
 	}
 }
 

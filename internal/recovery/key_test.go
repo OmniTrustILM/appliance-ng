@@ -42,3 +42,20 @@ func TestStoredRecipient(t *testing.T) {
 		t.Errorf("with a failing client: %v", err)
 	}
 }
+
+func TestStoredKitAndIssuance(t *testing.T) {
+	first, err := NewIssuance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewIssuance()
+	if err != nil || first == second || len(first) != 32 {
+		t.Fatalf("issuances %q and %q, %v", first, second, err)
+	}
+	secret := recipientSecret("age1abc")
+	secret.Data[IssuanceKey] = []byte(first)
+	got, err := StoredKit(context.Background(), fake.NewClientBuilder().WithObjects(secret).Build())
+	if err != nil || got != (Stored{Recipient: "age1abc", Issuance: first}) {
+		t.Errorf("got %+v, %v", got, err)
+	}
+}

@@ -101,10 +101,15 @@ func (c *client) ensureKit(ctx context.Context, out, passphrase string) (string,
 		if err := writeSecret(out, data); err != nil {
 			return "", err
 		}
+		// Nothing else changes the kit while drive runs: the latest issuance is the one just written.
+		if state, err = c.kitState(ctx); err != nil {
+			return "", err
+		}
 	}
 	if !state.Confirmed {
 		step("confirm the recovery kit")
-		if err := c.call(ctx, http.MethodPost, "/appliance/api/v1/recovery-kit/confirm", nil, nil); err != nil {
+		body := map[string]string{"issuance": state.Issuance}
+		if err := c.call(ctx, http.MethodPost, "/appliance/api/v1/recovery-kit/confirm", body, nil); err != nil {
 			return "", err
 		}
 	}
@@ -145,8 +150,8 @@ func checkKit(ctx context.Context, path, passphrase, recipient string, cl cluste
 }
 
 type kitState struct {
-	Issued, Confirmed bool
-	Recipient         string
+	Issued, Confirmed   bool
+	Recipient, Issuance string
 }
 
 func (c *client) kitState(ctx context.Context) (kitState, error) {

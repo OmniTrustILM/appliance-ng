@@ -8,8 +8,9 @@ import { RecoveryKitPage } from './RecoveryKitPage';
 const notIssued = { issued: false, confirmed: false };
 const issued = {
   issued: true, confirmed: false, issuedAt: '2026-11-21T10:00:00Z', talosconfigNotAfter: '2027-11-21T10:00:00Z',
-  recipient: 'age1recipient',
+  recipient: 'age1recipient', issuance: 'issuance-1',
 };
+const issuanceHeader = 'X-Recovery-Kit-Issuance';
 const confirmed = { ...issued, confirmed: true };
 const kitFile = 'age-encryption.org/v1\n';
 const passphrase = 'a long passphrase';
@@ -46,7 +47,7 @@ describe('RecoveryKitPage', () => {
       'GET /appliance/api/v1/recovery-kit': () => [200, state],
       'POST /appliance/api/v1/recovery-kit': () => {
         state = issued;
-        return [200, kitFile];
+        return [200, kitFile, { [issuanceHeader]: 'issuance-1' }];
       },
       'POST /appliance/api/v1/recovery-kit/confirm': () => {
         state = confirmed;
@@ -61,7 +62,7 @@ describe('RecoveryKitPage', () => {
     expect(await screen.findByText(/not confirmed/i)).toBeInTheDocument();
     expect(screen.queryByText(kitFile.trim())).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'I have stored the kit safely' }));
-    expect(sent['POST /appliance/api/v1/recovery-kit/confirm']).toHaveLength(1);
+    expect(sent['POST /appliance/api/v1/recovery-kit/confirm']).toEqual([{ issuance: 'issuance-1' }]);
     expect(await screen.findByText(/the kit is confirmed/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'I have stored the kit safely' })).not.toBeInTheDocument();
   });
@@ -145,6 +146,36 @@ describe('RecoveryKitPage', () => {
     expect(sent['POST /appliance/api/v1/recovery-kit/replace']).toEqual([{ passphrase, confirm: true }]);
     expect(within(form).getByLabelText('New passphrase')).toHaveValue('');
     expect(within(form).getByRole('button', { name: 'Replace the kit' })).toBeDisabled();
+  });
+
+  it('confirms the kit it downloaded, not a newer one issued meanwhile, and says to download the newer one', async () => {
+    let state: object = notIssued;
+    const { sent } = stubApi({
+      'GET /appliance/api/v1/recovery-kit': () => [200, state],
+      'POST /appliance/api/v1/recovery-kit': () => {
+        // Another administrator re-issues the kit before the page reads the state again.
+        state = { ...issued, issuance: 'issuance-2' };
+        return [200, kitFile, { [issuanceHeader]: 'issuance-1' }];
+      },
+      'POST /appliance/api/v1/recovery-kit/confirm': [409, { code: 'kit_superseded', message: 'Superseded.' }],
+    });
+    renderPage();
+    await typePassphrases('Passphrase');
+    await userEvent.click(await screen.findByRole('button', { name: 'Issue the recovery kit' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'I have stored the kit safely' }));
+    expect(sent['POST /appliance/api/v1/recovery-kit/confirm']).toEqual([{ issuance: 'issuance-1' }]);
+    expect(await screen.findByText(/a newer kit was issued since/i)).toHaveTextContent(/download the latest kit/i);
+    expect(screen.queryByText(/the kit is confirmed/i)).not.toBeInTheDocument();
+  });
+
+  it('confirms the kit the page loaded when none was downloaded here', async () => {
+    const { sent } = stubApi({
+      'GET /appliance/api/v1/recovery-kit': [200, issued],
+      'POST /appliance/api/v1/recovery-kit/confirm': [204],
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'I have stored the kit safely' }));
+    expect(sent['POST /appliance/api/v1/recovery-kit/confirm']).toEqual([{ issuance: 'issuance-1' }]);
   });
 
   it('reports a state that cannot be read', async () => {
