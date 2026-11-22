@@ -20,6 +20,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AccessCredentialKind.
+const (
+	Kubeconfig  AccessCredentialKind = "kubeconfig"
+	Talosconfig AccessCredentialKind = "talosconfig"
+)
+
+// Valid indicates whether the value is a known member of the AccessCredentialKind enum.
+func (e AccessCredentialKind) Valid() bool {
+	switch e {
+	case Kubeconfig:
+		return true
+	case Talosconfig:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ApplianceSettingsTlsSource.
 const (
 	ApplianceSettingsTlsSourceBuiltin ApplianceSettingsTlsSource = "builtin"
@@ -45,17 +63,24 @@ const (
 	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
 	AuditEntryActionCertificateSigned  AuditEntryAction = "certificate-signed"
 	AuditEntryActionCertificateUpload  AuditEntryAction = "certificate-upload"
+	AuditEntryActionKubeconfigIssue    AuditEntryAction = "kubeconfig-issue"
+	AuditEntryActionKubeconfigRevoke   AuditEntryAction = "kubeconfig-revoke"
 	AuditEntryActionMailRemove         AuditEntryAction = "mail-remove"
 	AuditEntryActionMailSettings       AuditEntryAction = "mail-settings"
 	AuditEntryActionMailTest           AuditEntryAction = "mail-test"
 	AuditEntryActionNodeSettings       AuditEntryAction = "node-settings"
 	AuditEntryActionPlatformSettings   AuditEntryAction = "platform-settings"
 	AuditEntryActionReboot             AuditEntryAction = "reboot"
+	AuditEntryActionRecoveryKitConfirm AuditEntryAction = "recovery-kit-confirm"
+	AuditEntryActionRecoveryKitIssue   AuditEntryAction = "recovery-kit-issue"
+	AuditEntryActionRecoveryKitReissue AuditEntryAction = "recovery-kit-reissue"
+	AuditEntryActionRecoveryKitReplace AuditEntryAction = "recovery-kit-replace"
 	AuditEntryActionRegistryRemove     AuditEntryAction = "registry-remove"
 	AuditEntryActionRegistrySet        AuditEntryAction = "registry-set"
 	AuditEntryActionShutdown           AuditEntryAction = "shutdown"
 	AuditEntryActionSignIn             AuditEntryAction = "sign-in"
 	AuditEntryActionSignOut            AuditEntryAction = "sign-out"
+	AuditEntryActionTalosconfigIssue   AuditEntryAction = "talosconfig-issue"
 	AuditEntryActionTrustAdd           AuditEntryAction = "trust-add"
 	AuditEntryActionTrustRemove        AuditEntryAction = "trust-remove"
 	AuditEntryActionWizardPlatform     AuditEntryAction = "wizard-platform"
@@ -74,6 +99,10 @@ func (e AuditEntryAction) Valid() bool {
 		return true
 	case AuditEntryActionCertificateUpload:
 		return true
+	case AuditEntryActionKubeconfigIssue:
+		return true
+	case AuditEntryActionKubeconfigRevoke:
+		return true
 	case AuditEntryActionMailRemove:
 		return true
 	case AuditEntryActionMailSettings:
@@ -86,6 +115,14 @@ func (e AuditEntryAction) Valid() bool {
 		return true
 	case AuditEntryActionReboot:
 		return true
+	case AuditEntryActionRecoveryKitConfirm:
+		return true
+	case AuditEntryActionRecoveryKitIssue:
+		return true
+	case AuditEntryActionRecoveryKitReissue:
+		return true
+	case AuditEntryActionRecoveryKitReplace:
+		return true
 	case AuditEntryActionRegistryRemove:
 		return true
 	case AuditEntryActionRegistrySet:
@@ -95,6 +132,8 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionSignIn:
 		return true
 	case AuditEntryActionSignOut:
+		return true
+	case AuditEntryActionTalosconfigIssue:
 		return true
 	case AuditEntryActionTrustAdd:
 		return true
@@ -167,6 +206,24 @@ func (e ConditionStatus) Valid() bool {
 	}
 }
 
+// Defines values for KubeconfigRequestRole.
+const (
+	ClusterAdmin KubeconfigRequestRole = "cluster-admin"
+	View         KubeconfigRequestRole = "view"
+)
+
+// Valid indicates whether the value is a known member of the KubeconfigRequestRole enum.
+func (e KubeconfigRequestRole) Valid() bool {
+	switch e {
+	case ClusterAdmin:
+		return true
+	case View:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MailSecurity.
 const (
 	None     MailSecurity = "none"
@@ -233,6 +290,24 @@ func (e StatusSetup) Valid() bool {
 	}
 }
 
+// Defines values for TalosconfigRequestRole.
+const (
+	OsAdmin  TalosconfigRequestRole = "os:admin"
+	OsReader TalosconfigRequestRole = "os:reader"
+)
+
+// Valid indicates whether the value is a known member of the TalosconfigRequestRole enum.
+func (e TalosconfigRequestRole) Valid() bool {
+	switch e {
+	case OsAdmin:
+		return true
+	case OsReader:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetStatusParamsXBackgroundRefresh.
 const (
 	N1 GetStatusParamsXBackgroundRefresh = "1"
@@ -246,6 +321,30 @@ func (e GetStatusParamsXBackgroundRefresh) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// AccessCredential defines model for AccessCredential.
+type AccessCredential struct {
+	// BreakGlass Set on the break-glass kubeconfig of the recovery kit, which only issuing the kit again revokes.
+	BreakGlass *bool `json:"breakGlass,omitempty"`
+
+	// Expires When the credential stops working; absent for a long-lived kubeconfig.
+	Expires  *time.Time           `json:"expires,omitempty"`
+	IssuedAt time.Time            `json:"issuedAt"`
+	IssuedBy string               `json:"issuedBy"`
+	Kind     AccessCredentialKind `json:"kind"`
+
+	// Name The name a kubeconfig is revoked by; talosconfigs have none.
+	Name *string `json:"name,omitempty"`
+	Role string  `json:"role"`
+}
+
+// AccessCredentialKind defines model for AccessCredential.Kind.
+type AccessCredentialKind string
+
+// AccessList defines model for AccessList.
+type AccessList struct {
+	Items []AccessCredential `json:"items"`
 }
 
 // AdminCredentialRequest defines model for AdminCredentialRequest.
@@ -284,6 +383,9 @@ type ApplianceSettingsTlsSource string
 type AuditEntry struct {
 	Action AuditEntryAction `json:"action"`
 
+	// Details What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the `recipient` public key and the talosconfig's `expires`; never a token, certificate, key or passphrase.
+	Details *map[string]string `json:"details,omitempty"`
+
 	// Paths The Appliance fields the request changed, as JSON paths; never their values.
 	Paths []string `json:"paths"`
 
@@ -291,7 +393,7 @@ type AuditEntry struct {
 	Result AuditEntryResult `json:"result"`
 	Time   time.Time        `json:"time"`
 
-	// User The signed-in user, or the existing account a sign-in attempt named; empty otherwise.
+	// User The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise.
 	User string `json:"user"`
 }
 
@@ -381,6 +483,16 @@ type CsrfToken struct {
 	CsrfToken string `json:"csrfToken"`
 }
 
+// DataVolume The size and free space of the data volume; absent while the manager cannot read it.
+type DataVolume struct {
+	// FreeBytes The free space, rounded down to steps of 1% of the size.
+	FreeBytes int64 `json:"freeBytes"`
+
+	// LowSpace Less than a fifth of the volume is free, judged on the exact free space.
+	LowSpace  bool  `json:"lowSpace"`
+	SizeBytes int64 `json:"sizeBytes"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	// Code A machine-readable error code.
@@ -390,6 +502,19 @@ type Error struct {
 	Field   *string `json:"field,omitempty"`
 	Message string  `json:"message"`
 }
+
+// KubeconfigRequest defines model for KubeconfigRequest.
+type KubeconfigRequest struct {
+	// Hours How long the token is valid; without it the kubeconfig is long-lived and needs `name`.
+	Hours *int `json:"hours,omitempty"`
+
+	// Name Up to 40 lower-case letters, digits and hyphens; required for a long-lived kubeconfig.
+	Name *string               `json:"name,omitempty"`
+	Role KubeconfigRequestRole `json:"role"`
+}
+
+// KubeconfigRequestRole defines model for KubeconfigRequest.Role.
+type KubeconfigRequestRole string
 
 // LockedError defines model for LockedError.
 type LockedError struct {
@@ -520,6 +645,56 @@ type Proxy struct {
 	NoProxy *string `json:"noProxy,omitempty"`
 }
 
+// RecoveryKit defines model for RecoveryKit.
+type RecoveryKit struct {
+	// Confirmed The administrator confirmed that the latest kit is stored safely.
+	Confirmed bool `json:"confirmed"`
+
+	// Issuance A random identifier of the latest kit, new with every issue, reissue and replace; absent while the latest kit was not handed out.
+	Issuance *string `json:"issuance,omitempty"`
+
+	// Issued A backup key is stored. When the latest kit was not handed out, the other fields but the recipient are absent and the kit can only be replaced.
+	Issued   bool       `json:"issued"`
+	IssuedAt *time.Time `json:"issuedAt,omitempty"`
+
+	// Recipient The public key the backups are encrypted to.
+	Recipient *string `json:"recipient,omitempty"`
+
+	// TalosconfigNotAfter When the kit's talosconfig expires; issue the kit again before then.
+	TalosconfigNotAfter *time.Time `json:"talosconfigNotAfter,omitempty"`
+}
+
+// RecoveryKitConfirm defines model for RecoveryKitConfirm.
+type RecoveryKitConfirm struct {
+	// Issuance The issuance of the kit that was stored, as its download answer named it.
+	Issuance string `json:"issuance"`
+}
+
+// RecoveryKitReissue defines model for RecoveryKitReissue.
+type RecoveryKitReissue struct {
+	// Kit The current recovery kit.
+	Kit openapi_types.File `json:"kit"`
+
+	// NewPassphrase The passphrase of the new kit.
+	NewPassphrase *string `json:"newPassphrase,omitempty"`
+
+	// Passphrase The passphrase of the uploaded kit.
+	Passphrase *string `json:"passphrase,omitempty"`
+}
+
+// RecoveryKitReplace defines model for RecoveryKitReplace.
+type RecoveryKitReplace struct {
+	// Confirm Must be true; backups made before stay readable only with the lost kit.
+	Confirm    bool    `json:"confirm"`
+	Passphrase *string `json:"passphrase,omitempty"`
+}
+
+// RecoveryKitRequest defines model for RecoveryKitRequest.
+type RecoveryKitRequest struct {
+	// Passphrase The passphrase that encrypts the kit. Like a console password, it has at least 12 characters and is not one of the most common passwords.
+	Passphrase *string `json:"passphrase,omitempty"`
+}
+
 // Registry defines model for Registry.
 type Registry struct {
 	CredentialsSet bool   `json:"credentialsSet"`
@@ -591,13 +766,17 @@ type Status struct {
 	Certificate *StatusCertificate `json:"certificate,omitempty"`
 	Conditions  []Condition        `json:"conditions"`
 
+	// DataVolume The size and free space of the data volume; absent while the manager cannot read it.
+	DataVolume *DataVolume `json:"dataVolume,omitempty"`
+
 	// NodeAddress The address the node is reached at.
 	NodeAddress *string `json:"nodeAddress,omitempty"`
 
 	// RebootRequired A change takes effect only after the node restarts.
-	RebootRequired bool        `json:"rebootRequired"`
-	Setup          StatusSetup `json:"setup"`
-	Versions       Versions    `json:"versions"`
+	RebootRequired bool         `json:"rebootRequired"`
+	RecoveryKit    *RecoveryKit `json:"recoveryKit,omitempty"`
+	Setup          StatusSetup  `json:"setup"`
+	Versions       Versions     `json:"versions"`
 }
 
 // StatusSetup defines model for Status.Setup.
@@ -607,6 +786,15 @@ type StatusSetup string
 type StatusCertificate struct {
 	NotAfter time.Time `json:"notAfter"`
 }
+
+// TalosconfigRequest defines model for TalosconfigRequest.
+type TalosconfigRequest struct {
+	Hours int                    `json:"hours"`
+	Role  TalosconfigRequestRole `json:"role"`
+}
+
+// TalosconfigRequestRole defines model for TalosconfigRequest.Role.
+type TalosconfigRequestRole string
 
 // TrustUpload defines model for TrustUpload.
 type TrustUpload struct {
@@ -683,6 +871,12 @@ type GetStatusParams struct {
 // GetStatusParamsXBackgroundRefresh defines parameters for GetStatus.
 type GetStatusParamsXBackgroundRefresh string
 
+// PostAccessKubeconfigJSONRequestBody defines body for PostAccessKubeconfig for application/json ContentType.
+type PostAccessKubeconfigJSONRequestBody = KubeconfigRequest
+
+// PostAccessTalosconfigJSONRequestBody defines body for PostAccessTalosconfig for application/json ContentType.
+type PostAccessTalosconfigJSONRequestBody = TalosconfigRequest
+
 // PutCertificateMultipartRequestBody defines body for PutCertificate for multipart/form-data ContentType.
 type PutCertificateMultipartRequestBody = CertificateUpload
 
@@ -703,6 +897,18 @@ type PutPlatformJSONRequestBody = PlatformUpdate
 
 // PostPlatformAdminCredentialJSONRequestBody defines body for PostPlatformAdminCredential for application/json ContentType.
 type PostPlatformAdminCredentialJSONRequestBody = AdminCredentialRequest
+
+// PostRecoveryKitJSONRequestBody defines body for PostRecoveryKit for application/json ContentType.
+type PostRecoveryKitJSONRequestBody = RecoveryKitRequest
+
+// PostRecoveryKitConfirmJSONRequestBody defines body for PostRecoveryKitConfirm for application/json ContentType.
+type PostRecoveryKitConfirmJSONRequestBody = RecoveryKitConfirm
+
+// PostRecoveryKitReissueMultipartRequestBody defines body for PostRecoveryKitReissue for multipart/form-data ContentType.
+type PostRecoveryKitReissueMultipartRequestBody = RecoveryKitReissue
+
+// PostRecoveryKitReplaceJSONRequestBody defines body for PostRecoveryKitReplace for application/json ContentType.
+type PostRecoveryKitReplaceJSONRequestBody = RecoveryKitReplace
 
 // PutRegistryJSONRequestBody defines body for PutRegistry for application/json ContentType.
 type PutRegistryJSONRequestBody = RegistryCredentialsUpdate
@@ -727,101 +933,128 @@ type PutWizardPlatformJSONRequestBody = PlatformSettings
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetAccess The issued kubeconfigs and the talosconfigs that have not expired
+	// (GET /access)
+	GetAccess(w http.ResponseWriter, r *http.Request)
+	// PostAccessKubeconfig Issue a kubeconfig
+	// (POST /access/kubeconfig)
+	PostAccessKubeconfig(w http.ResponseWriter, r *http.Request)
+	// DeleteAccessKubeconfig Revoke a kubeconfig
+	// (DELETE /access/kubeconfig/{name})
+	DeleteAccessKubeconfig(w http.ResponseWriter, r *http.Request, name string)
+	// PostAccessTalosconfig Issue a talosconfig
+	// (POST /access/talosconfig)
+	PostAccessTalosconfig(w http.ResponseWriter, r *http.Request)
 	// GetAppliance The configuration of the appliance, without secret values
-	// (GET /api/v1/appliance)
+	// (GET /appliance)
 	GetAppliance(w http.ResponseWriter, r *http.Request)
 	// GetAudit The most recent audit entries, newest first
-	// (GET /api/v1/audit)
+	// (GET /audit)
 	GetAudit(w http.ResponseWriter, r *http.Request, params GetAuditParams)
 	// GetCaPem The root certificate of the built-in certificate authority
-	// (GET /api/v1/ca.pem)
+	// (GET /ca.pem)
 	GetCaPem(w http.ResponseWriter, r *http.Request)
 	// GetCatalogue The platform components that can be installed
-	// (GET /api/v1/catalogue)
+	// (GET /catalogue)
 	GetCatalogue(w http.ResponseWriter, r *http.Request)
 	// GetCertificate The TLS certificate the appliance serves
-	// (GET /api/v1/certificate)
+	// (GET /certificate)
 	GetCertificate(w http.ResponseWriter, r *http.Request)
 	// PutCertificate Upload a certificate and its private key
-	// (PUT /api/v1/certificate)
+	// (PUT /certificate)
 	PutCertificate(w http.ResponseWriter, r *http.Request)
 	// PutCertificateBuiltin Go back to the built-in certificate
-	// (PUT /api/v1/certificate/builtin)
+	// (PUT /certificate/builtin)
 	PutCertificateBuiltin(w http.ResponseWriter, r *http.Request)
 	// PostCertificateCsr Create a certificate signing request
-	// (POST /api/v1/certificate/csr)
+	// (POST /certificate/csr)
 	PostCertificateCsr(w http.ResponseWriter, r *http.Request)
 	// PutCertificateCsrSigned Upload the certificate issued for the pending signing request
-	// (PUT /api/v1/certificate/csr/signed)
+	// (PUT /certificate/csr/signed)
 	PutCertificateCsrSigned(w http.ResponseWriter, r *http.Request)
 	// DeleteMail Remove the mail server and its credentials
-	// (DELETE /api/v1/mail)
+	// (DELETE /mail)
 	DeleteMail(w http.ResponseWriter, r *http.Request)
 	// GetMail The mail server
-	// (GET /api/v1/mail)
+	// (GET /mail)
 	GetMail(w http.ResponseWriter, r *http.Request)
 	// PutMail Set the mail server
-	// (PUT /api/v1/mail)
+	// (PUT /mail)
 	PutMail(w http.ResponseWriter, r *http.Request)
 	// PostMailTest Send a test mail through the mail server
-	// (POST /api/v1/mail/test)
+	// (POST /mail/test)
 	PostMailTest(w http.ResponseWriter, r *http.Request)
 	// PutNode Change the gateway, DNS and NTP servers and proxy of the node
-	// (PUT /api/v1/node)
+	// (PUT /node)
 	PutNode(w http.ResponseWriter, r *http.Request)
 	// GetPlatform The ILM platform and the components that can be installed
-	// (GET /api/v1/platform)
+	// (GET /platform)
 	GetPlatform(w http.ResponseWriter, r *http.Request)
 	// PutPlatform Change the platform host name and its components
-	// (PUT /api/v1/platform)
+	// (PUT /platform)
 	PutPlatform(w http.ResponseWriter, r *http.Request)
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
-	// (POST /api/v1/platform/admin-credential)
+	// (POST /platform/admin-credential)
 	PostPlatformAdminCredential(w http.ResponseWriter, r *http.Request)
+	// GetRecoveryKit Whether the recovery kit is issued and confirmed
+	// (GET /recovery-kit)
+	GetRecoveryKit(w http.ResponseWriter, r *http.Request)
+	// PostRecoveryKit Issue the recovery kit
+	// (POST /recovery-kit)
+	PostRecoveryKit(w http.ResponseWriter, r *http.Request)
+	// PostRecoveryKitConfirm Confirm that the recovery kit is stored safely
+	// (POST /recovery-kit/confirm)
+	PostRecoveryKitConfirm(w http.ResponseWriter, r *http.Request)
+	// PostRecoveryKitReissue Issue the recovery kit again with the same backup key
+	// (POST /recovery-kit/reissue)
+	PostRecoveryKitReissue(w http.ResponseWriter, r *http.Request)
+	// PostRecoveryKitReplace Replace a lost recovery kit with a new backup key
+	// (POST /recovery-kit/replace)
+	PostRecoveryKitReplace(w http.ResponseWriter, r *http.Request)
 	// GetRegistries The container registries
-	// (GET /api/v1/registries)
+	// (GET /registries)
 	GetRegistries(w http.ResponseWriter, r *http.Request)
 	// DeleteRegistry Remove a registry and its credentials
-	// (DELETE /api/v1/registries/{host})
+	// (DELETE /registries/{host})
 	DeleteRegistry(w http.ResponseWriter, r *http.Request, host string)
 	// GetRegistry A container registry
-	// (GET /api/v1/registries/{host})
+	// (GET /registries/{host})
 	GetRegistry(w http.ResponseWriter, r *http.Request, host string)
 	// PutRegistry Add a registry or change its credentials
-	// (PUT /api/v1/registries/{host})
+	// (PUT /registries/{host})
 	PutRegistry(w http.ResponseWriter, r *http.Request, host string)
 	// DeleteSession Sign out
-	// (DELETE /api/v1/session)
+	// (DELETE /session)
 	DeleteSession(w http.ResponseWriter, r *http.Request)
 	// GetSession The signed-in user and the session's CSRF token
-	// (GET /api/v1/session)
+	// (GET /session)
 	GetSession(w http.ResponseWriter, r *http.Request)
 	// PostSession Sign in with user name, password and TOTP code
-	// (POST /api/v1/session)
+	// (POST /session)
 	PostSession(w http.ResponseWriter, r *http.Request)
 	// GetStatus The state of the appliance
-	// (GET /api/v1/status)
+	// (GET /status)
 	GetStatus(w http.ResponseWriter, r *http.Request, params GetStatusParams)
 	// PostSystemReboot Reboot the appliance
-	// (POST /api/v1/system/reboot)
+	// (POST /system/reboot)
 	PostSystemReboot(w http.ResponseWriter, r *http.Request)
 	// PostSystemShutdown Shut the appliance down
-	// (POST /api/v1/system/shutdown)
+	// (POST /system/shutdown)
 	PostSystemShutdown(w http.ResponseWriter, r *http.Request)
 	// GetTrust The additional trusted CA certificates
-	// (GET /api/v1/trust)
+	// (GET /trust)
 	GetTrust(w http.ResponseWriter, r *http.Request)
 	// PostTrust Add trusted CA certificates
-	// (POST /api/v1/trust)
+	// (POST /trust)
 	PostTrust(w http.ResponseWriter, r *http.Request)
 	// PostTrustPreview Preview adding trusted CA certificates
-	// (POST /api/v1/trust/preview)
+	// (POST /trust/preview)
 	PostTrustPreview(w http.ResponseWriter, r *http.Request)
 	// DeleteTrust Stop trusting a CA certificate
-	// (DELETE /api/v1/trust/{sha256})
+	// (DELETE /trust/{sha256})
 	DeleteTrust(w http.ResponseWriter, r *http.Request, sha256 string)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
-	// (PUT /api/v1/wizard/platform)
+	// (PUT /wizard/platform)
 	PutWizardPlatform(w http.ResponseWriter, r *http.Request)
 }
 
@@ -833,6 +1066,74 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAccess operation middleware
+func (siw *ServerInterfaceWrapper) GetAccess(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAccess(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccessKubeconfig operation middleware
+func (siw *ServerInterfaceWrapper) PostAccessKubeconfig(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccessKubeconfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAccessKubeconfig operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAccessKubeconfig(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAccessKubeconfig(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccessTalosconfig operation middleware
+func (siw *ServerInterfaceWrapper) PostAccessTalosconfig(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccessTalosconfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetAppliance operation middleware
 func (siw *ServerInterfaceWrapper) GetAppliance(w http.ResponseWriter, r *http.Request) {
@@ -1082,6 +1383,76 @@ func (siw *ServerInterfaceWrapper) PostPlatformAdminCredential(w http.ResponseWr
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostPlatformAdminCredential(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetRecoveryKit operation middleware
+func (siw *ServerInterfaceWrapper) GetRecoveryKit(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRecoveryKit(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRecoveryKit operation middleware
+func (siw *ServerInterfaceWrapper) PostRecoveryKit(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRecoveryKit(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRecoveryKitConfirm operation middleware
+func (siw *ServerInterfaceWrapper) PostRecoveryKitConfirm(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRecoveryKitConfirm(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRecoveryKitReissue operation middleware
+func (siw *ServerInterfaceWrapper) PostRecoveryKitReissue(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRecoveryKitReissue(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRecoveryKitReplace operation middleware
+func (siw *ServerInterfaceWrapper) PostRecoveryKitReplace(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRecoveryKitReplace(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1496,38 +1867,47 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/session", wrapper.DeleteSession)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/session", wrapper.GetSession)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/session", wrapper.PostSession)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/status", wrapper.GetStatus)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/appliance", wrapper.GetAppliance)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/wizard/platform", wrapper.PutWizardPlatform)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/catalogue", wrapper.GetCatalogue)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit", wrapper.GetAudit)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/ca.pem", wrapper.GetCaPem)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/certificate", wrapper.GetCertificate)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/certificate", wrapper.PutCertificate)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/certificate/csr", wrapper.PostCertificateCsr)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/certificate/csr/signed", wrapper.PutCertificateCsrSigned)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/certificate/builtin", wrapper.PutCertificateBuiltin)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/platform/admin-credential", wrapper.PostPlatformAdminCredential)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/node", wrapper.PutNode)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/reboot", wrapper.PostSystemReboot)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/system/shutdown", wrapper.PostSystemShutdown)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/trust", wrapper.GetTrust)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/trust", wrapper.PostTrust)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/trust/preview", wrapper.PostTrustPreview)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/trust/{sha256}", wrapper.DeleteTrust)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/registries", wrapper.GetRegistries)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/registries/{host}", wrapper.DeleteRegistry)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/registries/{host}", wrapper.GetRegistry)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/registries/{host}", wrapper.PutRegistry)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platform", wrapper.GetPlatform)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/platform", wrapper.PutPlatform)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/mail", wrapper.DeleteMail)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/mail", wrapper.GetMail)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/mail", wrapper.PutMail)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/mail/test", wrapper.PostMailTest)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/session", wrapper.DeleteSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/session", wrapper.GetSession)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/session", wrapper.PostSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/status", wrapper.GetStatus)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/appliance", wrapper.GetAppliance)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/wizard/platform", wrapper.PutWizardPlatform)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/catalogue", wrapper.GetCatalogue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/audit", wrapper.GetAudit)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/ca.pem", wrapper.GetCaPem)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/certificate", wrapper.GetCertificate)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate", wrapper.PutCertificate)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/certificate/csr", wrapper.PostCertificateCsr)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate/csr/signed", wrapper.PutCertificateCsrSigned)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate/builtin", wrapper.PutCertificateBuiltin)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/platform/admin-credential", wrapper.PostPlatformAdminCredential)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/node", wrapper.PutNode)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/reboot", wrapper.PostSystemReboot)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/shutdown", wrapper.PostSystemShutdown)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/trust", wrapper.GetTrust)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/trust", wrapper.PostTrust)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/trust/preview", wrapper.PostTrustPreview)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/trust/{sha256}", wrapper.DeleteTrust)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/registries", wrapper.GetRegistries)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/registries/{host}", wrapper.DeleteRegistry)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/registries/{host}", wrapper.GetRegistry)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/registries/{host}", wrapper.PutRegistry)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/platform", wrapper.GetPlatform)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/platform", wrapper.PutPlatform)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/mail", wrapper.DeleteMail)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/mail", wrapper.GetMail)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/mail", wrapper.PutMail)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/mail/test", wrapper.PostMailTest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/access", wrapper.GetAccess)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/access/kubeconfig", wrapper.PostAccessKubeconfig)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/access/kubeconfig/{name}", wrapper.DeleteAccessKubeconfig)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/access/talosconfig", wrapper.PostAccessTalosconfig)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/recovery-kit", wrapper.GetRecoveryKit)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit", wrapper.PostRecoveryKit)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit/reissue", wrapper.PostRecoveryKitReissue)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit/replace", wrapper.PostRecoveryKitReplace)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit/confirm", wrapper.PostRecoveryKitConfirm)
 
 	return m
 }
@@ -1542,6 +1922,17 @@ type GoneJSONResponse Error
 
 type NotFoundJSONResponse Error
 
+type RecoveryKitFileResponseHeaders struct {
+	ContentDisposition   *string
+	XRecoveryKitIssuance *string
+}
+type RecoveryKitFileApplicationoctetStreamResponse struct {
+	Body io.Reader
+
+	Headers       RecoveryKitFileResponseHeaders
+	ContentLength int64
+}
+
 type ServiceUnavailableJSONResponse Error
 
 type SignInFailedJSONResponse SignInError
@@ -1549,6 +1940,311 @@ type SignInFailedJSONResponse SignInError
 type SignInLockedJSONResponse LockedError
 
 type UnauthorizedJSONResponse Error
+
+type GetAccessRequestObject struct {
+}
+
+type GetAccessResponseObject interface {
+	VisitGetAccessResponse(w http.ResponseWriter) error
+}
+
+type GetAccess200JSONResponse AccessList
+
+func (response GetAccess200JSONResponse) VisitGetAccessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAccess401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetAccess401JSONResponse) VisitGetAccessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessKubeconfigRequestObject struct {
+	Body *PostAccessKubeconfigJSONRequestBody
+}
+
+type PostAccessKubeconfigResponseObject interface {
+	VisitPostAccessKubeconfigResponse(w http.ResponseWriter) error
+}
+
+type PostAccessKubeconfig200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type PostAccessKubeconfig200ApplicationyamlResponse struct {
+	Body          io.Reader
+	Headers       PostAccessKubeconfig200ResponseHeaders
+	ContentLength int64
+}
+
+func (response PostAccessKubeconfig200ApplicationyamlResponse) VisitPostAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/yaml")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type PostAccessKubeconfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostAccessKubeconfig400JSONResponse) VisitPostAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessKubeconfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostAccessKubeconfig401JSONResponse) VisitPostAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessKubeconfig403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostAccessKubeconfig403JSONResponse) VisitPostAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessKubeconfig409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostAccessKubeconfig409JSONResponse) VisitPostAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAccessKubeconfigRequestObject struct {
+	Name string `json:"name"`
+}
+
+type DeleteAccessKubeconfigResponseObject interface {
+	VisitDeleteAccessKubeconfigResponse(w http.ResponseWriter) error
+}
+
+type DeleteAccessKubeconfig204Response struct {
+}
+
+func (response DeleteAccessKubeconfig204Response) VisitDeleteAccessKubeconfigResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAccessKubeconfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteAccessKubeconfig401JSONResponse) VisitDeleteAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAccessKubeconfig403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response DeleteAccessKubeconfig403JSONResponse) VisitDeleteAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAccessKubeconfig404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteAccessKubeconfig404JSONResponse) VisitDeleteAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAccessKubeconfig409JSONResponse struct{ ConflictJSONResponse }
+
+func (response DeleteAccessKubeconfig409JSONResponse) VisitDeleteAccessKubeconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessTalosconfigRequestObject struct {
+	Body *PostAccessTalosconfigJSONRequestBody
+}
+
+type PostAccessTalosconfigResponseObject interface {
+	VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error
+}
+
+type PostAccessTalosconfig200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type PostAccessTalosconfig200ApplicationyamlResponse struct {
+	Body          io.Reader
+	Headers       PostAccessTalosconfig200ResponseHeaders
+	ContentLength int64
+}
+
+func (response PostAccessTalosconfig200ApplicationyamlResponse) VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/yaml")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type PostAccessTalosconfig400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostAccessTalosconfig400JSONResponse) VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessTalosconfig401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostAccessTalosconfig401JSONResponse) VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessTalosconfig403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostAccessTalosconfig403JSONResponse) VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessTalosconfig409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostAccessTalosconfig409JSONResponse) VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostAccessTalosconfig503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response PostAccessTalosconfig503JSONResponse) VisitPostAccessTalosconfigResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type GetApplianceRequestObject struct {
 }
@@ -2595,6 +3291,422 @@ func (response PostPlatformAdminCredential410JSONResponse) VisitPostPlatformAdmi
 	return err
 }
 
+type GetRecoveryKitRequestObject struct {
+}
+
+type GetRecoveryKitResponseObject interface {
+	VisitGetRecoveryKitResponse(w http.ResponseWriter) error
+}
+
+type GetRecoveryKit200JSONResponse RecoveryKit
+
+func (response GetRecoveryKit200JSONResponse) VisitGetRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRecoveryKit401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetRecoveryKit401JSONResponse) VisitGetRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitRequestObject struct {
+	Body *PostRecoveryKitJSONRequestBody
+}
+
+type PostRecoveryKitResponseObject interface {
+	VisitPostRecoveryKitResponse(w http.ResponseWriter) error
+}
+
+type PostRecoveryKit200ApplicationoctetStreamResponse struct {
+	RecoveryKitFileApplicationoctetStreamResponse
+}
+
+func (response PostRecoveryKit200ApplicationoctetStreamResponse) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.XRecoveryKitIssuance != nil {
+		w.Header().Set("X-Recovery-Kit-Issuance", fmt.Sprint(*response.Headers.XRecoveryKitIssuance))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type PostRecoveryKit400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRecoveryKit400JSONResponse) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKit401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRecoveryKit401JSONResponse) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKit403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRecoveryKit403JSONResponse) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKit409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRecoveryKit409JSONResponse) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKit503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response PostRecoveryKit503JSONResponse) VisitPostRecoveryKitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitConfirmRequestObject struct {
+	Body *PostRecoveryKitConfirmJSONRequestBody
+}
+
+type PostRecoveryKitConfirmResponseObject interface {
+	VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error
+}
+
+type PostRecoveryKitConfirm204Response struct {
+}
+
+func (response PostRecoveryKitConfirm204Response) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostRecoveryKitConfirm400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRecoveryKitConfirm400JSONResponse) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitConfirm401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRecoveryKitConfirm401JSONResponse) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitConfirm403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRecoveryKitConfirm403JSONResponse) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitConfirm409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRecoveryKitConfirm409JSONResponse) VisitPostRecoveryKitConfirmResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReissueRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PostRecoveryKitReissueResponseObject interface {
+	VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error
+}
+
+type PostRecoveryKitReissue200ApplicationoctetStreamResponse struct {
+	RecoveryKitFileApplicationoctetStreamResponse
+}
+
+func (response PostRecoveryKitReissue200ApplicationoctetStreamResponse) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.XRecoveryKitIssuance != nil {
+		w.Header().Set("X-Recovery-Kit-Issuance", fmt.Sprint(*response.Headers.XRecoveryKitIssuance))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type PostRecoveryKitReissue400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRecoveryKitReissue400JSONResponse) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReissue401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRecoveryKitReissue401JSONResponse) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReissue403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRecoveryKitReissue403JSONResponse) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReissue409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRecoveryKitReissue409JSONResponse) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReissue503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response PostRecoveryKitReissue503JSONResponse) VisitPostRecoveryKitReissueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReplaceRequestObject struct {
+	Body *PostRecoveryKitReplaceJSONRequestBody
+}
+
+type PostRecoveryKitReplaceResponseObject interface {
+	VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error
+}
+
+type PostRecoveryKitReplace200ApplicationoctetStreamResponse struct {
+	RecoveryKitFileApplicationoctetStreamResponse
+}
+
+func (response PostRecoveryKitReplace200ApplicationoctetStreamResponse) VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.XRecoveryKitIssuance != nil {
+		w.Header().Set("X-Recovery-Kit-Issuance", fmt.Sprint(*response.Headers.XRecoveryKitIssuance))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type PostRecoveryKitReplace400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRecoveryKitReplace400JSONResponse) VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReplace401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRecoveryKitReplace401JSONResponse) VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReplace403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRecoveryKitReplace403JSONResponse) VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReplace409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRecoveryKitReplace409JSONResponse) VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRecoveryKitReplace503JSONResponse struct{ ServiceUnavailableJSONResponse }
+
+func (response PostRecoveryKitReplace503JSONResponse) VisitPostRecoveryKitReplaceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetRegistriesRequestObject struct {
 }
 
@@ -3524,101 +4636,128 @@ func (response PutWizardPlatform409JSONResponse) VisitPutWizardPlatformResponse(
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// GetAccess The issued kubeconfigs and the talosconfigs that have not expired
+	// (GET /access)
+	GetAccess(ctx context.Context, request GetAccessRequestObject) (GetAccessResponseObject, error)
+	// PostAccessKubeconfig Issue a kubeconfig
+	// (POST /access/kubeconfig)
+	PostAccessKubeconfig(ctx context.Context, request PostAccessKubeconfigRequestObject) (PostAccessKubeconfigResponseObject, error)
+	// DeleteAccessKubeconfig Revoke a kubeconfig
+	// (DELETE /access/kubeconfig/{name})
+	DeleteAccessKubeconfig(ctx context.Context, request DeleteAccessKubeconfigRequestObject) (DeleteAccessKubeconfigResponseObject, error)
+	// PostAccessTalosconfig Issue a talosconfig
+	// (POST /access/talosconfig)
+	PostAccessTalosconfig(ctx context.Context, request PostAccessTalosconfigRequestObject) (PostAccessTalosconfigResponseObject, error)
 	// GetAppliance The configuration of the appliance, without secret values
-	// (GET /api/v1/appliance)
+	// (GET /appliance)
 	GetAppliance(ctx context.Context, request GetApplianceRequestObject) (GetApplianceResponseObject, error)
 	// GetAudit The most recent audit entries, newest first
-	// (GET /api/v1/audit)
+	// (GET /audit)
 	GetAudit(ctx context.Context, request GetAuditRequestObject) (GetAuditResponseObject, error)
 	// GetCaPem The root certificate of the built-in certificate authority
-	// (GET /api/v1/ca.pem)
+	// (GET /ca.pem)
 	GetCaPem(ctx context.Context, request GetCaPemRequestObject) (GetCaPemResponseObject, error)
 	// GetCatalogue The platform components that can be installed
-	// (GET /api/v1/catalogue)
+	// (GET /catalogue)
 	GetCatalogue(ctx context.Context, request GetCatalogueRequestObject) (GetCatalogueResponseObject, error)
 	// GetCertificate The TLS certificate the appliance serves
-	// (GET /api/v1/certificate)
+	// (GET /certificate)
 	GetCertificate(ctx context.Context, request GetCertificateRequestObject) (GetCertificateResponseObject, error)
 	// PutCertificate Upload a certificate and its private key
-	// (PUT /api/v1/certificate)
+	// (PUT /certificate)
 	PutCertificate(ctx context.Context, request PutCertificateRequestObject) (PutCertificateResponseObject, error)
 	// PutCertificateBuiltin Go back to the built-in certificate
-	// (PUT /api/v1/certificate/builtin)
+	// (PUT /certificate/builtin)
 	PutCertificateBuiltin(ctx context.Context, request PutCertificateBuiltinRequestObject) (PutCertificateBuiltinResponseObject, error)
 	// PostCertificateCsr Create a certificate signing request
-	// (POST /api/v1/certificate/csr)
+	// (POST /certificate/csr)
 	PostCertificateCsr(ctx context.Context, request PostCertificateCsrRequestObject) (PostCertificateCsrResponseObject, error)
 	// PutCertificateCsrSigned Upload the certificate issued for the pending signing request
-	// (PUT /api/v1/certificate/csr/signed)
+	// (PUT /certificate/csr/signed)
 	PutCertificateCsrSigned(ctx context.Context, request PutCertificateCsrSignedRequestObject) (PutCertificateCsrSignedResponseObject, error)
 	// DeleteMail Remove the mail server and its credentials
-	// (DELETE /api/v1/mail)
+	// (DELETE /mail)
 	DeleteMail(ctx context.Context, request DeleteMailRequestObject) (DeleteMailResponseObject, error)
 	// GetMail The mail server
-	// (GET /api/v1/mail)
+	// (GET /mail)
 	GetMail(ctx context.Context, request GetMailRequestObject) (GetMailResponseObject, error)
 	// PutMail Set the mail server
-	// (PUT /api/v1/mail)
+	// (PUT /mail)
 	PutMail(ctx context.Context, request PutMailRequestObject) (PutMailResponseObject, error)
 	// PostMailTest Send a test mail through the mail server
-	// (POST /api/v1/mail/test)
+	// (POST /mail/test)
 	PostMailTest(ctx context.Context, request PostMailTestRequestObject) (PostMailTestResponseObject, error)
 	// PutNode Change the gateway, DNS and NTP servers and proxy of the node
-	// (PUT /api/v1/node)
+	// (PUT /node)
 	PutNode(ctx context.Context, request PutNodeRequestObject) (PutNodeResponseObject, error)
 	// GetPlatform The ILM platform and the components that can be installed
-	// (GET /api/v1/platform)
+	// (GET /platform)
 	GetPlatform(ctx context.Context, request GetPlatformRequestObject) (GetPlatformResponseObject, error)
 	// PutPlatform Change the platform host name and its components
-	// (PUT /api/v1/platform)
+	// (PUT /platform)
 	PutPlatform(ctx context.Context, request PutPlatformRequestObject) (PutPlatformResponseObject, error)
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
-	// (POST /api/v1/platform/admin-credential)
+	// (POST /platform/admin-credential)
 	PostPlatformAdminCredential(ctx context.Context, request PostPlatformAdminCredentialRequestObject) (PostPlatformAdminCredentialResponseObject, error)
+	// GetRecoveryKit Whether the recovery kit is issued and confirmed
+	// (GET /recovery-kit)
+	GetRecoveryKit(ctx context.Context, request GetRecoveryKitRequestObject) (GetRecoveryKitResponseObject, error)
+	// PostRecoveryKit Issue the recovery kit
+	// (POST /recovery-kit)
+	PostRecoveryKit(ctx context.Context, request PostRecoveryKitRequestObject) (PostRecoveryKitResponseObject, error)
+	// PostRecoveryKitConfirm Confirm that the recovery kit is stored safely
+	// (POST /recovery-kit/confirm)
+	PostRecoveryKitConfirm(ctx context.Context, request PostRecoveryKitConfirmRequestObject) (PostRecoveryKitConfirmResponseObject, error)
+	// PostRecoveryKitReissue Issue the recovery kit again with the same backup key
+	// (POST /recovery-kit/reissue)
+	PostRecoveryKitReissue(ctx context.Context, request PostRecoveryKitReissueRequestObject) (PostRecoveryKitReissueResponseObject, error)
+	// PostRecoveryKitReplace Replace a lost recovery kit with a new backup key
+	// (POST /recovery-kit/replace)
+	PostRecoveryKitReplace(ctx context.Context, request PostRecoveryKitReplaceRequestObject) (PostRecoveryKitReplaceResponseObject, error)
 	// GetRegistries The container registries
-	// (GET /api/v1/registries)
+	// (GET /registries)
 	GetRegistries(ctx context.Context, request GetRegistriesRequestObject) (GetRegistriesResponseObject, error)
 	// DeleteRegistry Remove a registry and its credentials
-	// (DELETE /api/v1/registries/{host})
+	// (DELETE /registries/{host})
 	DeleteRegistry(ctx context.Context, request DeleteRegistryRequestObject) (DeleteRegistryResponseObject, error)
 	// GetRegistry A container registry
-	// (GET /api/v1/registries/{host})
+	// (GET /registries/{host})
 	GetRegistry(ctx context.Context, request GetRegistryRequestObject) (GetRegistryResponseObject, error)
 	// PutRegistry Add a registry or change its credentials
-	// (PUT /api/v1/registries/{host})
+	// (PUT /registries/{host})
 	PutRegistry(ctx context.Context, request PutRegistryRequestObject) (PutRegistryResponseObject, error)
 	// DeleteSession Sign out
-	// (DELETE /api/v1/session)
+	// (DELETE /session)
 	DeleteSession(ctx context.Context, request DeleteSessionRequestObject) (DeleteSessionResponseObject, error)
 	// GetSession The signed-in user and the session's CSRF token
-	// (GET /api/v1/session)
+	// (GET /session)
 	GetSession(ctx context.Context, request GetSessionRequestObject) (GetSessionResponseObject, error)
 	// PostSession Sign in with user name, password and TOTP code
-	// (POST /api/v1/session)
+	// (POST /session)
 	PostSession(ctx context.Context, request PostSessionRequestObject) (PostSessionResponseObject, error)
 	// GetStatus The state of the appliance
-	// (GET /api/v1/status)
+	// (GET /status)
 	GetStatus(ctx context.Context, request GetStatusRequestObject) (GetStatusResponseObject, error)
 	// PostSystemReboot Reboot the appliance
-	// (POST /api/v1/system/reboot)
+	// (POST /system/reboot)
 	PostSystemReboot(ctx context.Context, request PostSystemRebootRequestObject) (PostSystemRebootResponseObject, error)
 	// PostSystemShutdown Shut the appliance down
-	// (POST /api/v1/system/shutdown)
+	// (POST /system/shutdown)
 	PostSystemShutdown(ctx context.Context, request PostSystemShutdownRequestObject) (PostSystemShutdownResponseObject, error)
 	// GetTrust The additional trusted CA certificates
-	// (GET /api/v1/trust)
+	// (GET /trust)
 	GetTrust(ctx context.Context, request GetTrustRequestObject) (GetTrustResponseObject, error)
 	// PostTrust Add trusted CA certificates
-	// (POST /api/v1/trust)
+	// (POST /trust)
 	PostTrust(ctx context.Context, request PostTrustRequestObject) (PostTrustResponseObject, error)
 	// PostTrustPreview Preview adding trusted CA certificates
-	// (POST /api/v1/trust/preview)
+	// (POST /trust/preview)
 	PostTrustPreview(ctx context.Context, request PostTrustPreviewRequestObject) (PostTrustPreviewResponseObject, error)
 	// DeleteTrust Stop trusting a CA certificate
-	// (DELETE /api/v1/trust/{sha256})
+	// (DELETE /trust/{sha256})
 	DeleteTrust(ctx context.Context, request DeleteTrustRequestObject) (DeleteTrustResponseObject, error)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
-	// (PUT /api/v1/wizard/platform)
+	// (PUT /wizard/platform)
 	PutWizardPlatform(ctx context.Context, request PutWizardPlatformRequestObject) (PutWizardPlatformResponseObject, error)
 }
 
@@ -3659,6 +4798,118 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// GetAccess operation middleware
+func (sh *strictHandler) GetAccess(w http.ResponseWriter, r *http.Request) {
+	var request GetAccessRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAccess(ctx, request.(GetAccessRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAccess")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAccessResponseObject); ok {
+		if err := validResponse.VisitGetAccessResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostAccessKubeconfig operation middleware
+func (sh *strictHandler) PostAccessKubeconfig(w http.ResponseWriter, r *http.Request) {
+	var request PostAccessKubeconfigRequestObject
+
+	var body PostAccessKubeconfigJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostAccessKubeconfig(ctx, request.(PostAccessKubeconfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostAccessKubeconfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostAccessKubeconfigResponseObject); ok {
+		if err := validResponse.VisitPostAccessKubeconfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAccessKubeconfig operation middleware
+func (sh *strictHandler) DeleteAccessKubeconfig(w http.ResponseWriter, r *http.Request, name string) {
+	var request DeleteAccessKubeconfigRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAccessKubeconfig(ctx, request.(DeleteAccessKubeconfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAccessKubeconfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAccessKubeconfigResponseObject); ok {
+		if err := validResponse.VisitDeleteAccessKubeconfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostAccessTalosconfig operation middleware
+func (sh *strictHandler) PostAccessTalosconfig(w http.ResponseWriter, r *http.Request) {
+	var request PostAccessTalosconfigRequestObject
+
+	var body PostAccessTalosconfigJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostAccessTalosconfig(ctx, request.(PostAccessTalosconfigRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostAccessTalosconfig")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostAccessTalosconfigResponseObject); ok {
+		if err := validResponse.VisitPostAccessTalosconfigResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetAppliance operation middleware
@@ -4113,6 +5364,154 @@ func (sh *strictHandler) PostPlatformAdminCredential(w http.ResponseWriter, r *h
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PostPlatformAdminCredentialResponseObject); ok {
 		if err := validResponse.VisitPostPlatformAdminCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRecoveryKit operation middleware
+func (sh *strictHandler) GetRecoveryKit(w http.ResponseWriter, r *http.Request) {
+	var request GetRecoveryKitRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRecoveryKit(ctx, request.(GetRecoveryKitRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRecoveryKit")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRecoveryKitResponseObject); ok {
+		if err := validResponse.VisitGetRecoveryKitResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRecoveryKit operation middleware
+func (sh *strictHandler) PostRecoveryKit(w http.ResponseWriter, r *http.Request) {
+	var request PostRecoveryKitRequestObject
+
+	var body PostRecoveryKitJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRecoveryKit(ctx, request.(PostRecoveryKitRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRecoveryKit")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRecoveryKitResponseObject); ok {
+		if err := validResponse.VisitPostRecoveryKitResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRecoveryKitConfirm operation middleware
+func (sh *strictHandler) PostRecoveryKitConfirm(w http.ResponseWriter, r *http.Request) {
+	var request PostRecoveryKitConfirmRequestObject
+
+	var body PostRecoveryKitConfirmJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRecoveryKitConfirm(ctx, request.(PostRecoveryKitConfirmRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRecoveryKitConfirm")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRecoveryKitConfirmResponseObject); ok {
+		if err := validResponse.VisitPostRecoveryKitConfirmResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRecoveryKitReissue operation middleware
+func (sh *strictHandler) PostRecoveryKitReissue(w http.ResponseWriter, r *http.Request) {
+	var request PostRecoveryKitReissueRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRecoveryKitReissue(ctx, request.(PostRecoveryKitReissueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRecoveryKitReissue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRecoveryKitReissueResponseObject); ok {
+		if err := validResponse.VisitPostRecoveryKitReissueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRecoveryKitReplace operation middleware
+func (sh *strictHandler) PostRecoveryKitReplace(w http.ResponseWriter, r *http.Request) {
+	var request PostRecoveryKitReplaceRequestObject
+
+	var body PostRecoveryKitReplaceJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRecoveryKitReplace(ctx, request.(PostRecoveryKitReplaceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRecoveryKitReplace")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRecoveryKitReplaceResponseObject); ok {
+		if err := validResponse.VisitPostRecoveryKitReplaceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -15,6 +15,19 @@ const rejected = 'The user name, password or code is not correct.';
 
 type Failure = { message: string; serverTime?: string };
 
+/**
+ * The page a sign-in opens: the wizard while setup is open, the recovery kit page while no kit is confirmed, else
+ * the status page.
+ */
+async function startPage() {
+  const status = await attempt(() => api.GET('/status'));
+  const setup = status?.data?.setup;
+  if (setup === 'part1' || setup === 'part2') return '/wizard/';
+  if (setup !== 'complete') return '/';
+  const kit = await attempt(() => api.GET('/recovery-kit'));
+  return kit?.data && !kit.data.confirmed ? '/recovery-kit' : '/';
+}
+
 /** Signs in with the user name, the password and the authenticator code. */
 export function SignInPage() {
   const [user, setUser] = useState('');
@@ -37,14 +50,13 @@ export function SignInPage() {
     event.preventDefault();
     setBusy(true);
     setFailure(undefined);
-    const result = await attempt(() => api.POST('/api/v1/session', { body: { user, password, totp } }));
+    const result = await attempt(() => api.POST('/session', { body: { user, password, totp } }));
     setBusy(false);
     if (!result) return setFailure({ message: unreachable });
     const { response, data, error } = result;
     if (response.ok && data) {
       signIn(user, data.csrfToken);
-      const status = await attempt(() => api.GET('/api/v1/status'));
-      return navigate(status?.data?.setup === 'part2' || status?.data?.setup === 'part1' ? '/wizard/' : '/');
+      return navigate(await startPage());
     }
     setPassword('');
     setTotp('');

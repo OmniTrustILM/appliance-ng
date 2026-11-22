@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-type Reply = readonly [number, unknown?];
+type Reply = readonly [number, unknown?, Record<string, string>?];
 type Handler = Reply | ((body: unknown) => Reply);
 
 async function readBody(request: Request): Promise<unknown> {
@@ -14,7 +14,7 @@ async function readBody(request: Request): Promise<unknown> {
 /**
  * Stubs fetch with answers keyed by "METHOD /path"; unknown routes answer 404.
  * `sent` collects the bodies of the requests per key: parsed JSON, or the fields of a multipart body.
- * A string payload is answered as PEM text.
+ * A string payload is answered as PEM text; a third element adds response headers.
  */
 export function stubApi(routes: Record<string, Handler>) {
   const sent: Record<string, unknown[]> = {};
@@ -24,15 +24,15 @@ export function stubApi(routes: Record<string, Handler>) {
     sent[key] ??= [];
     sent[key].push(body);
     const handler = routes[key];
-    const [status, payload] = typeof handler === 'function'
+    const [status, payload, headers] = typeof handler === 'function'
       ? handler(body)
       : (handler ?? [404, { code: 'not_found', message: 'Not found.' }]);
     if (typeof payload === 'string') {
-      return new Response(payload, { status, headers: { 'Content-Type': 'application/x-pem-file' } });
+      return new Response(payload, { status, headers: { 'Content-Type': 'application/x-pem-file', ...headers } });
     }
     return new Response(payload === undefined ? null : JSON.stringify(payload), {
       status,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
     });
   });
   vi.stubGlobal('fetch', mock);

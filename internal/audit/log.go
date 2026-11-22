@@ -25,13 +25,14 @@ const (
 )
 
 // Entry is one audited request. Paths are the JSON paths of the Appliance fields the request changed, never their
-// values.
+// values; Details describe an issued or revoked credential, never its secret.
 type Entry struct {
-	Time   time.Time `json:"time"`
-	User   string    `json:"user"`
-	Action string    `json:"action"`
-	Result string    `json:"result"`
-	Paths  []string  `json:"paths,omitempty"`
+	Time    time.Time         `json:"time"`
+	User    string            `json:"user"`
+	Action  string            `json:"action"`
+	Result  string            `json:"result"`
+	Paths   []string          `json:"paths,omitempty"`
+	Details map[string]string `json:"details,omitempty"`
 }
 
 // Log appends entries to the audit file of a directory. It is safe for concurrent use.

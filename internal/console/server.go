@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 )
 
@@ -34,18 +35,18 @@ func NewServer(log *slog.Logger, listen string, handler http.Handler, cert *Cert
 	}
 }
 
-// Routes serves the health check, api under /api/ and the console everywhere else. Wizard part 1 is over once
-// the manager serves, so its pages send the browser to sign-in.
+// Routes serves the health check, api under auth.BasePath/api/ and the console under auth.BasePath; every other
+// path is sent there. Wizard part 1 is over once the manager serves, so its pages send the browser to sign-in.
 func Routes(api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
-	toSignIn := http.RedirectHandler("/signin", http.StatusFound)
-	mux.Handle("/setup", toSignIn)
-	mux.Handle("/setup/", toSignIn)
-	mux.Handle("/api/", api)
-	mux.Handle("/", Handler(Files()))
+	toSignIn := http.RedirectHandler(auth.BasePath+"/signin", http.StatusFound)
+	mux.Handle(auth.BasePath+"/setup", toSignIn)
+	mux.Handle(auth.BasePath+"/setup/", toSignIn)
+	mux.Handle(auth.BasePath+"/api/", api)
+	Mount(mux, Files())
 	return mux
 }
 

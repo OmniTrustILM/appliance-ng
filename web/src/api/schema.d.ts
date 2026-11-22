@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/api/v1/setup/code": {
+    "/setup/code": {
         parameters: {
             query?: never;
             header?: never;
@@ -21,7 +21,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/state": {
+    "/setup/state": {
         parameters: {
             query?: never;
             header?: never;
@@ -41,7 +41,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/admin": {
+    "/setup/admin": {
         parameters: {
             query?: never;
             header?: never;
@@ -58,7 +58,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/totp": {
+    "/setup/totp": {
         parameters: {
             query?: never;
             header?: never;
@@ -78,7 +78,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/totp/confirm": {
+    "/setup/totp/confirm": {
         parameters: {
             query?: never;
             header?: never;
@@ -95,7 +95,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/node": {
+    "/setup/node": {
         parameters: {
             query?: never;
             header?: never;
@@ -112,7 +112,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/dhcp": {
+    "/setup/dhcp": {
         parameters: {
             query?: never;
             header?: never;
@@ -129,7 +129,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/setup/apply": {
+    "/setup/apply": {
         parameters: {
             query?: never;
             header?: never;
@@ -146,7 +146,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/session": {
+    "/session": {
         parameters: {
             query?: never;
             header?: never;
@@ -169,7 +169,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/status": {
+    "/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -186,7 +186,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/appliance": {
+    "/appliance": {
         parameters: {
             query?: never;
             header?: never;
@@ -203,7 +203,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/wizard/platform": {
+    "/wizard/platform": {
         parameters: {
             query?: never;
             header?: never;
@@ -227,7 +227,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/catalogue": {
+    "/catalogue": {
         parameters: {
             query?: never;
             header?: never;
@@ -244,7 +244,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/audit": {
+    "/audit": {
         parameters: {
             query?: never;
             header?: never;
@@ -261,7 +261,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/ca.pem": {
+    "/ca.pem": {
         parameters: {
             query?: never;
             header?: never;
@@ -281,7 +281,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/certificate": {
+    "/certificate": {
         parameters: {
             query?: never;
             header?: never;
@@ -312,7 +312,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/certificate/csr": {
+    "/certificate/csr": {
         parameters: {
             query?: never;
             header?: never;
@@ -334,7 +334,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/certificate/csr/signed": {
+    "/certificate/csr/signed": {
         parameters: {
             query?: never;
             header?: never;
@@ -356,7 +356,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/certificate/builtin": {
+    "/certificate/builtin": {
         parameters: {
             query?: never;
             header?: never;
@@ -376,7 +376,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/platform/admin-credential": {
+    "/platform/admin-credential": {
         parameters: {
             query?: never;
             header?: never;
@@ -398,7 +398,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/node": {
+    "/node": {
         parameters: {
             query?: never;
             header?: never;
@@ -411,7 +411,7 @@ export interface paths {
          * @description Replaces the node settings; without `proxy` the proxy is removed. The node address and host name are fixed
          *     at setup: a request with `address` is answered with 400 and field `address`, one with a `hostName` other
          *     than the current one with 400 and field `hostName`. The public name of ILM changes through
-         *     `PUT /api/v1/platform` and the certificate. A gateway needs a static address. The manager applies the change
+         *     `PUT /platform` and the certificate. A gateway needs a static address. The manager applies the change
          *     to the node without a reboot; a changed proxy takes effect only after a reboot, which `rebootRequired` in
          *     the status reports.
          */
@@ -423,7 +423,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/system/reboot": {
+    "/system/reboot": {
         parameters: {
             query?: never;
             header?: never;
@@ -443,7 +443,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/system/shutdown": {
+    "/system/shutdown": {
         parameters: {
             query?: never;
             header?: never;
@@ -463,7 +463,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/trust": {
+    "/trust": {
         parameters: {
             query?: never;
             header?: never;
@@ -491,7 +491,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/trust/preview": {
+    "/trust/preview": {
         parameters: {
             query?: never;
             header?: never;
@@ -513,7 +513,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/trust/{sha256}": {
+    "/trust/{sha256}": {
         parameters: {
             query?: never;
             header?: never;
@@ -536,7 +536,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/registries": {
+    "/registries": {
         parameters: {
             query?: never;
             header?: never;
@@ -556,7 +556,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/registries/{host}": {
+    "/registries/{host}": {
         parameters: {
             query?: never;
             header?: never;
@@ -590,7 +590,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/platform": {
+    "/platform": {
         parameters: {
             query?: never;
             header?: never;
@@ -619,7 +619,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/mail": {
+    "/mail": {
         parameters: {
             query?: never;
             header?: never;
@@ -650,7 +650,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/mail/test": {
+    "/mail/test": {
         parameters: {
             query?: never;
             header?: never;
@@ -665,6 +665,187 @@ export interface paths {
          *     CAs. A failure is answered with 502 and the stage that failed; the server's reply is never passed on.
          */
         post: operations["postMailTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The issued kubeconfigs and the talosconfigs that have not expired
+         * @description The kubeconfigs that can still be revoked and a record of the talosconfigs issued, which cannot be revoked
+         *     and are listed until they expire. Never a token, certificate or key.
+         */
+        get: operations["getAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/access/kubeconfig": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a kubeconfig
+         * @description Issues a kubeconfig for the cluster with the `view` or `cluster-admin` role. With `hours` (1 to 24) its
+         *     token expires after that time; without `hours` it is long-lived and needs a `name`. A name that is taken is
+         *     answered with 409. The appliance does not keep the file.
+         */
+        post: operations["postAccessKubeconfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/access/kubeconfig/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The name of the kubeconfig, as listed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke a kubeconfig
+         * @description Its token stops working at once. The break-glass kubeconfig of the recovery kit is answered with 409; issuing the recovery kit again revokes it.
+         */
+        delete: operations["deleteAccessKubeconfig"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/access/talosconfig": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a talosconfig
+         * @description Issues a talosconfig for the node with the `os:reader` or `os:admin` role, valid for `hours` (1 to 8). A
+         *     talosconfig cannot be revoked; it is listed until it expires. The appliance does not keep the file.
+         */
+        post: operations["postAccessTalosconfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery-kit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the recovery kit is issued and confirmed
+         * @description Never the backup key or the passphrase; the appliance keeps only the public key the backups are encrypted to.
+         */
+        get: operations["getRecoveryKit"];
+        put?: never;
+        /**
+         * Issue the recovery kit
+         * @description Generates the backup key pair and issues the recovery kit: a tar of the backup private key, a break-glass
+         *     kubeconfig with the `cluster-admin` role, a talosconfig with the `os:admin` role valid for a year, the
+         *     appliance identity and a README, encrypted with the passphrase using the age scrypt recipient. The appliance
+         *     keeps only the public key. Answered with 409 once a kit was issued; use reissue or replace instead. The
+         *     passphrase has at least 12 characters and is not one of the most common passwords.
+         */
+        post: operations["postRecoveryKit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery-kit/reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue the recovery kit again with the same backup key
+         * @description Opens the uploaded kit with its passphrase and issues a new kit with the same backup key, a new passphrase
+         *     and new break-glass credentials; the earlier break-glass kubeconfig stops working. A wrong passphrase is
+         *     answered with 400, a kit whose key is not the appliance's backup key with 409. The request body is limited
+         *     to 1 MiB. The new kit counts as confirmed only once confirmed again.
+         */
+        post: operations["postRecoveryKitReissue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery-kit/replace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace a lost recovery kit with a new backup key
+         * @description Generates a new backup key pair and issues a kit with it and new break-glass credentials. Backups made
+         *     before stay readable only with the key of the lost kit. Needs `confirm` set to true. The new kit counts as
+         *     confirmed only once confirmed again.
+         */
+        post: operations["postRecoveryKitReplace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/recovery-kit/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm that the recovery kit is stored safely
+         * @description Confirms the kit with the given issuance, which must be the latest: answered with 409 and code
+         *     `kit_superseded` when the kit was issued again or replaced since, and the latest kit must be downloaded first.
+         */
+        post: operations["postRecoveryKitConfirm"];
         delete?: never;
         options?: never;
         head?: never;
@@ -793,6 +974,20 @@ export interface components {
             /** @description A change takes effect only after the node restarts. */
             rebootRequired: boolean;
             certificate?: components["schemas"]["StatusCertificate"];
+            dataVolume?: components["schemas"]["DataVolume"];
+            recoveryKit?: components["schemas"]["RecoveryKit"];
+        };
+        /** @description The size and free space of the data volume; absent while the manager cannot read it. */
+        DataVolume: {
+            /** Format: int64 */
+            sizeBytes: number;
+            /**
+             * Format: int64
+             * @description The free space, rounded down to steps of 1% of the size.
+             */
+            freeBytes: number;
+            /** @description Less than a fifth of the volume is free, judged on the exact free space. */
+            lowSpace: boolean;
         };
         /** @description The certificate the console and ILM serve; absent while none is issued or installed. */
         StatusCertificate: {
@@ -861,10 +1056,10 @@ export interface components {
         AuditEntry: {
             /** Format: date-time */
             time: string;
-            /** @description The signed-in user, or the existing account a sign-in attempt named; empty otherwise. */
+            /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -872,6 +1067,10 @@ export interface components {
             result: "success" | "failure" | "denied";
             /** @description The Appliance fields the request changed, as JSON paths; never their values. */
             paths: string[];
+            /** @description What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the `recipient` public key and the talosconfig's `expires`; never a token, certificate, key or passphrase. */
+            details?: {
+                [key: string]: string;
+            };
         };
         CertificateInfo: {
             /**
@@ -943,6 +1142,90 @@ export interface components {
             dns: string[];
             ntp: string[];
             proxy?: components["schemas"]["Proxy"];
+        };
+        AccessList: {
+            items: components["schemas"]["AccessCredential"][];
+        };
+        AccessCredential: {
+            /** @enum {string} */
+            kind: "kubeconfig" | "talosconfig";
+            /** @description The name a kubeconfig is revoked by; talosconfigs have none. */
+            name?: string;
+            role: string;
+            issuedBy: string;
+            /** Format: date-time */
+            issuedAt: string;
+            /**
+             * Format: date-time
+             * @description When the credential stops working; absent for a long-lived kubeconfig.
+             */
+            expires?: string;
+            /** @description Set on the break-glass kubeconfig of the recovery kit, which only issuing the kit again revokes. */
+            breakGlass?: boolean;
+        };
+        KubeconfigRequest: {
+            /** @enum {string} */
+            role: "view" | "cluster-admin";
+            /** @description How long the token is valid; without it the kubeconfig is long-lived and needs `name`. */
+            hours?: number;
+            /** @description Up to 40 lower-case letters, digits and hyphens; required for a long-lived kubeconfig. */
+            name?: string;
+        };
+        TalosconfigRequest: {
+            /** @enum {string} */
+            role: "os:reader" | "os:admin";
+            hours: number;
+        };
+        RecoveryKit: {
+            /** @description A backup key is stored. When the latest kit was not handed out, the other fields but the recipient are absent and the kit can only be replaced. */
+            issued: boolean;
+            /** @description The administrator confirmed that the latest kit is stored safely. */
+            confirmed: boolean;
+            /** Format: date-time */
+            issuedAt?: string;
+            /**
+             * Format: date-time
+             * @description When the kit's talosconfig expires; issue the kit again before then.
+             */
+            talosconfigNotAfter?: string;
+            /** @description The public key the backups are encrypted to. */
+            recipient?: string;
+            /** @description A random identifier of the latest kit, new with every issue, reissue and replace; absent while the latest kit was not handed out. */
+            issuance?: string;
+        };
+        RecoveryKitConfirm: {
+            /** @description The issuance of the kit that was stored, as its download answer named it. */
+            issuance: string;
+        };
+        RecoveryKitRequest: {
+            /**
+             * Format: password
+             * @description The passphrase that encrypts the kit. Like a console password, it has at least 12 characters and is not one of the most common passwords.
+             */
+            passphrase: string;
+        };
+        RecoveryKitReplace: {
+            /** Format: password */
+            passphrase: string;
+            /** @description Must be true; backups made before stay readable only with the lost kit. */
+            confirm: boolean;
+        };
+        RecoveryKitReissue: {
+            /**
+             * Format: binary
+             * @description The current recovery kit.
+             */
+            kit: string;
+            /**
+             * Format: password
+             * @description The passphrase of the uploaded kit.
+             */
+            passphrase: string;
+            /**
+             * Format: password
+             * @description The passphrase of the new kit.
+             */
+            newPassphrase: string;
         };
         Confirmation: {
             /** @description Must be true. */
@@ -1108,6 +1391,18 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The recovery kit, an age file encrypted with the passphrase; the appliance does not keep it. */
+        RecoveryKitFile: {
+            headers: {
+                "Content-Disposition"?: string;
+                /** @description The issuance of this kit, to confirm it with. */
+                "X-Recovery-Kit-Issuance"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/octet-stream": string;
             };
         };
         /** @description The node's Talos API cannot be reached at the moment. */
@@ -2108,6 +2403,221 @@ export interface operations {
                     "application/json": components["schemas"]["MailTestFailure"];
                 };
             };
+        };
+    };
+    getAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The issued credentials. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postAccessKubeconfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubeconfigRequest"];
+            };
+        };
+        responses: {
+            /** @description The kubeconfig. */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteAccessKubeconfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The name of the kubeconfig, as listed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The kubeconfig is revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postAccessTalosconfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TalosconfigRequest"];
+            };
+        };
+        responses: {
+            /** @description The talosconfig. */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/yaml": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getRecoveryKit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The state of the recovery kit. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryKit"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    postRecoveryKit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryKitRequest"];
+            };
+        };
+        responses: {
+            200: components["responses"]["RecoveryKitFile"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    postRecoveryKitReissue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RecoveryKitReissue"];
+            };
+        };
+        responses: {
+            200: components["responses"]["RecoveryKitFile"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    postRecoveryKitReplace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryKitReplace"];
+            };
+        };
+        responses: {
+            200: components["responses"]["RecoveryKitFile"];
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    postRecoveryKitConfirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecoveryKitConfirm"];
+            };
+        };
+        responses: {
+            /** @description The kit is confirmed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
 }

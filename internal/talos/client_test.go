@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"maps"
 	"math/big"
 	"net"
 	"net/netip"
@@ -34,6 +35,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/container"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1"
 	"github.com/siderolabs/talos/pkg/machinery/meta"
+	"github.com/siderolabs/talos/pkg/machinery/resources/block"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
 	"github.com/siderolabs/talos/pkg/machinery/resources/etcd"
 	"github.com/siderolabs/talos/pkg/machinery/resources/k8s"
@@ -71,6 +73,8 @@ type fakeMachine struct {
 	version      string
 	reboots      int
 	shutdowns    int
+	clientReq    *machineapi.GenerateClientConfigurationRequest
+	clientConfig []byte
 }
 
 // authorize admits a caller with a verified client certificate, as apid does, or with the admin role metadata that
@@ -118,6 +122,14 @@ func (f *fakeMachine) Shutdown(ctx context.Context, _ *machineapi.ShutdownReques
 	}
 	f.shutdowns++
 	return &machineapi.ShutdownResponse{}, nil
+}
+
+func (f *fakeMachine) GenerateClientConfiguration(ctx context.Context, req *machineapi.GenerateClientConfigurationRequest) (*machineapi.GenerateClientConfigurationResponse, error) {
+	if err := authorize(ctx); err != nil {
+		return nil, err
+	}
+	f.clientReq = req
+	return &machineapi.GenerateClientConfigurationResponse{Messages: []*machineapi.GenerateClientConfiguration{{Talosconfig: f.clientConfig}}}, nil
 }
 
 func (f *fakeMachine) Bootstrap(ctx context.Context, _ *machineapi.BootstrapRequest) (*machineapi.BootstrapResponse, error) {
@@ -848,4 +860,180 @@ func TestDialAPIRequiresClientCert(t *testing.T) {
 			t.Errorf("error %v, want one that does not quote the talosconfig", err)
 		}
 	})
+}
+
+func disks(t *testing.T, st state.State, volumes ...[2]string) {
+	t.Helper()
+	add := func(r resource.Resource) {
+		if err := st.Create(context.Background(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sys := block.NewSystemDisk(block.NamespaceName, block.SystemDiskID)
+	sys.TypedSpec().DiskID = "vda"
+	add(sys)
+
+	for _, d := range []struct {
+		id, serial, wwid string
+		size             uint64
+	}{{"vda", "", "", 50e9}, {"vdb", "ilm-data", "", 20e9}, {"vdc", "", "naa.1", 30e9}, {"vdd", "", "", 40e9}, {"sdb", "usbserial", "", 60e9}} {
+		r := block.NewDisk(block.NamespaceName, d.id)
+		r.TypedSpec().DevPath, r.TypedSpec().Size = "/dev/"+d.id, d.size
+		r.TypedSpec().Serial, r.TypedSpec().WWID = d.serial, d.wwid
+		if d.id == "sdb" {
+			r.TypedSpec().Transport = "usb"
+		}
+		add(r)
+	}
+
+	ro := block.NewDisk(block.NamespaceName, "loop0")
+	ro.TypedSpec().DevPath, ro.TypedSpec().Size, ro.TypedSpec().Readonly = "/dev/loop0", 100e9, true
+	add(ro)
+
+	cd := block.NewDisk(block.NamespaceName, "sr0")
+	cd.TypedSpec().DevPath, cd.TypedSpec().Size, cd.TypedSpec().CDROM = "/dev/sr0", 100e9, true
+	add(cd)
+
+	for _, v := range volumes { // {id, filesystem name}; the parent is the disk of a partition
+		r := block.NewDiscoveredVolume(block.NamespaceName, v[0])
+		r.TypedSpec().Name = v[1]
+		if len(v[0]) > 3 {
+			r.TypedSpec().Parent = v[0][:3]
+		}
+		add(r)
+	}
+}
+
+func TestDisks(t *testing.T) {
+	st := newState(t)
+	disks(t, st,
+		[2]string{"vda", "gpt"}, [2]string{"vda1", "vfat"},
+		[2]string{"vdb", ""},
+		[2]string{"vdc", ""}, [2]string{"vdc1", "xfs"},
+		[2]string{"sdb", ""},
+	)
+
+	got, err := (&node{st: st}).Disks(context.Background(), installSelector)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []Disk{
+		{DevPath: "/dev/sdb", ID: "usbserial", SizeBytes: 60e9, Empty: true, Probed: true, USB: true},
+		{DevPath: "/dev/vda", SizeBytes: 50e9, System: true, Probed: true},
+		{DevPath: "/dev/vdb", ID: "ilm-data", SizeBytes: 20e9, Empty: true, Probed: true},
+		{DevPath: "/dev/vdc", ID: "naa.1", SizeBytes: 30e9, Probed: true},
+		{DevPath: "/dev/vdd", SizeBytes: 40e9},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestDisksWithoutSystemDisk(t *testing.T) {
+	if _, err := (&node{st: newState(t)}).Disks(context.Background(), installSelector); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// installSelector is an install disk selector for the tests: any disk of at least 45 GB.
+const installSelector = `disk.size >= 45u * GB`
+
+// addDisk adds a probed, empty disk to st.
+func addDisk(t *testing.T, st state.State, id, serial, wwid string, size uint64) {
+	t.Helper()
+	r := block.NewDisk(block.NamespaceName, id)
+	r.TypedSpec().DevPath, r.TypedSpec().Size = "/dev/"+id, size
+	r.TypedSpec().Serial, r.TypedSpec().WWID = serial, wwid
+	if err := st.Create(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Create(context.Background(), block.NewDiscoveredVolume(block.NamespaceName, id)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDisksBeforeInstallMarkTheInstallDisk(t *testing.T) {
+	st := newState(t)
+	addDisk(t, st, "vdc", "c", "", 100e9)
+	addDisk(t, st, "vda", "a", "", 20e9)
+	addDisk(t, st, "vdb", "b", "", 50e9)
+
+	got, err := (&node{st: st}).Disks(context.Background(), installSelector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var system []string
+	for _, d := range got {
+		if d.System {
+			system = append(system, d.DevPath)
+		}
+	}
+	if !slices.Equal(system, []string{"/dev/vdb"}) {
+		t.Errorf("system disks %v, want the first one the installer matches, /dev/vdb", system)
+	}
+}
+
+func TestDisksInvalidInstallSelector(t *testing.T) {
+	if _, err := (&node{st: newState(t)}).Disks(context.Background(), "disk.size >="); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestDisksMarkSharedIDs(t *testing.T) {
+	st := newState(t)
+	addDisk(t, st, "vda", "same", "", 50e9)
+	addDisk(t, st, "vdb", "same", "", 50e9)
+	addDisk(t, st, "vdc", "", "naa.1", 50e9)
+	addDisk(t, st, "vdd", "naa.1", "naa.2", 50e9)
+	addDisk(t, st, "vde", "unique", "unique", 50e9)
+
+	got, err := (&node{st: st}).Disks(context.Background(), installSelector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := map[string]bool{}
+	for _, d := range got {
+		shared[d.DevPath] = d.SharedID
+	}
+	want := map[string]bool{"/dev/vda": true, "/dev/vdb": true, "/dev/vdc": true, "/dev/vdd": true, "/dev/vde": false}
+	if !maps.Equal(shared, want) {
+		t.Errorf("shared IDs %v, want %v", shared, want)
+	}
+}
+
+func TestDisksError(t *testing.T) {
+	if _, err := (&node{st: failingState{newState(t)}}).Disks(context.Background(), installSelector); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestClientConfigRoles(t *testing.T) {
+	fake := &fakeMachine{clientConfig: []byte("context: appliance\n")}
+	n := dialFake(t, fake)
+	got, err := n.ClientConfig(context.Background(), []string{"os:reader"}, 8*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "context: appliance\n" {
+		t.Errorf("talosconfig %q", got)
+	}
+	if roles := fake.clientReq.GetRoles(); !slices.Equal(roles, []string{"os:reader"}) {
+		t.Errorf("roles %v, want [os:reader]", roles)
+	}
+	if ttl := fake.clientReq.GetCrtTtl().AsDuration(); ttl != 8*time.Hour {
+		t.Errorf("TTL %v, want 8h", ttl)
+	}
+}
+
+func TestClientConfigErrors(t *testing.T) {
+	n := dialFake(t, &fakeMachine{})
+	if _, err := n.ClientConfig(context.Background(), []string{"os:reader"}, time.Hour); err == nil {
+		t.Error("an empty talosconfig: expected error")
+	}
+	_ = n.Close()
+	if _, err := n.ClientConfig(context.Background(), []string{"os:reader"}, time.Hour); err == nil {
+		t.Error("a closed connection: expected error")
+	}
 }

@@ -23,7 +23,7 @@ export function ReviewPage({ answers, onBack, onDone, onExpired }: Readonly<{
   async function apply() {
     setBusy(true);
     setError(undefined);
-    const result = await attempt(() => api.POST('/api/v1/setup/apply'));
+    const result = await attempt(() => api.POST('/setup/apply'));
     setBusy(false);
     if (!result) return setError(unreachable);
     if (result.response.ok) return onDone();

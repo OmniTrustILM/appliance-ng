@@ -19,6 +19,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/mail"
+	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 )
 
 // TestNoSecretLeavesTheManager sets credentials through the API and looks for them in every answer, the
@@ -29,28 +30,30 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 	const mailPassword = "smtp-Pa55word-that-must-stay-inside"
 
 	// A failed sign-in with the password in the user field and a successful one.
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testPassword, testPassword, "123456"), nil), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testPassword, testPassword, "123456"), nil), http.StatusBadRequest)
 	code := h.code()
 	s := h.signIn()
 
 	mail := validMail()
 	mail.Password = ptr(mailPassword)
 	var answers bytes.Buffer
-	put := h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail}, s)
+	put := h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail}, s)
 	wantStatus(t, put, http.StatusAccepted)
 	answers.Write(put.Body.Bytes())
 
 	cred := newAdminCredential(t, pkcs1)
 	createAdminSecret(t, cred)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
 
 	uploadedKey, csrKey := certificateAnswers(t, h, s, &answers)
 	registryAnswers(t, h, s, &answers)
 	mailAnswers(t, h, s, &answers)
+	kubeToken := accessSecretAnswers(t, h, s, &answers)
+	backupKey := recoverySecretAnswers(t, h, s, &answers)
 
 	for _, path := range []string{
-		"/api/v1/appliance", "/api/v1/status", "/api/v1/audit", "/api/v1/session", "/api/v1/catalogue", pathCertificate,
-		pathTrust, pathRegistries, pathTestRegistry, pathMail, pathPlatform,
+		"/appliance/api/v1/appliance", "/appliance/api/v1/status", "/appliance/api/v1/audit", "/appliance/api/v1/session", "/appliance/api/v1/catalogue", pathCertificate,
+		pathTrust, pathRegistries, pathTestRegistry, pathMail, pathPlatform, pathAccess, pathRecoveryKit,
 	} {
 		rec := h.request(http.MethodGet, path, nil, s)
 		wantStatus(t, rec, http.StatusOK)
@@ -76,6 +79,12 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 		"registry password":   registryPassword,
 		"next registry pw":    registryPasswordNext,
 		"console mail pw":     consoleMailPassword,
+		"kubeconfig token":    kubeToken,
+		"long-lived token":    longLivedToken,
+		"talosconfig key":     talosKey,
+		"kit passphrase":      kitPassphrase,
+		"next kit passphrase": nextPassphrase,
+		"backup key":          backupKey,
 	}
 	for where, data := range map[string]string{
 		"API answers":   answers.String(),
@@ -160,6 +169,49 @@ func mailAnswers(t *testing.T, h *harness, s *session, answers *bytes.Buffer) {
 	test := h.request(http.MethodPost, pathMailTest, MailTest{To: mailTestTo}, s)
 	wantStatus(t, test, http.StatusBadGateway)
 	answers.Write(test.Body.Bytes())
+}
+
+// accessSecretAnswers issues a time-limited and a long-lived kubeconfig and a talosconfig, lists and revokes
+// them, adding the answers other than the issued files to answers. It returns the time-limited token.
+func accessSecretAnswers(t *testing.T, h *harness, s *session, answers *bytes.Buffer) string {
+	t.Helper()
+	resetAccess(t)
+	fillAccessTokens(t)
+	h.withTalos(&talosNode{}, nil)
+	rec := h.request(http.MethodPost, pathKubeconfig, KubeconfigRequest{Role: View, Hours: ptr(1)}, s)
+	wantStatus(t, rec, http.StatusOK)
+	token := kubeconfigToken(t, rec)
+	wantStatus(t, h.request(http.MethodPost, pathKubeconfig, KubeconfigRequest{Role: ClusterAdmin, Name: ptr("ci")}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, pathTalosconfig, TalosconfigRequest{Role: OsAdmin, Hours: 1}, s), http.StatusOK)
+	answers.Write(h.request(http.MethodPost, pathKubeconfig, KubeconfigRequest{Role: View, Name: ptr("ci")}, s).Body.Bytes())
+	answers.Write(h.request(http.MethodDelete, pathKubeconfig+"/named-ci", nil, s).Body.Bytes())
+	return token
+}
+
+// recoverySecretAnswers issues, re-issues, refuses and replaces the recovery kit, adding the answers other than the
+// kit files to answers. It returns the backup private key of the issued kit.
+func recoverySecretAnswers(t *testing.T, h *harness, s *session, answers *bytes.Buffer) string {
+	t.Helper()
+	first := issueKit(t, h, s)
+	key := recoveryKitKey(t, first)
+	answers.Write(h.request(http.MethodPost, pathRecoveryKit, RecoveryKitRequest{Passphrase: ptr(kitPassphrase)}, s).Body.Bytes())
+	answers.Write(reissue(h, s, first, nextPassphrase, kitPassphrase).Body.Bytes())
+	answers.Write(reissue(h, s, first, kitPassphrase, "short").Body.Bytes())
+	wantStatus(t, reissue(h, s, first, kitPassphrase, nextPassphrase), http.StatusOK)
+	answers.Write(confirmStored(t, h, s).Body.Bytes())
+	answers.Write(h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(nextPassphrase)}, s).Body.Bytes())
+	wantStatus(t, h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(nextPassphrase), Confirm: true}, s), http.StatusOK)
+	return key
+}
+
+// recoveryKitKey is the backup private key in a kit encrypted with kitPassphrase.
+func recoveryKitKey(t *testing.T, data []byte) string {
+	t.Helper()
+	kit, err := recovery.Open(data, kitPassphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kit.BackupKey.String()
 }
 
 // keyBody is the base64 body of the first PEM block, without line breaks, a distinctive part of the key.

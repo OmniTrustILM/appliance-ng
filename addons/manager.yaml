@@ -15,6 +15,12 @@ kind: Namespace
 metadata:
   name: ilm
 ---
+# The ServiceAccounts of the kubeconfigs the console issues and the record of the talosconfigs it issued.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: appliance-access
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -82,6 +88,34 @@ rules:
   - apiGroups: ["", events.k8s.io]
     resources: [events]
     verbs: [get, list, watch, create, patch]
+  # Revoking a kubeconfig the console issued deletes its binding.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [delete]
+---
+# The role of the view kubeconfigs the console issues: what view grants, and read access to nodes, which view leaves
+# out.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-access-view
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.k8s.io/aggregate-to-view: "true"
+    - matchLabels:
+        appliance.otilm.com/aggregate-to-access-view: "true"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-access-view-nodes
+  labels:
+    appliance.otilm.com/aggregate-to-access-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -149,6 +183,38 @@ kind: RoleBinding
 metadata:
   name: appliance-manager
   namespace: ilm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# The kubeconfigs the console issues: their tokens, as TokenRequests or the token Secrets of long-lived ones, and
+# deleting their ServiceAccounts on revoke and expiry; the garbage collector deletes the token Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: appliance-access
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: appliance-access
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -239,7 +305,7 @@ spec:
                   fieldPath: spec.nodeName
             # Below the memory limit, so that the garbage collector runs before the container is killed.
             - name: GOMEMLIMIT
-              value: 200MiB
+              value: 448MiB
           ports:
             - name: https
               containerPort: 8443
@@ -261,8 +327,9 @@ spec:
             requests:
               cpu: 50m
               memory: 64Mi
+            # Room for the 256 MiB scrypt of one recovery kit at a time next to the manager's own use.
             limits:
-              memory: 256Mi
+              memory: 512Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -542,6 +609,24 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              dataVolume:
+                description: DataVolume is the size and free space of the data volume;
+                  unset while the manager cannot read it.
+                properties:
+                  freeBytes:
+                    format: int64
+                    type: integer
+                  lowSpace:
+                    description: LowSpace is set while less than a fifth of the volume
+                      is free, judged on the exact free space.
+                    type: boolean
+                  sizeBytes:
+                    format: int64
+                    type: integer
+                required:
+                - freeBytes
+                - sizeBytes
+                type: object
               nodeAddress:
                 type: string
               observedGeneration:
@@ -549,6 +634,31 @@ spec:
                 type: integer
               rebootRequired:
                 type: boolean
+              recoveryKit:
+                description: RecoveryKit describes the latest recovery kit; unset
+                  until one is issued.
+                properties:
+                  confirmed:
+                    description: Confirmed is set once the administrator confirms
+                      that the latest kit is stored safely.
+                    type: boolean
+                  issuance:
+                    description: Issuance identifies the kit among the kits issued
+                      with the recipient.
+                    type: string
+                  issuedAt:
+                    format: date-time
+                    type: string
+                  recipient:
+                    description: Recipient is the public key the backups are encrypted
+                      to.
+                    type: string
+                  talosconfigNotAfter:
+                    description: TalosconfigNotAfter is when the kit's talosconfig
+                      expires.
+                    format: date-time
+                    type: string
+                type: object
               setup:
                 enum:
                 - part1

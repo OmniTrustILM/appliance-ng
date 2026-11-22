@@ -12,8 +12,14 @@ import (
 )
 
 const (
-	// SessionCookieName is the cookie that carries the session token.
-	SessionCookieName = "appliance_session"
+	// BasePath is the path the console and its API are served under, apart from ILM on a shared host name. The
+	// session cookie is scoped to it, so that it never reaches ILM.
+	BasePath = "/appliance"
+	// APIBase is the path of the API, the server base of api/openapi.yaml.
+	APIBase = BasePath + "/api/v1"
+	// SessionCookieName is the cookie that carries the session token; the __Secure- prefix makes browsers accept
+	// it only from HTTPS.
+	SessionCookieName = "__Secure-appliance_session"
 	// IdleTimeout ends a session that has seen no request for this long.
 	IdleTimeout = 30 * time.Minute
 	// AbsoluteTimeout ends a session this long after sign-in.
@@ -164,7 +170,7 @@ func SessionCookie(token string) *http.Cookie {
 	return &http.Cookie{
 		Name:     SessionCookieName,
 		Value:    token,
-		Path:     "/",
+		Path:     BasePath + "/",
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,

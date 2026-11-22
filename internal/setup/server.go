@@ -56,8 +56,8 @@ type wizard struct {
 	input        machineconfig.Input
 }
 
-// NewServer returns the HTTPS server of wizard part 1 for code: the setup API under /api/v1/setup/ and the console
-// everywhere else.
+// NewServer returns the HTTPS server of wizard part 1 for code: the setup API under auth.APIBase/setup/ and the
+// console under auth.BasePath.
 func NewServer(code *Code, deps ServerDeps) *http.Server {
 	w := newWizard(code, deps)
 	return &http.Server{
@@ -93,13 +93,13 @@ func (w *wizard) handler() http.Handler {
 			auth.WriteError(rw, http.StatusInternalServerError, "internal", "The request failed.")
 		},
 	})
-	api := setupapi.HandlerWithOptions(strict, setupapi.StdHTTPServerOptions{ErrorHandlerFunc: badRequest})
+	api := setupapi.HandlerWithOptions(strict, setupapi.StdHTTPServerOptions{BaseURL: auth.APIBase, ErrorHandlerFunc: badRequest})
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/setup/code", apiHeaders(w.withSession(api)))
-	mux.Handle("/api/v1/setup/state", apiHeaders(w.withSession(api)))
-	mux.Handle("/api/v1/setup/", apiHeaders(w.sessions.Middleware(api)))
-	mux.Handle("/", console.Handler(w.deps.Console))
+	mux.Handle(auth.APIBase+"/setup/code", apiHeaders(w.withSession(api)))
+	mux.Handle(auth.APIBase+"/setup/state", apiHeaders(w.withSession(api)))
+	mux.Handle(auth.APIBase+"/setup/", apiHeaders(w.sessions.Middleware(api)))
+	console.Mount(mux, w.deps.Console)
 	return mux
 }
 

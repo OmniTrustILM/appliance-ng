@@ -14,9 +14,9 @@ import { useRemoval } from '../shared/useRemoval';
 import { AddCaForm } from './AddCaForm';
 import { CaDetails, type TrustedCertificate } from './CaDetails';
 
-const loadTrust = () => api.GET('/api/v1/trust');
+const loadTrust = () => api.GET('/trust');
 const removeTrust = (ca: TrustedCertificate) =>
-  api.DELETE('/api/v1/trust/{sha256}', { params: { path: { sha256: ca.sha256 } } });
+  api.DELETE('/trust/{sha256}', { params: { path: { sha256: ca.sha256 } } });
 
 /** Lists the CA certificates trusted in addition to the public ones, adds more after a preview and removes them. */
 export function TrustPage() {

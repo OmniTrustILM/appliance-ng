@@ -19,6 +19,7 @@ function renderPage() {
         <Route path="/signin" element={<SignInPage />} />
         <Route path="/" element={<p>console page</p>} />
         <Route path="/wizard/" element={<p>wizard page</p>} />
+        <Route path="/recovery-kit" element={<p>recovery kit page</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -39,20 +40,45 @@ describe('SignInPage', () => {
 
   it('signs in with user, password and code and opens the wizard while setup is open', async () => {
     const { sent } = stubApi({
-      'POST /api/v1/session': [200, { csrfToken: 'token-1' }],
-      'GET /api/v1/status': [200, { setup: 'part2', conditions: [], versions: {}, rebootRequired: false }],
+      'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+      'GET /appliance/api/v1/status': [200, { setup: 'part2', conditions: [], versions: {}, rebootRequired: false }],
     });
     renderPage();
     await fill();
     expect(await screen.findByText('wizard page')).toBeInTheDocument();
-    expect(sent['POST /api/v1/session']).toEqual([{ user: 'admin', password: 'correct horse battery', totp: '123 456' }]);
+    expect(sent['POST /appliance/api/v1/session']).toEqual([{ user: 'admin', password: 'correct horse battery', totp: '123 456' }]);
     expect(location.href).not.toContain('correct');
   });
 
   it('opens the status page once setup is complete', async () => {
     stubApi({
-      'POST /api/v1/session': [200, { csrfToken: 'token-1' }],
-      'GET /api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }],
+      'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+      'GET /appliance/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }],
+    });
+    renderPage();
+    await fill();
+    expect(await screen.findByText('console page')).toBeInTheDocument();
+  });
+
+  it('sends an administrator without a confirmed recovery kit to the recovery kit page first', async () => {
+    for (const kit of [{ issued: false, confirmed: false }, { issued: true, confirmed: false }]) {
+      stubApi({
+        'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+        'GET /appliance/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }],
+        'GET /appliance/api/v1/recovery-kit': [200, kit],
+      });
+      const page = renderPage();
+      await fill();
+      expect(await screen.findByText('recovery kit page')).toBeInTheDocument();
+      page.unmount();
+    }
+  });
+
+  it('opens the status page when the recovery kit is confirmed', async () => {
+    stubApi({
+      'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+      'GET /appliance/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }],
+      'GET /appliance/api/v1/recovery-kit': [200, { issued: true, confirmed: true }],
     });
     renderPage();
     await fill();
@@ -60,7 +86,7 @@ describe('SignInPage', () => {
   });
 
   it('opens the status page when the status cannot be read', async () => {
-    stubApi({ 'POST /api/v1/session': [200, { csrfToken: 'token-1' }] });
+    stubApi({ 'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }] });
     renderPage();
     await fill();
     expect(await screen.findByText('console page')).toBeInTheDocument();
@@ -68,7 +94,7 @@ describe('SignInPage', () => {
 
   it('gives one message for a failed sign-in with the appliance time and clears the secrets', async () => {
     stubApi({
-      'POST /api/v1/session': [400, { code: 'invalid_credentials', message: 'x', serverTime: '2026-11-18T10:00:00Z' }],
+      'POST /appliance/api/v1/session': [400, { code: 'invalid_credentials', message: 'x', serverTime: '2026-11-18T10:00:00Z' }],
     });
     renderPage();
     await fill();
@@ -83,7 +109,7 @@ describe('SignInPage', () => {
 
   it('counts down a lock-out and then allows another attempt', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    stubApi({ 'POST /api/v1/session': [401, { code: 'locked', message: 'x', retryAfter: 3 }] });
+    stubApi({ 'POST /appliance/api/v1/session': [401, { code: 'locked', message: 'x', retryAfter: 3 }] });
     renderPage();
     await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).type(screen.getByLabelText('User name'), 'admin');
     await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).click(screen.getByRole('button', { name: 'Sign in' }));
@@ -102,7 +128,7 @@ describe('SignInPage', () => {
   });
 
   it('shows a generic message for any other answer', async () => {
-    stubApi({ 'POST /api/v1/session': [500, { code: 'internal', message: 'x' }] });
+    stubApi({ 'POST /appliance/api/v1/session': [500, { code: 'internal', message: 'x' }] });
     renderPage();
     await fill();
     expect(await screen.findByRole('alert')).toHaveTextContent('could not process');

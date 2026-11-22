@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
@@ -43,17 +45,21 @@ type Deps struct {
 	// Client reads the Appliance and the Secrets in SystemNamespace, possibly from a cache, and writes them.
 	Client client.Client
 	// Reader reads past the cache: the Secrets the API writes and those in the platform namespace.
-	Reader  client.Reader
-	Users   auth.UserStore
-	Audit   AuditStore
-	Release *release.Manifest
-	Log     *slog.Logger
-	Now     func() time.Time
+	Reader client.Reader
+	// Kube requests tokens and reads the token Secrets of the kubeconfigs the API issues.
+	Kube kubernetes.Interface
+	// ClusterCA is the PEM CA of the cluster's API server, which issued kubeconfigs trust.
+	ClusterCA []byte
+	Users     auth.UserStore
+	Audit     AuditStore
+	Release   *release.Manifest
+	Log       *slog.Logger
+	Now       func() time.Time
 	// Talos returns the Talos API of the node, or an error while it cannot be reached.
 	Talos func(context.Context) (talos.Node, error)
 }
 
-// Server serves the manager's API under /api/v1/.
+// Server serves the manager's API under auth.APIBase.
 type Server struct {
 	deps     Deps
 	sessions *auth.Sessions
@@ -68,6 +74,8 @@ type Server struct {
 	dummyHash string
 	// sendMail is mail.SendTest; tests replace it.
 	sendMail sendFunc
+	// kitMu keeps recovery kit changes one at a time.
+	kitMu sync.Mutex
 }
 
 // NewServer returns the API server on deps.
@@ -100,21 +108,21 @@ func (s *Server) Handler() http.Handler {
 			auth.WriteError(w, http.StatusInternalServerError, "internal", "The request failed; the manager log has the details.")
 		},
 	})
-	api := HandlerWithOptions(strict, StdHTTPServerOptions{ErrorHandlerFunc: badRequest})
+	api := HandlerWithOptions(strict, StdHTTPServerOptions{BaseURL: auth.APIBase, ErrorHandlerFunc: badRequest})
 	protected := s.sessions.Middleware(api)
 	change := func(action AuditEntryAction) http.Handler {
 		return s.withSession(s.audited(action, protected))
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/ca.pem", api)
-	mux.Handle("POST /api/v1/session", s.audited(AuditEntryActionSignIn, api))
-	mux.Handle("DELETE /api/v1/session", change(AuditEntryActionSignOut))
-	mux.Handle("PUT /api/v1/wizard/platform", change(AuditEntryActionWizardPlatform))
-	mux.Handle("POST /api/v1/platform/admin-credential", change(AuditEntryActionAdminCredential))
-	mux.Handle("PUT /api/v1/node", change(AuditEntryActionNodeSettings))
-	mux.Handle("POST /api/v1/system/reboot", change(AuditEntryActionReboot))
-	mux.Handle("POST /api/v1/system/shutdown", change(AuditEntryActionShutdown))
+	mux.Handle(route(http.MethodGet, auth.APIBase+"/ca.pem"), api)
+	mux.Handle(route(http.MethodPost, auth.APIBase+"/session"), s.audited(AuditEntryActionSignIn, api))
+	mux.Handle(route(http.MethodDelete, auth.APIBase+"/session"), change(AuditEntryActionSignOut))
+	mux.Handle(route(http.MethodPut, auth.APIBase+"/wizard/platform"), change(AuditEntryActionWizardPlatform))
+	mux.Handle(route(http.MethodPost, auth.APIBase+"/platform/admin-credential"), change(AuditEntryActionAdminCredential))
+	mux.Handle(route(http.MethodPut, auth.APIBase+"/node"), change(AuditEntryActionNodeSettings))
+	mux.Handle(route(http.MethodPost, auth.APIBase+"/system/reboot"), change(AuditEntryActionReboot))
+	mux.Handle(route(http.MethodPost, auth.APIBase+"/system/shutdown"), change(AuditEntryActionShutdown))
 	mux.Handle(route(http.MethodPut, certificatePath), change(AuditEntryActionCertificateUpload))
 	mux.Handle(route(http.MethodPost, certificatePath+"/csr"), change(AuditEntryActionCertificateCsr))
 	mux.Handle(route(http.MethodPut, certificatePath+"/csr/signed"), change(AuditEntryActionCertificateSigned))
@@ -127,7 +135,14 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPut, mailPath), change(AuditEntryActionMailSettings))
 	mux.Handle(route(http.MethodDelete, mailPath), change(AuditEntryActionMailRemove))
 	mux.Handle(route(http.MethodPost, mailPath+"/test"), change(AuditEntryActionMailTest))
-	mux.Handle("/api/", protected)
+	mux.Handle(route(http.MethodPost, kubeconfigPath), change(AuditEntryActionKubeconfigIssue))
+	mux.Handle(route(http.MethodDelete, kubeconfigPath+"/{name}"), change(AuditEntryActionKubeconfigRevoke))
+	mux.Handle(route(http.MethodPost, talosconfigPath), change(AuditEntryActionTalosconfigIssue))
+	mux.Handle(route(http.MethodPost, recoveryKitPath), change(AuditEntryActionRecoveryKitIssue))
+	mux.Handle(route(http.MethodPost, recoveryKitPath+"/reissue"), change(AuditEntryActionRecoveryKitReissue))
+	mux.Handle(route(http.MethodPost, recoveryKitPath+"/replace"), change(AuditEntryActionRecoveryKitReplace))
+	mux.Handle(route(http.MethodPost, recoveryKitPath+"/confirm"), change(AuditEntryActionRecoveryKitConfirm))
+	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
 }
 
@@ -172,10 +187,10 @@ func withRequest(next http.Handler) http.Handler {
 	})
 }
 
-// bodyLimit is the largest request body accepted for path: certificate uploads carry chains, and trust uploads CA
-// bundles.
+// bodyLimit is the largest request body accepted for path: certificate uploads carry chains, trust uploads CA
+// bundles and re-issuing the recovery kit uploads the kit.
 func bodyLimit(path string) int64 {
-	for _, prefix := range []string{certificatePath, trustPath} {
+	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return maxUploadBody
 		}
@@ -209,6 +224,13 @@ func (s *Server) withSession(next http.Handler) http.Handler {
 func auditUser(ctx context.Context, user string) {
 	if e := requestFrom(ctx).entry; e != nil {
 		e.User = user
+	}
+}
+
+// recordDetails adds what an issued or revoked credential grants to the request's audit entry.
+func recordDetails(ctx context.Context, details map[string]string) {
+	if e := requestFrom(ctx).entry; e != nil {
+		e.Details = details
 	}
 }
 

@@ -11,12 +11,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/mail"
 )
 
 // mailPath is the path of the mail server; its test is below it.
-const mailPath = "/api/v1/mail"
+const mailPath = auth.APIBase + "/mail"
 
 // sendFunc sends a test mail, as mail.SendTest does.
 type sendFunc func(ctx context.Context, m v1alpha1.MailSpec, user, password, to string, roots *x509.CertPool) error

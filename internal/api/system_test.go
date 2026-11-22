@@ -45,7 +45,7 @@ func TestRebootNeedsConfirm(t *testing.T) {
 	s := h.signIn()
 	node := &fakeTalos{}
 	h.withTalos(node, nil)
-	for _, path := range []string{"/api/v1/system/reboot", "/api/v1/system/shutdown"} {
+	for _, path := range []string{"/appliance/api/v1/system/reboot", "/appliance/api/v1/system/shutdown"} {
 		for _, body := range []any{map[string]bool{"confirm": false}, map[string]any{}, "null"} {
 			rec := h.request(http.MethodPost, path, body, s)
 			wantStatus(t, rec, http.StatusBadRequest)
@@ -60,8 +60,8 @@ func TestRebootNeedsConfirm(t *testing.T) {
 		t.Fatalf("%d reboots and %d shutdowns without a confirmation", node.reboots, node.shutdowns)
 	}
 
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusAccepted)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/shutdown", Confirmation{Confirm: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/system/shutdown", Confirmation{Confirm: true}, s), http.StatusAccepted)
 	if node.reboots != 1 || node.shutdowns != 1 {
 		t.Fatalf("%d reboots and %d shutdowns, want one each", node.reboots, node.shutdowns)
 	}
@@ -79,13 +79,13 @@ func TestRebootWithoutTalos(t *testing.T) {
 	s := h.signIn()
 	confirm := Confirmation{Confirm: true}
 	// No Talos access configured, none yet, and a node that cannot be reached.
-	wantUnavailable(t, h.request(http.MethodPost, "/api/v1/system/reboot", confirm, s))
+	wantUnavailable(t, h.request(http.MethodPost, "/appliance/api/v1/system/reboot", confirm, s))
 	h.withTalos(nil, errors.New("no talosconfig yet"))
-	wantUnavailable(t, h.request(http.MethodPost, "/api/v1/system/shutdown", confirm, s))
+	wantUnavailable(t, h.request(http.MethodPost, "/appliance/api/v1/system/shutdown", confirm, s))
 	node := &fakeTalos{err: errors.New("rpc error: code = Unavailable")}
 	h.withTalos(node, nil)
-	wantUnavailable(t, h.request(http.MethodPost, "/api/v1/system/reboot", confirm, s))
-	wantUnavailable(t, h.request(http.MethodPost, "/api/v1/system/shutdown", confirm, s))
+	wantUnavailable(t, h.request(http.MethodPost, "/appliance/api/v1/system/reboot", confirm, s))
+	wantUnavailable(t, h.request(http.MethodPost, "/appliance/api/v1/system/shutdown", confirm, s))
 	entries := h.entries()
 	if e := entries[len(entries)-1]; e.Action != string(AuditEntryActionShutdown) || e.Result != string(Failure) {
 		t.Errorf("audit entry %+v, want a failed shutdown", e)
@@ -106,7 +106,7 @@ func TestRebootRefusedWithoutAuditEntry(t *testing.T) {
 	node := &fakeTalos{}
 	h.withTalos(node, nil)
 	h.srv.deps.Audit = failingAudit{}
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusInternalServerError)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusInternalServerError)
 	if node.reboots != 0 {
 		t.Error("the node rebooted without an audit entry")
 	}

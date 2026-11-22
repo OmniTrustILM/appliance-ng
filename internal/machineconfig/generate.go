@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -27,8 +28,9 @@ import (
 // kubernetesVersion is the Kubernetes version of the generated cluster.
 const kubernetesVersion = constants.DefaultKubernetesVersion
 
-// diskSelector matches the disks the node may install to: writable, not a CD-ROM, not USB, at least 45 GB.
-const diskSelector = `!disk.readonly && !disk.cdrom && disk.transport != "usb" && disk.size >= 45u * GB`
+// InstallDiskSelector matches the disks the node may install to: writable, not a CD-ROM, not USB, at least 45 GB.
+// The installer takes the first disk it matches.
+const InstallDiskSelector = `!disk.readonly && !disk.cdrom && disk.transport != "usb" && disk.size >= 45u * GB`
 
 //go:embed patches/*.yaml
 var patchFS embed.FS
@@ -54,6 +56,9 @@ type Input struct {
 	NTP []string
 	// Proxy is the outbound HTTP proxy, if any.
 	Proxy *Proxy
+	// DataDisk is the serial, else the WWID, of the empty disk that holds the data volume; empty puts the data volume
+	// on the system disk, behind the other volumes.
+	DataDisk string
 	// Handover is the content of the hand-over file mounted into the firstboot service, if any.
 	Handover []byte
 }
@@ -142,7 +147,9 @@ func loadPatches(in Input) ([]configpatcher.Patch, error) {
 	templates := patchTemplates.Templates()
 	slices.SortFunc(templates, func(a, b *template.Template) int { return strings.Compare(a.Name(), b.Name()) })
 
-	params := struct{ InstallerImage, DiskSelector string }{in.InstallerImage, diskSelector}
+	params := struct{ InstallerImage, DiskSelector, DataSelector string }{
+		in.InstallerImage, InstallDiskSelector, dataSelector(in.DataDisk),
+	}
 	patches := make([]configpatcher.Patch, 0, len(templates))
 
 	for _, tmpl := range templates {
@@ -160,4 +167,16 @@ func loadPatches(in Input) ([]configpatcher.Patch, error) {
 	}
 
 	return patches, nil
+}
+
+// dataSelector returns the YAML value of the disk selector of the data volume: the system disk, or the non-system
+// disk whose serial or WWID is id.
+func dataSelector(id string) string {
+	if id == "" {
+		return "system_disk"
+	}
+
+	quoted := strconv.Quote(id)
+
+	return strconv.Quote(fmt.Sprintf("!system_disk && (disk.serial == %s || disk.wwid == %s)", quoted, quoted))
 }

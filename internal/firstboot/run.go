@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
@@ -386,8 +387,9 @@ func (r *runner) refreshAddress(ctx context.Context) (string, error) {
 }
 
 // configure generates the machine configuration from the wizard answers for the node at ip and applies it; the node
-// then installs and reboots. A static address goes on the link that holds ip. Answers the generator or the node
-// refuses are dropped, so the wizard runs again.
+// then installs and reboots. A static address goes on the link that holds ip, and the data volume goes on the
+// largest empty second disk, if there is one. Answers the generator or the node refuses are dropped, so the wizard
+// runs again.
 func (r *runner) configure(ctx context.Context, ip netip.Addr) error {
 	r.set(StateConfiguring, "", "generating the machine configuration")
 	in := *r.answers
@@ -402,6 +404,11 @@ func (r *runner) configure(ctx context.Context, ip netip.Addr) error {
 		}
 		in.NodeIP, in.Link = in.Address.Addr().String(), nw.Link
 	}
+	disks, err := r.d.Node.Disks(ctx, machineconfig.InstallDiskSelector)
+	if err != nil {
+		return err
+	}
+	r.logDataDisk(disks, &in)
 	cfg, err := r.d.Generate(in)
 	if err != nil {
 		// The error may quote the input, which holds the hand-over with the password hash and TOTP seed.
@@ -416,9 +423,31 @@ func (r *runner) configure(ctx context.Context, ip netip.Addr) error {
 		return redacted("apply machine configuration", err)
 	}
 	r.applied = true
-	r.s.setConsole(StateInstalling, []string{"Installing, the console moves to https://" + in.NodeIP + ":" + setup.Port + "/"})
+	r.s.setConsole(StateInstalling, []string{"Installing, the console moves to https://" + in.NodeIP + ":" + setup.Port + auth.BasePath + "/"})
 	r.set(StateInstalling, "", "configuration applied, the node installs and reboots")
 	return nil
+}
+
+// logDataDisk picks the data disk into in and logs the choice by device path only. A disk the node has not probed
+// yet is never chosen, so it is logged: it explains a fallback to the system disk.
+func (r *runner) logDataDisk(disks []talos.Disk, in *machineconfig.Input) {
+	for _, d := range disks {
+		if !d.Probed {
+			r.d.Log.Info("disk not probed yet, it cannot hold the data volume", "device", d.DevPath)
+		}
+	}
+	if disk, ok := chooseDataDisk(disks); ok {
+		in.DataDisk = disk.ID
+		r.d.Log.Info("the data volume goes on a second disk", "device", disk.DevPath)
+		return
+	}
+	system := ""
+	for _, d := range disks {
+		if d.System {
+			system = d.DevPath
+		}
+	}
+	r.d.Log.Info("the data volume goes on the system disk", "device", system)
 }
 
 // bootstrap bootstraps etcd unless the node says it already is. A failed check is not trusted: Bootstrap

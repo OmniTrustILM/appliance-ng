@@ -36,7 +36,7 @@ export function DonePage() {
 
   useEffect(() => {
     let active = true;
-    void attempt(() => api.GET('/api/v1/appliance')).then((result) => {
+    void attempt(() => api.GET('/appliance')).then((result) => {
       if (!active) return;
       if (result?.data) setHostName(result.data.platform?.hostName);
       else setMessage(unreachable);
@@ -51,7 +51,7 @@ export function DonePage() {
     setBusy(true);
     setFieldError(undefined);
     setMessage(undefined);
-    const result = await attempt(() => api.POST('/api/v1/platform/admin-credential', { body: { password }, parseAs: 'blob' }));
+    const result = await attempt(() => api.POST('/platform/admin-credential', { body: { password }, parseAs: 'blob' }));
     setBusy(false);
     if (!result) return setMessage(unreachable);
     const { response, data, error } = result;

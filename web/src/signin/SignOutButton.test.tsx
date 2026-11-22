@@ -28,8 +28,8 @@ function renderButton() {
 describe('SignOutButton', () => {
   it('ends the session with the CSRF token and returns to sign-in', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
-      'DELETE /api/v1/session': [204],
+      'GET /appliance/api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
+      'DELETE /appliance/api/v1/session': [204],
     });
     renderButton();
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
@@ -40,8 +40,8 @@ describe('SignOutButton', () => {
 
   it('returns to sign-in even when the session had already ended', async () => {
     stubApi({
-      'GET /api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
-      'DELETE /api/v1/session': [401, { code: 'unauthorized', message: 'x' }],
+      'GET /appliance/api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
+      'DELETE /appliance/api/v1/session': [401, { code: 'unauthorized', message: 'x' }],
     });
     renderButton();
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
@@ -54,8 +54,8 @@ describe('SignOutButton', () => {
   ])('keeps the session and offers a retry when the appliance %s', async (_, reply, message) => {
     let deletes = 0;
     stubApi({
-      'GET /api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
-      'DELETE /api/v1/session': () => (++deletes === 1 ? reply() : [204]),
+      'GET /appliance/api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }],
+      'DELETE /appliance/api/v1/session': () => (++deletes === 1 ? reply() : [204]),
     });
     renderButton();
     await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
@@ -66,7 +66,7 @@ describe('SignOutButton', () => {
   });
 
   it('keeps the session when the appliance cannot be reached', async () => {
-    const { mock } = stubApi({ 'GET /api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }] });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/session': [200, { user: 'admin', csrfToken: 'token-9' }] });
     renderButton();
     const button = await screen.findByRole('button', { name: 'Sign out' });
     mock.mockRejectedValueOnce(new TypeError('network'));

@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
 import { Navigate, Outlet, Route, Routes } from 'react-router';
 import { Layout } from './components/Layout';
+import { AccessPage } from './console/access/AccessPage';
 import { AuditPage } from './console/audit/AuditPage';
 import { CertificatePage } from './console/certificate/CertificatePage';
 import { NodePage } from './console/node/NodePage';
 import { MailPage } from './console/mail/MailPage';
 import { PlatformPage } from './console/platform/PlatformPage';
+import { RecoveryKitPage } from './console/recovery/RecoveryKitPage';
 import { RegistriesPage } from './console/registries/RegistriesPage';
 import { DashboardPage } from './console/dashboard/DashboardPage';
 import { SystemPage } from './console/system/SystemPage';
@@ -46,6 +48,8 @@ export default function App() {
         <Route path="/registries" element={<ConsolePage><RegistriesPage /></ConsolePage>} />
         <Route path="/platform" element={<ConsolePage><PlatformPage /></ConsolePage>} />
         <Route path="/mail" element={<ConsolePage><MailPage /></ConsolePage>} />
+        <Route path="/access" element={<ConsolePage><AccessPage /></ConsolePage>} />
+        <Route path="/recovery-kit" element={<ConsolePage><RecoveryKitPage /></ConsolePage>} />
         <Route path="/system" element={<ConsolePage><SystemPage /></ConsolePage>} />
         <Route path="/audit" element={<ConsolePage><AuditPage /></ConsolePage>} />
         <Route path="/" element={<ConsolePage><DashboardPage /></ConsolePage>} />

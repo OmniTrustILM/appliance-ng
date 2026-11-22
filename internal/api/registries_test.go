@@ -17,7 +17,7 @@ import (
 
 const (
 	testRegistryHost     = "registry.example.com:5000"
-	pathRegistries       = "/api/v1/registries"
+	pathRegistries       = "/appliance/api/v1/registries"
 	pathTestRegistry     = pathRegistries + "/" + testRegistryHost
 	registryPassword     = "registry-Pa55word-that-must-stay-inside"
 	registryPasswordNext = "registry-Pa55word-the-second"
@@ -74,7 +74,7 @@ func TestRegistryPasswordWriteOnly(t *testing.T) {
 	if !slices.Equal(list.Items, []RegistryCredentials{one}) {
 		t.Errorf("registries %+v, want %+v", list.Items, one)
 	}
-	rec = h.request(http.MethodGet, "/api/v1/appliance", nil, s)
+	rec = h.request(http.MethodGet, "/appliance/api/v1/appliance", nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	answers.Write(rec.Body.Bytes())
 	var settings ApplianceSettings

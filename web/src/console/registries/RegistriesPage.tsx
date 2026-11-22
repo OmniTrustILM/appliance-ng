@@ -15,9 +15,9 @@ import { RegistryForm, type Registry } from './RegistryForm';
 
 const saved = 'The change is saved. The platform and the node pick it up within a minute; no restart is needed.';
 
-const loadRegistries = () => api.GET('/api/v1/registries');
+const loadRegistries = () => api.GET('/registries');
 const removeRegistry = (registry: Registry) =>
-  api.DELETE('/api/v1/registries/{host}', { params: { path: { host: registry.host } } });
+  api.DELETE('/registries/{host}', { params: { path: { host: registry.host } } });
 
 /** Lists the registries with credentials, adds or changes them and removes them; a password is never shown. */
 export function RegistriesPage() {

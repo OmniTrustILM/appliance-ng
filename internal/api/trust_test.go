@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	pathTrust        = "/api/v1/trust"
-	pathTrustPreview = "/api/v1/trust/preview"
+	pathTrust        = "/appliance/api/v1/trust"
+	pathTrustPreview = "/appliance/api/v1/trust/preview"
 )
 
 func (ca *testCA) fingerprint() string {

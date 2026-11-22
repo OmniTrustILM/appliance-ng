@@ -1,9 +1,11 @@
-// Settings of a set-up appliance in a browser: DNS servers, a trusted CA, a component and the audit log of them.
+// Settings of a set-up appliance in a browser: the recovery kit that sign-in asks for, DNS servers, a trusted CA, a
+// component and the audit log of them.
 // run.sh runs it after every readiness check: the trusted CA restarts the ILM pods and the component is removed.
 import { execFileSync } from 'node:child_process';
+import { chmodSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { expect, type Page } from '@playwright/test';
-import { input, signIn, test } from './appliance';
+import { fillSecret, input, signIn, test } from './appliance';
 
 /** A throwaway self-signed CA certificate in PEM; its key is discarded. */
 function throwawayCA(commonName: string): string {
@@ -22,7 +24,21 @@ async function open(page: Page, link: string, heading: string) {
 test('settings', async ({ console: page }) => {
   const save = page.getByRole('button', { name: 'Save' });
   await signIn(page);
-  await expect(page).toHaveURL(/\/$/);
+
+  // Sign-in opens the recovery kit page while no kit is confirmed. The kit goes to the file test/boot/drive reads.
+  await test.step('recovery kit', async () => {
+    await expect(page).toHaveURL(/\/appliance\/recovery-kit$/);
+    const passphrase = input('E2E_KIT_PASSPHRASE');
+    await fillSecret(page.getByLabel('Passphrase', { exact: true }), passphrase, 'the kit passphrase');
+    await fillSecret(page.getByLabel('Repeat the passphrase', { exact: true }), passphrase, 'the kit passphrase');
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Issue the recovery kit' }).click();
+    const file = input('E2E_KIT_FILE');
+    await (await download).saveAs(file);
+    chmodSync(file, 0o600);
+    await page.getByRole('button', { name: 'I have stored the kit safely' }).click();
+    await expect(page.getByText('The kit is confirmed.')).toBeVisible();
+  });
 
   await test.step('DNS servers', async () => {
     await open(page, 'Node', 'Node');

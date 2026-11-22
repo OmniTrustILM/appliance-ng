@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/machineconfig"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
@@ -56,7 +57,7 @@ func (w *Wizard) Run(ctx context.Context, ip netip.Addr, show func(lines []strin
 	go func() { served <- srv.ServeTLS(ln, "", "") }()
 
 	show(ConsoleLines(w.Version, ip, fingerprint, w.Display))
-	w.Log.Info("wizard part 1 started", "address", "https://"+ip.String()+":"+Port+"/setup/")
+	w.Log.Info("wizard part 1 started", "address", "https://"+ip.String()+":"+Port+auth.BasePath+"/setup/")
 
 	var in machineconfig.Input
 	select {

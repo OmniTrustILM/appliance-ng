@@ -25,7 +25,7 @@ export function ReviewPage({ answers, catalogue, onBack, onSent, onRefused, onCo
   async function install() {
     setBusy(true);
     setError(undefined);
-    const result = await attempt(() => api.PUT('/api/v1/wizard/platform', { body: toRequest(answers) }));
+    const result = await attempt(() => api.PUT('/wizard/platform', { body: toRequest(answers) }));
     setBusy(false);
     if (!result) return setError(unreachable);
     const { response, error: body } = result;

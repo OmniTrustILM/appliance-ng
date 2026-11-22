@@ -23,7 +23,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('TrustPage', () => {
   it('lists the trusted CAs with a shortened fingerprint that stays readable in full', async () => {
-    stubApi({ 'GET /api/v1/trust': [200, { items: [ca('Corp Root', 'a')] }] });
+    stubApi({ 'GET /appliance/api/v1/trust': [200, { items: [ca('Corp Root', 'a')] }] });
     renderPage();
     expect(await screen.findByText('CN=Corp Root')).toBeInTheDocument();
     expect(screen.getByText('Issuer: CN=Corp Root')).toBeInTheDocument();
@@ -33,11 +33,11 @@ describe('TrustPage', () => {
   });
 
   it('says when no CA is trusted and reports a list that cannot be read', async () => {
-    stubApi({ 'GET /api/v1/trust': [200, { items: [] }] });
+    stubApi({ 'GET /appliance/api/v1/trust': [200, { items: [] }] });
     const first = render(<MemoryRouter><TrustPage /></MemoryRouter>);
     expect(await screen.findByText(/no additional ca certificates/i)).toBeInTheDocument();
     first.unmount();
-    stubApi({ 'GET /api/v1/trust': [409, { code: 'conflict', message: 'Setup is not done.' }] });
+    stubApi({ 'GET /appliance/api/v1/trust': [409, { code: 'conflict', message: 'Setup is not done.' }] });
     renderPage();
     expect(await screen.findByRole('alert')).toHaveTextContent('Setup is not done.');
   });
@@ -45,9 +45,9 @@ describe('TrustPage', () => {
   it('offers adding only after a preview, shows what is new and already trusted, and sends the bundle', async () => {
     let items = [ca('Corp Root', 'a')];
     const { sent } = stubApi({
-      'GET /api/v1/trust': () => [200, { items }],
-      'POST /api/v1/trust/preview': [200, { items: [ca('Corp Root', 'a', { new: false }), ca('Team CA', 'b', { new: true })] }],
-      'POST /api/v1/trust': () => {
+      'GET /appliance/api/v1/trust': () => [200, { items }],
+      'POST /appliance/api/v1/trust/preview': [200, { items: [ca('Corp Root', 'a', { new: false }), ca('Team CA', 'b', { new: true })] }],
+      'POST /appliance/api/v1/trust': () => {
         items = [...items, ca('Team CA', 'b')];
         return [202];
       },
@@ -64,21 +64,21 @@ describe('TrustPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'New certificates (1)' })).toBeInTheDocument();
     expect(screen.getByText('1 already trusted and not added again.')).toBeInTheDocument();
-    expect(sent['POST /api/v1/trust']).toBeUndefined();
-    expect(sent['POST /api/v1/trust/preview']).toEqual([{ pem }]);
+    expect(sent['POST /appliance/api/v1/trust']).toBeUndefined();
+    expect(sent['POST /appliance/api/v1/trust/preview']).toEqual([{ pem }]);
 
     await userEvent.click(screen.getByRole('button', { name: 'Add the new certificates' }));
     expect(await screen.findByText(/needs a restart/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'restart the node' })).toHaveAttribute('href', '/system');
-    expect(sent['POST /api/v1/trust']).toEqual([{ pem }]);
+    expect(sent['POST /appliance/api/v1/trust']).toEqual([{ pem }]);
     expect(await screen.findAllByText('CN=Team CA')).not.toHaveLength(0);
     expect(screen.getByLabelText('Or paste the certificates')).toHaveValue('');
   });
 
   it('withdraws the preview when the bundle changes', async () => {
     stubApi({
-      'GET /api/v1/trust': [200, { items: [] }],
-      'POST /api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
+      'GET /appliance/api/v1/trust': [200, { items: [] }],
+      'POST /appliance/api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
     });
     renderPage();
     await screen.findByText(/no additional/i);
@@ -92,12 +92,12 @@ describe('TrustPage', () => {
   it('ignores a preview that arrives after the bundle was edited', async () => {
     let answer: (reply: Response) => void = () => undefined;
     const { mock } = stubApi({
-      'GET /api/v1/trust': [200, { items: [] }],
-      'POST /api/v1/trust': [202],
+      'GET /appliance/api/v1/trust': [200, { items: [] }],
+      'POST /appliance/api/v1/trust': [202],
     });
     const fallback = mock.getMockImplementation();
     mock.mockImplementation(async (request: Request) => {
-      if (new URL(request.url).pathname !== '/api/v1/trust/preview') return fallback?.(request) ?? new Response(null, { status: 404 });
+      if (new URL(request.url).pathname !== '/appliance/api/v1/trust/preview') return fallback?.(request) ?? new Response(null, { status: 404 });
       return new Promise<Response>((resolve) => { answer = resolve; });
     });
     renderPage();
@@ -113,22 +113,22 @@ describe('TrustPage', () => {
 
   it('adds the previewed bundle', async () => {
     const { sent } = stubApi({
-      'GET /api/v1/trust': [200, { items: [] }],
-      'POST /api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
-      'POST /api/v1/trust': [202],
+      'GET /appliance/api/v1/trust': [200, { items: [] }],
+      'POST /appliance/api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
+      'POST /appliance/api/v1/trust': [202],
     });
     renderPage();
     await screen.findByText(/no additional/i);
     await userEvent.type(screen.getByLabelText('Or paste the certificates'), 'x');
     await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Add the new certificates' }));
-    expect(sent['POST /api/v1/trust']).toEqual([{ pem: 'x' }]);
+    expect(sent['POST /appliance/api/v1/trust']).toEqual([{ pem: 'x' }]);
   });
 
   it('shows the server reason for a rejected upload and adds nothing', async () => {
     const { sent } = stubApi({
-      'GET /api/v1/trust': [200, { items: [] }],
-      'POST /api/v1/trust/preview': [400, { code: 'invalid', message: 'CN=leaf is not a CA certificate.' }],
+      'GET /appliance/api/v1/trust': [200, { items: [] }],
+      'POST /appliance/api/v1/trust/preview': [400, { code: 'invalid', message: 'CN=leaf is not a CA certificate.' }],
     });
     renderPage();
     await screen.findByText(/no additional/i);
@@ -137,13 +137,13 @@ describe('TrustPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('CN=leaf is not a CA certificate. Nothing was added.');
     expect(screen.queryByRole('button', { name: /add the new/i })).not.toBeInTheDocument();
-    expect(sent['POST /api/v1/trust']).toBeUndefined();
+    expect(sent['POST /appliance/api/v1/trust']).toBeUndefined();
   });
 
   it('says nothing is new when every certificate is already trusted', async () => {
     stubApi({
-      'GET /api/v1/trust': [200, { items: [ca('Corp Root', 'a')] }],
-      'POST /api/v1/trust/preview': [200, { items: [ca('Corp Root', 'a')] }],
+      'GET /appliance/api/v1/trust': [200, { items: [ca('Corp Root', 'a')] }],
+      'POST /appliance/api/v1/trust/preview': [200, { items: [ca('Corp Root', 'a')] }],
     });
     renderPage();
     await screen.findByText('CN=Corp Root');
@@ -155,9 +155,9 @@ describe('TrustPage', () => {
 
   it('reports an unreachable appliance and a refused add', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/trust': [200, { items: [] }],
-      'POST /api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
-      'POST /api/v1/trust': [409, { code: 'conflict', message: 'Setup is not done.' }],
+      'GET /appliance/api/v1/trust': [200, { items: [] }],
+      'POST /appliance/api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
+      'POST /appliance/api/v1/trust': [409, { code: 'conflict', message: 'Setup is not done.' }],
     });
     renderPage();
     await screen.findByText(/no additional/i);
@@ -171,7 +171,7 @@ describe('TrustPage', () => {
   });
 
   it('fills the bundle from a chosen or dropped file', async () => {
-    stubApi({ 'GET /api/v1/trust': [200, { items: [] }] });
+    stubApi({ 'GET /appliance/api/v1/trust': [200, { items: [] }] });
     renderPage();
     await screen.findByText(/no additional/i);
     await userEvent.upload(screen.getByLabelText(/^Certificate file/), new File([pem], 'ca.pem'));
@@ -184,8 +184,8 @@ describe('TrustPage', () => {
   it('removes a CA after the confirmation and points to the restart', async () => {
     let items = [ca('Corp Root', 'a'), ca('Team CA', 'b')];
     const { sent } = stubApi({
-      'GET /api/v1/trust': () => [200, { items }],
-      [`DELETE /api/v1/trust/${sha('a')}`]: () => {
+      'GET /appliance/api/v1/trust': () => [200, { items }],
+      [`DELETE /appliance/api/v1/trust/${sha('a')}`]: () => {
         items = items.slice(1);
         return [202];
       },
@@ -194,18 +194,18 @@ describe('TrustPage', () => {
     await screen.findByText('CN=Corp Root');
     await userEvent.click(screen.getByRole('button', { name: /Remove CN=Corp Root/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(sent[`DELETE /api/v1/trust/${sha('a')}`]).toBeUndefined();
+    expect(sent[`DELETE /appliance/api/v1/trust/${sha('a')}`]).toBeUndefined();
     await userEvent.click(screen.getByRole('button', { name: /Remove CN=Corp Root/ }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
     expect(await screen.findByText(/needs a restart/i)).toBeInTheDocument();
-    expect(sent[`DELETE /api/v1/trust/${sha('a')}`]).toHaveLength(1);
+    expect(sent[`DELETE /appliance/api/v1/trust/${sha('a')}`]).toHaveLength(1);
     expect(screen.queryByText('CN=Corp Root')).not.toBeInTheDocument();
   });
 
   it('reports a CA that cannot be removed', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/trust': [200, { items: [ca('Corp Root', 'a')] }],
-      [`DELETE /api/v1/trust/${sha('a')}`]: [404, { code: 'not_found', message: 'That certificate is not trusted.' }],
+      'GET /appliance/api/v1/trust': [200, { items: [ca('Corp Root', 'a')] }],
+      [`DELETE /appliance/api/v1/trust/${sha('a')}`]: [404, { code: 'not_found', message: 'That certificate is not trusted.' }],
     });
     renderPage();
     await screen.findByText('CN=Corp Root');

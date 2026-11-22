@@ -4,13 +4,14 @@
 #   [E2E=1] run.sh <iso|qcow2> <arch>
 #
 # The VM gets a random setup code preset through SMBIOS. While the node waits in maintenance mode, no resource Talos
-# serves without credentials may show the preset. test/boot/drive then answers wizard part 1 on the first-boot
-# service and, once the Appliance Manager imported the answers, signs in and answers wizard part 2 with one connector.
-# Passes when /status reports ready within 25 minutes, the ILM UI answers 200, the manager's console is healthy and
-# reports the setup complete, the connector registered with ILM Core, and the serial log holds no key material, setup
-# code, password, TOTP seed or preset.
+# serves without credentials may show the preset. test/boot/drive then answers both wizard parts, checks the
+# appliance, the recovery kit and cluster access; see test/boot/drive for its checks. Passes when /status reports
+# ready within 25 minutes, the ILM UI answers 200, every drive check passes and the serial log holds no key material,
+# setup code, password, TOTP seed, preset or kit passphrase. The passphrase is drawn per run and kept in a file
+# readable by the owner; the kit file is deleted at the end.
 # With E2E=1 the Playwright tests in test/e2e answer both wizard parts in Chromium instead of drive, and change
-# settings in the console after the checks above; run npm ci and npx playwright install chromium in test/e2e first.
+# settings in the console after the checks above, issuing the recovery kit that sign-in asks for; run npm ci and npx
+# playwright install chromium in test/e2e first.
 # Prints "PASS <seconds to ready>" or "FAIL <reason>"; exits 0 or 1. The VM is always stopped.
 # VM state is kept in out/boot/<arch>-<media>/ and recreated on every run. TALOSCTL names the talosctl binary
 # (default talosctl), which must match the Talos version of the release.
@@ -30,11 +31,12 @@ COMPONENT=software-cryptography-provider
 CONNECTOR_NAME='Software Cryptography Provider'
 STATUS_TIMEOUT=180
 READY_TIMEOUT=1500
-LEAK_PATTERNS=(-e 'BEGIN ' -e 'PRIVATE KEY' -e 'client-key-data')
+LEAK_PATTERNS=(-e 'BEGIN ' -e 'PRIVATE KEY' -e 'client-key-data' -e 'AGE-SECRET-KEY-')
 CODE_ALPHABET=23456789ABCDEFGHJKLMNPQRSTUVWXYZ
 PRESET_KEY=io.otilm.appliance.setup-code-sha256=
 ADMIN='admin'
 # QEMU's user network with restrict=on offers no router or DNS server by DHCP; wizard part 1 sets these.
+KUBE_API=127.0.0.1:16443
 GATEWAY=10.0.2.2
 DNS=10.0.2.3
 E2E="${E2E:-0}"
@@ -49,9 +51,11 @@ export CPUS=4 MEM=12G DISK=50G
 dir="$REPO/out/boot/$arch-$media"
 drive="$dir/drive"
 seed_file="$dir/totp.seed"
+kit_file="$dir/recovery-kit.tar.age"
+kit_passphrase_file="$dir/kit.passphrase"
 setup_cert="$dir/setup-cert.pem"
 status=""
-code="" code_hash="" password="" seed=""
+code="" code_hash="" password="" seed="" kit_passphrase=""
 
 log() { echo "[run] $*" >&2; }
 
@@ -67,10 +71,10 @@ sha256() { # sha256 <text>: prints the hex SHA-256 of text
     cut -d' ' -f1
 }
 
-# leaked prints whether the serial log holds key material or a secret of the wizard.
+# leaked prints whether the serial log holds key material or a secret of the wizard or the kit.
 leaked() {
   local secrets=() secret
-  for secret in "$code" "$code_hash" "$password" "$seed"; do
+  for secret in "$code" "$code_hash" "$password" "$seed" "$kit_passphrase"; do
     if [[ -n "$secret" ]]; then secrets+=(-e "$secret"); fi
   done
   grep -qF "${LEAK_PATTERNS[@]}" "${secrets[@]}" "$dir/serial.log" 2>/dev/null
@@ -100,6 +104,7 @@ field() { # field <name>: prints a string field of $status
 code="$(random "$CODE_ALPHABET" 32)" || fail "could not draw the setup code"
 code_hash="$(sha256 "$code")"
 password="$(random 'A-Za-z0-9' 24)" || fail "could not draw the password"
+kit_passphrase="$(random 'A-Za-z0-9' 24)" || fail "could not draw the kit passphrase"
 
 # preset_hidden dumps every resource the node in maintenance mode serves without credentials and checks that none
 # holds the preset key or the code's hash.
@@ -135,7 +140,7 @@ capture_setup_certificate() {
   fail "could not read the certificate of the first-boot service"
 }
 
-drive_wizard() { # drive_wizard <part1|part2|check>
+drive_wizard() { # drive_wizard <part1|part2|check|kit|access>
   local part="$1"
   local args=(--url "$CONSOLE_URL" --user "$ADMIN" --password "$password" --seed-file "$seed_file"
     --host-name "$UI_HOST")
@@ -144,6 +149,8 @@ drive_wizard() { # drive_wizard <part1|part2|check>
     part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway "$GATEWAY" --dns "$DNS") ;;
     part2) args+=(--component "$COMPONENT") ;;
     check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$UI_HOST:10443" --ui-addr "$UI_ADDR") ;;
+    kit) args+=(--out "$kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
+    access) args+=(--kube-addr "$KUBE_API" --apid "$APID") ;;
     *) fail "unknown wizard part $part" ;;
   esac
   "$drive" "$part" "${args[@]}" >&2 || fail "drive $part failed"
@@ -154,7 +161,8 @@ browse() { # browse <spec> [<title pattern>]: runs the tests of a test/e2e spec,
   (cd "$REPO/test/e2e" &&
     E2E_CONSOLE_URL="$CONSOLE_URL" E2E_HOST_NAME="$UI_HOST" E2E_CODE="$code" E2E_USER="$ADMIN" \
       E2E_PASSWORD="$password" E2E_SEED_FILE="$seed_file" E2E_GATEWAY="$GATEWAY" E2E_DNS="$DNS" \
-      E2E_COMPONENT="$CONNECTOR_NAME" npx --no-install playwright test "$spec" --grep "$title") >&2 ||
+      E2E_COMPONENT="$CONNECTOR_NAME" E2E_KIT_PASSPHRASE="$kit_passphrase" E2E_KIT_FILE="$kit_file" \
+      npx --no-install playwright test "$spec" --grep "$title") >&2 ||
     fail "browser test $spec failed"
 }
 
@@ -178,7 +186,8 @@ mkdir -p "$dir"
 if [[ "$E2E" == 1 ]]; then
   [[ -d "$REPO/test/e2e/node_modules/@playwright/test" ]] || fail "test/e2e has no node_modules: run npm ci there"
 fi
-trap '"$VM" stop "$dir"' EXIT
+trap 'rm -f "$kit_file" "$kit_passphrase_file"; "$VM" stop "$dir"' EXIT
+(umask 077 && printf '%s' "$kit_passphrase" >"$kit_passphrase_file") || fail "could not write the kit passphrase"
 SMBIOS_OEM="$PRESET_KEY$code_hash" "$VM" start "$mode" "$arch" "$dir" || fail "VM did not start"
 start=$SECONDS
 
@@ -232,6 +241,9 @@ if [[ "$E2E" == 1 ]]; then
   browse settings.spec.ts
   log "$((SECONDS - start))s console settings changed in the browser"
 fi
+# With E2E=1 the browser issued the kit; drive then only checks it.
+drive_wizard kit
+drive_wizard access
 
 if leaked; then
   fail "serial log contains key material or a secret of the wizard"

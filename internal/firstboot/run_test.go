@@ -72,6 +72,10 @@ type fakeNode struct {
 	networkErr   error
 	handover     []byte // the hand-over file in the machine configuration
 	handoverErr  error
+	disks        []talos.Disk
+	disksErr     error
+	// installSelector is the install disk selector of the last disk list.
+	installSelector string
 
 	stageCalls, addrCalls, bootstrapCalls, kubeCalls, brokenCalls int
 	applied                                                       [][]byte
@@ -167,6 +171,9 @@ func (n *fakeNode) ExtensionConfigFile(_ context.Context, name, file string) ([]
 func (*fakeNode) Versions(context.Context) (string, string, error) { return "", "", errNotUsed }
 func (*fakeNode) Reboot(context.Context) error                     { return errNotUsed }
 func (*fakeNode) Shutdown(context.Context) error                   { return errNotUsed }
+func (*fakeNode) ClientConfig(context.Context, []string, time.Duration) ([]byte, error) {
+	return nil, errNotUsed
+}
 
 func (n *fakeNode) setMarkFail(err error) {
 	n.mu.Lock()
@@ -261,6 +268,13 @@ func (n *fakeNode) Network(context.Context, netip.Addr) (talos.Network, error) {
 	return n.network, n.networkErr
 }
 
+func (n *fakeNode) Disks(_ context.Context, installSelector string) ([]talos.Disk, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.installSelector = installSelector
+	return slices.Clone(n.disks), n.disksErr
+}
+
 func (n *fakeNode) snapshot() fakeNode {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -268,6 +282,7 @@ func (n *fakeNode) snapshot() fakeNode {
 		stageCalls: n.stageCalls, addrCalls: n.addrCalls, bootstrapCalls: n.bootstrapCalls,
 		kubeCalls: n.kubeCalls, applied: slices.Clone(n.applied), brokenCalls: n.brokenCalls,
 		resets: n.resets, clears: n.clears, recorded: n.recorded, marks: n.marks, marked: n.marked,
+		installSelector: n.installSelector,
 	}
 }
 
@@ -389,7 +404,7 @@ type fakeWizard struct {
 	ips   []netip.Addr
 }
 
-var wizardLines = []string{"ILM appliance v-test setup", "Open https://10.0.2.15:8443/setup/"}
+var wizardLines = []string{"ILM appliance v-test setup", "Open https://10.0.2.15:8443/appliance/setup/"}
 
 func (w *fakeWizard) Run(ctx context.Context, ip netip.Addr, show func([]string)) (machineconfig.Input, error) {
 	w.mu.Lock()

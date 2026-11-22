@@ -20,12 +20,14 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
@@ -74,7 +76,7 @@ func run(m *testing.M) int {
 		println("client:", err.Error())
 		return 1
 	}
-	for _, ns := range []string{SystemNamespace, platform.Namespace} {
+	for _, ns := range []string{SystemNamespace, platform.Namespace, access.Namespace} {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
 			println("namespace:", err.Error())
 			return 1
@@ -115,6 +117,12 @@ func newHarness(t *testing.T) *harness {
 // newHarnessAs returns a harness whose server acts with c.
 func newHarnessAs(t *testing.T, c client.Client) *harness {
 	t.Helper()
+	return newHarnessWith(t, c, testConfig)
+}
+
+// newHarnessWith returns a harness whose server acts with c and with a clientset on cfg.
+func newHarnessWith(t *testing.T, c client.Client, cfg *rest.Config) *harness {
+	t.Helper()
 	resetCluster(t)
 	dir := t.TempDir()
 	log, err := audit.Open(dir)
@@ -135,14 +143,20 @@ func newHarnessAs(t *testing.T, c client.Client) *harness {
 	if err := users.Create(context.Background(), auth.User{Name: testUser, PasswordHash: hash, TOTPSeed: h.seed}); err != nil {
 		t.Fatal(err)
 	}
+	kube, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h.srv = NewServer(Deps{
-		Client:  c,
-		Reader:  c,
-		Users:   users,
-		Audit:   log,
-		Release: testRelease,
-		Log:     slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Now:     func() time.Time { return h.now },
+		Client:    c,
+		Reader:    c,
+		Kube:      kube,
+		ClusterCA: testConfig.CAData,
+		Users:     users,
+		Audit:     log,
+		Release:   testRelease,
+		Log:       slog.New(slog.NewJSONHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Now:       func() time.Time { return h.now },
 	})
 	h.handler = h.srv.Handler()
 	return h
@@ -248,7 +262,7 @@ func signInBody(user, password, code string) map[string]string {
 // gets a fresh code.
 func (h *harness) signIn() *session {
 	h.t.Helper()
-	rec := h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	h.now = h.now.Add(30 * time.Second)
 	if rec.Code != http.StatusOK {
 		h.t.Fatalf("sign-in status %d: %s", rec.Code, rec.Body)
@@ -293,7 +307,7 @@ func wantStatus(t *testing.T, rec *httptest.ResponseRecorder, status int) {
 
 func TestAPIAnswersAreNotCached(t *testing.T) {
 	h := newHarness(t)
-	rec := h.request(http.MethodGet, "/api/v1/session", nil, nil)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/session", nil, nil)
 	wantStatus(t, rec, http.StatusUnauthorized)
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control %q, want no-store", got)
@@ -308,21 +322,21 @@ func TestRequestBodyIsCapped(t *testing.T) {
 	s := h.signIn()
 	createAppliance(t, v1alpha1.SetupPart2)
 	big := `{"hostName":"ilm.example.com","components":[],"x":"` + strings.Repeat("a", maxBody) + `"}`
-	rec := h.request(http.MethodPut, "/api/v1/wizard/platform", big, s)
+	rec := h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", big, s)
 	wantStatus(t, rec, http.StatusBadRequest)
 }
 
 func TestProtectedOperationsNeedASession(t *testing.T) {
 	h := newHarness(t)
 	for _, tc := range []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/session"},
-		{http.MethodDelete, "/api/v1/session"},
-		{http.MethodGet, "/api/v1/status"},
-		{http.MethodGet, "/api/v1/appliance"},
-		{http.MethodPut, "/api/v1/wizard/platform"},
-		{http.MethodGet, "/api/v1/catalogue"},
-		{http.MethodGet, "/api/v1/audit"},
-		{http.MethodPost, "/api/v1/platform/admin-credential"},
+		{http.MethodGet, "/appliance/api/v1/session"},
+		{http.MethodDelete, "/appliance/api/v1/session"},
+		{http.MethodGet, "/appliance/api/v1/status"},
+		{http.MethodGet, "/appliance/api/v1/appliance"},
+		{http.MethodPut, "/appliance/api/v1/wizard/platform"},
+		{http.MethodGet, "/appliance/api/v1/catalogue"},
+		{http.MethodGet, "/appliance/api/v1/audit"},
+		{http.MethodPost, "/appliance/api/v1/platform/admin-credential"},
 		{http.MethodGet, pathTrust},
 		{http.MethodPost, pathTrust},
 		{http.MethodPost, pathTrustPreview},
@@ -334,6 +348,10 @@ func TestProtectedOperationsNeedASession(t *testing.T) {
 		{http.MethodPut, pathMail},
 		{http.MethodDelete, pathMail},
 		{http.MethodPost, pathMailTest},
+		{http.MethodGet, pathAccess},
+		{http.MethodPost, pathKubeconfig},
+		{http.MethodDelete, pathKubeconfig + "/kc-any"},
+		{http.MethodPost, pathTalosconfig},
 	} {
 		if rec := h.request(tc.method, tc.path, nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s without a session: status %d, want 401", tc.method, tc.path, rec.Code)
@@ -346,7 +364,7 @@ func TestChangesNeedTheCSRFToken(t *testing.T) {
 	s := h.signIn()
 	createAppliance(t, v1alpha1.SetupPart2)
 	wrong := &session{cookie: s.cookie, csrf: "wrong"}
-	rec := h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, wrong)
+	rec := h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, wrong)
 	wantStatus(t, rec, http.StatusForbidden)
 	if got := getAppliance(t).Spec.Platform; got != nil {
 		t.Errorf("platform written without the CSRF token: %+v", got)

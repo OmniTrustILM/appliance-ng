@@ -32,7 +32,7 @@ export function RegistryForm({ editing, onSaved, onCancel }: RegistryFormProps) 
     setBusy(true);
     setError(undefined);
     setFieldErrors({});
-    const result = await attempt(() => api.PUT('/api/v1/registries/{host}', {
+    const result = await attempt(() => api.PUT('/registries/{host}', {
       params: { path: { host: host.trim() } },
       body: password ? { username, password } : { username },
     }));

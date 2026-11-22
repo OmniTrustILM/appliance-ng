@@ -16,21 +16,21 @@ func TestAuditEntryPerMutation(t *testing.T) {
 	createAppliance(t, v1alpha1.SetupPart2)
 
 	// An unknown user name is not recorded: it may be a password typed into the wrong field.
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody("someone", "wrong password value", "000000"), nil), http.StatusBadRequest)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody("someone", "wrong password value", "000000"), nil), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil), http.StatusBadRequest)
 	s := h.signIn()
-	wantStatus(t, h.request(http.MethodGet, "/api/v1/status", nil, s), http.StatusOK)
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}, Mail: validMail()}, s), http.StatusAccepted)
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "bad", Components: []string{}}, s), http.StatusBadRequest)
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, &session{cookie: s.cookie, csrf: "x"}), http.StatusForbidden)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": "a long enough password"}, s), http.StatusNotFound)
-	wantStatus(t, h.request(http.MethodDelete, "/api/v1/session", nil, s), http.StatusNoContent)
+	wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/status", nil, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}, Mail: validMail()}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "bad", Components: []string{}}, s), http.StatusBadRequest)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, &session{cookie: s.cookie, csrf: "x"}), http.StatusForbidden)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": "a long enough password"}, s), http.StatusNotFound)
+	wantStatus(t, h.request(http.MethodDelete, "/appliance/api/v1/session", nil, s), http.StatusNoContent)
 	// Neither a change without a session nor a sign-in while locked is audited.
-	wantStatus(t, h.request(http.MethodDelete, "/api/v1/session", nil, s), http.StatusUnauthorized)
+	wantStatus(t, h.request(http.MethodDelete, "/appliance/api/v1/session", nil, s), http.StatusUnauthorized)
 	for range 5 {
-		h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil)
+		h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, "wrong password value", "000000"), nil)
 	}
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
 
 	got := h.entries()
 	got = got[:len(got)-5] // the five failed sign-ins before the lock
@@ -67,9 +67,9 @@ func TestAnonymousChangesAreNotAudited(t *testing.T) {
 	createAppliance(t, v1alpha1.SetupPart2)
 	stale := &session{cookie: "not-a-session", csrf: "x"}
 	for range 50 {
-		wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, stale), http.StatusUnauthorized)
-		wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, nil), http.StatusUnauthorized)
-		wantStatus(t, h.request(http.MethodDelete, "/api/v1/session", nil, nil), http.StatusUnauthorized)
+		wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, stale), http.StatusUnauthorized)
+		wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, nil), http.StatusUnauthorized)
+		wantStatus(t, h.request(http.MethodDelete, "/appliance/api/v1/session", nil, nil), http.StatusUnauthorized)
 	}
 	if got := h.entries(); len(got) != 0 {
 		t.Errorf("anonymous requests wrote %d audit entries, want none", len(got))
@@ -81,14 +81,14 @@ func TestAuditPathsOfAChange(t *testing.T) {
 	createAppliance(t, v1alpha1.SetupPart2)
 	s := h.signIn()
 	body := PlatformSettings{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}, Mail: validMail()}
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
 	body.Components = []string{"common-credential-provider"}
 	body.Mail.From = "alerts@example.com"
 	body.Mail.Password = nil
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
 	body.Mail.Password = ptr("another-secret-value")
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
 
 	got := h.entries()
 	for i, want := range [][]string{
@@ -108,19 +108,19 @@ func TestGetAudit(t *testing.T) {
 	h.signIn()
 	h.signIn()
 
-	rec := h.request(http.MethodGet, "/api/v1/audit?limit=2", nil, s)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/audit?limit=2", nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	var got AuditLog
 	decode(t, rec, &got)
 	if len(got.Items) != 2 || !got.Items[0].Time.After(got.Items[1].Time) || got.Items[0].Action != AuditEntryActionSignIn || got.Items[0].Paths == nil {
 		t.Errorf("audit = %+v, want the two newest sign-ins, newest first", got.Items)
 	}
-	decode(t, h.request(http.MethodGet, "/api/v1/audit", nil, s), &got)
+	decode(t, h.request(http.MethodGet, "/appliance/api/v1/audit", nil, s), &got)
 	if len(got.Items) != 3 {
 		t.Errorf("audit = %d entries, want 3", len(got.Items))
 	}
 	for _, q := range []string{"limit=0", "limit=1001", "limit=x"} {
-		wantStatus(t, h.request(http.MethodGet, "/api/v1/audit?"+q, nil, s), http.StatusBadRequest)
+		wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/audit?"+q, nil, s), http.StatusBadRequest)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestAuditFailureStillAnswers(t *testing.T) {
 	if !strings.Contains(h.logs.String(), "audit") {
 		t.Errorf("the failed audit write is not logged: %s", h.logs)
 	}
-	rec := h.request(http.MethodGet, "/api/v1/audit", nil, s)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/audit", nil, s)
 	wantStatus(t, rec, http.StatusInternalServerError)
 	if strings.Contains(rec.Body.String(), "disk gone") {
 		t.Errorf("the error leaks to the client: %s", rec.Body)

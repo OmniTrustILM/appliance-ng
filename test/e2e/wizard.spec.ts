@@ -10,7 +10,7 @@ base.describe('first-boot service', () => {
 
   base('wizard part 1', async ({ page }) => {
     const continueButton = page.getByRole('button', { name: 'Continue' });
-    await page.goto('/setup/');
+    await page.goto('/appliance/setup/');
     await fillSecret(page.getByLabel('Setup code'), input('E2E_CODE'), 'the setup code');
     await continueButton.click();
 

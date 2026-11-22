@@ -12,7 +12,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe('RegistriesPage', () => {
   it('lists registries with their user name and whether a password is set, never a password', async () => {
     stubApi({
-      'GET /api/v1/registries': list([registry, { host: 'open.example.test', username: '', passwordSet: false }]),
+      'GET /appliance/api/v1/registries': list([registry, { host: 'open.example.test', username: '', passwordSet: false }]),
     });
     render(<RegistriesPage />);
     expect(await screen.findByText('registry.example.test')).toBeInTheDocument();
@@ -23,11 +23,11 @@ describe('RegistriesPage', () => {
   });
 
   it('says when there are no registries and reports a list that cannot be read', async () => {
-    stubApi({ 'GET /api/v1/registries': list([]) });
+    stubApi({ 'GET /appliance/api/v1/registries': list([]) });
     const first = render(<RegistriesPage />);
     expect(await screen.findByText(/no registries have credentials/i)).toBeInTheDocument();
     first.unmount();
-    stubApi({ 'GET /api/v1/registries': [409, { code: 'conflict', message: 'Setup is not done.' }] });
+    stubApi({ 'GET /appliance/api/v1/registries': [409, { code: 'conflict', message: 'Setup is not done.' }] });
     render(<RegistriesPage />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Setup is not done.');
   });
@@ -35,8 +35,8 @@ describe('RegistriesPage', () => {
   it('adds a registry with a password and needs no restart', async () => {
     let items: object[] = [];
     const { sent } = stubApi({
-      'GET /api/v1/registries': () => list(items),
-      'PUT /api/v1/registries/registry.example.test': () => {
+      'GET /appliance/api/v1/registries': () => list(items),
+      'PUT /appliance/api/v1/registries/registry.example.test': () => {
         items = [registry];
         return [202];
       },
@@ -51,15 +51,15 @@ describe('RegistriesPage', () => {
     await userEvent.type(screen.getByLabelText('Password'), 's3cret');
     await userEvent.click(submit);
     expect(await screen.findByText(/no restart is needed/i)).toBeInTheDocument();
-    expect(sent['PUT /api/v1/registries/registry.example.test']).toEqual([{ username: 'puller', password: 's3cret' }]);
+    expect(sent['PUT /appliance/api/v1/registries/registry.example.test']).toEqual([{ username: 'puller', password: 's3cret' }]);
     expect(await screen.findByText('Password set')).toBeInTheDocument();
     expect(screen.getByLabelText('Registry host')).toHaveValue('');
   });
 
   it('edits a registry and keeps its password when the field stays empty', async () => {
     const { sent } = stubApi({
-      'GET /api/v1/registries': list([registry]),
-      'PUT /api/v1/registries/registry.example.test': [202],
+      'GET /appliance/api/v1/registries': list([registry]),
+      'PUT /appliance/api/v1/registries/registry.example.test': [202],
     });
     render(<RegistriesPage />);
     await userEvent.click(await screen.findByRole('button', { name: /Edit registry.example.test/ }));
@@ -70,12 +70,12 @@ describe('RegistriesPage', () => {
     expect(screen.getByText('Leave empty to keep the current password.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Save the credentials' }));
     expect(await screen.findByText(/no restart is needed/i)).toBeInTheDocument();
-    expect(sent['PUT /api/v1/registries/registry.example.test']).toEqual([{ username: 'puller' }]);
+    expect(sent['PUT /appliance/api/v1/registries/registry.example.test']).toEqual([{ username: 'puller' }]);
     expect(screen.getByRole('heading', { name: 'Add a registry' })).toBeInTheDocument();
   });
 
   it('cancels an edit', async () => {
-    stubApi({ 'GET /api/v1/registries': list([registry]) });
+    stubApi({ 'GET /appliance/api/v1/registries': list([registry]) });
     render(<RegistriesPage />);
     await userEvent.click(await screen.findByRole('button', { name: /Edit/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -84,8 +84,8 @@ describe('RegistriesPage', () => {
 
   it('shows the field error of a username change without a password at the password field', async () => {
     stubApi({
-      'GET /api/v1/registries': list([registry]),
-      'PUT /api/v1/registries/registry.example.test': [400, { code: 'invalid', message: 'A new user name needs a password.', field: 'password' }],
+      'GET /appliance/api/v1/registries': list([registry]),
+      'PUT /appliance/api/v1/registries/registry.example.test': [400, { code: 'invalid', message: 'A new user name needs a password.', field: 'password' }],
     });
     render(<RegistriesPage />);
     await userEvent.click(await screen.findByRole('button', { name: /Edit/ }));
@@ -101,8 +101,8 @@ describe('RegistriesPage', () => {
 
   it('shows other refusals and an unreachable appliance above the form', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/registries': list([]),
-      'PUT /api/v1/registries/bad': [403, { code: 'forbidden', message: 'Refused.' }],
+      'GET /appliance/api/v1/registries': list([]),
+      'PUT /appliance/api/v1/registries/bad': [403, { code: 'forbidden', message: 'Refused.' }],
     });
     render(<RegistriesPage />);
     await screen.findByText(/no registries/i);
@@ -118,8 +118,8 @@ describe('RegistriesPage', () => {
   it('deletes a registry after the confirmation', async () => {
     let items = [registry];
     const { sent } = stubApi({
-      'GET /api/v1/registries': () => list(items),
-      'DELETE /api/v1/registries/registry.example.test': () => {
+      'GET /appliance/api/v1/registries': () => list(items),
+      'DELETE /appliance/api/v1/registries/registry.example.test': () => {
         items = [];
         return [202];
       },
@@ -127,18 +127,18 @@ describe('RegistriesPage', () => {
     render(<RegistriesPage />);
     await userEvent.click(await screen.findByRole('button', { name: /Remove registry.example.test/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(sent['DELETE /api/v1/registries/registry.example.test']).toBeUndefined();
+    expect(sent['DELETE /appliance/api/v1/registries/registry.example.test']).toBeUndefined();
     await userEvent.click(screen.getByRole('button', { name: /Remove registry.example.test/ }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
     expect(await screen.findByText(/no registries have credentials/i)).toBeInTheDocument();
-    expect(sent['DELETE /api/v1/registries/registry.example.test']).toHaveLength(1);
+    expect(sent['DELETE /appliance/api/v1/registries/registry.example.test']).toHaveLength(1);
   });
 
   it('closes the form of the registry it removes', async () => {
     let items = [registry];
     stubApi({
-      'GET /api/v1/registries': () => list(items),
-      'DELETE /api/v1/registries/registry.example.test': () => {
+      'GET /appliance/api/v1/registries': () => list(items),
+      'DELETE /appliance/api/v1/registries/registry.example.test': () => {
         items = [];
         return [202];
       },
@@ -155,10 +155,10 @@ describe('RegistriesPage', () => {
 
   it('adds, edits and removes a registry with a port', async () => {
     const withPort = { host: 'registry.example.test:5000', username: 'puller', passwordSet: true };
-    const path = '/api/v1/registries/registry.example.test%3A5000';
+    const path = '/appliance/api/v1/registries/registry.example.test%3A5000';
     let items: object[] = [];
     const { sent } = stubApi({
-      'GET /api/v1/registries': () => list(items),
+      'GET /appliance/api/v1/registries': () => list(items),
       [`PUT ${path}`]: () => {
         items = [withPort];
         return [202];
@@ -186,8 +186,8 @@ describe('RegistriesPage', () => {
 
   it('reports a registry that cannot be removed', async () => {
     stubApi({
-      'GET /api/v1/registries': list([registry]),
-      'DELETE /api/v1/registries/registry.example.test': [404, { code: 'not_found', message: 'No such registry.' }],
+      'GET /appliance/api/v1/registries': list([registry]),
+      'DELETE /appliance/api/v1/registries/registry.example.test': [404, { code: 'not_found', message: 'No such registry.' }],
     });
     render(<RegistriesPage />);
     await userEvent.click(await screen.findByRole('button', { name: /Remove/ }));

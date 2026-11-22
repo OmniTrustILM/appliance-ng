@@ -18,32 +18,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
 // TestAPIRunsWithTheManagerRBAC serves every operation as the manager's ServiceAccount with the RBAC of its
 // manifest.
 func TestAPIRunsWithTheManagerRBAC(t *testing.T) {
-	h := newHarnessAs(t, managerClient(t))
+	cfg := managerConfig(t)
+	h := newHarnessWith(t, clientFor(t, cfg), cfg)
 	s := h.signIn()
 	createAppliance(t, v1alpha1.SetupPart2)
 	body := PlatformSettings{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}, Mail: validMail()}
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
 	body.Mail.Password = ptr("another-secret-value")
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
 	body.Mail.Username, body.Mail.Password = nil, nil
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/wizard/platform", body, s), http.StatusAccepted)
-	for _, path := range []string{"/api/v1/status", "/api/v1/appliance", "/api/v1/catalogue", "/api/v1/audit"} {
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	for _, path := range []string{"/appliance/api/v1/status", "/appliance/api/v1/appliance", "/appliance/api/v1/catalogue", "/appliance/api/v1/audit"} {
 		wantStatus(t, h.request(http.MethodGet, path, nil, s), http.StatusOK)
 	}
-	wantStatus(t, h.request(http.MethodGet, "/api/v1/ca.pem", nil, nil), http.StatusNotFound)
+	wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/ca.pem", nil, nil), http.StatusNotFound)
 	createAdminSecret(t, newAdminCredential(t, pkcs1))
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
 	node := NodeUpdate{Dns: []string{"192.0.2.53"}, Ntp: []string{}}
-	wantStatus(t, h.request(http.MethodPut, "/api/v1/node", node, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", node, s), http.StatusAccepted)
 	h.withTalos(&fakeTalos{}, nil)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusAccepted)
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/system/shutdown", Confirmation{Confirm: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/system/reboot", Confirmation{Confirm: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/system/shutdown", Confirmation{Confirm: true}, s), http.StatusAccepted)
 
 	ca := newTestCA(t)
 	key := newECKey(t)
@@ -89,10 +91,51 @@ func TestAPIRunsWithTheManagerRBAC(t *testing.T) {
 	wantStatus(t, h.request(http.MethodPut, pathPlatform, platform, s), http.StatusAccepted)
 	wantStatus(t, h.request(http.MethodDelete, pathMail, nil, s), http.StatusAccepted)
 	wantStatus(t, h.request(http.MethodDelete, pathTestRegistry, nil, s), http.StatusAccepted)
+
+	accessAnswers(t, h, s)
 }
 
-// managerClient returns a client that acts as the manager's ServiceAccount with the RBAC of addons/manager.yaml.
-func managerClient(t *testing.T) client.Client {
+// accessAnswers issues and revokes kubeconfigs, issues a talosconfig and issues, re-issues, replaces and confirms
+// the recovery kit, as the manager's ServiceAccount.
+func accessAnswers(t *testing.T, h *harness, s *session) {
+	t.Helper()
+	resetAccess(t)
+	setNodeAddress(t)
+	fillAccessTokens(t)
+	wantStatus(t, h.request(http.MethodPost, pathKubeconfig, KubeconfigRequest{Role: View, Hours: ptr(1)}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, pathKubeconfig, KubeconfigRequest{Role: ClusterAdmin, Name: ptr("ci")}, s), http.StatusOK)
+	h.withTalos(&talosNode{}, nil)
+	wantStatus(t, h.request(http.MethodPost, pathTalosconfig, TalosconfigRequest{Role: OsAdmin, Hours: 1}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, pathTalosconfig, TalosconfigRequest{Role: OsReader, Hours: 1}, s), http.StatusOK)
+	items := accessList(t, h, s)
+	if len(items) != 4 {
+		t.Fatalf("listed %d credentials, want 4", len(items))
+	}
+	for _, c := range items {
+		if c.Name != nil {
+			wantStatus(t, h.request(http.MethodDelete, pathKubeconfig+"/"+*c.Name, nil, s), http.StatusNoContent)
+		}
+	}
+
+	first := issueKit(t, h, s)
+	wantStatus(t, h.request(http.MethodGet, pathRecoveryKit, nil, s), http.StatusOK)
+	wantStatus(t, reissue(h, s, first, kitPassphrase, nextPassphrase), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(kitPassphrase), Confirm: true}, s), http.StatusOK)
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
+}
+
+func clientFor(t *testing.T, cfg *rest.Config) client.Client {
+	t.Helper()
+	c, err := client.New(cfg, client.Options{Scheme: testClient.Scheme()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// managerConfig creates the RBAC of addons/manager.yaml and returns a configuration that acts as the manager's
+// ServiceAccount.
+func managerConfig(t *testing.T) *rest.Config {
 	t.Helper()
 	ctx := context.Background()
 	data, err := os.ReadFile(filepath.Join("..", "..", "addons", "manager.yaml"))
@@ -108,7 +151,7 @@ func managerClient(t *testing.T) client.Client {
 			}
 			t.Fatal(err)
 		}
-		if obj.GroupVersionKind().Group != rbacv1.GroupName || !slices.Contains([]string{"", SystemNamespace, platform.Namespace}, obj.GetNamespace()) {
+		if obj.GroupVersionKind().Group != rbacv1.GroupName || !slices.Contains([]string{"", SystemNamespace, platform.Namespace, access.Namespace}, obj.GetNamespace()) {
 			continue
 		}
 		if err := testClient.Create(ctx, obj); err != nil {
@@ -118,9 +161,5 @@ func managerClient(t *testing.T) client.Client {
 	}
 	cfg := rest.CopyConfig(testConfig)
 	cfg.Impersonate = rest.ImpersonationConfig{UserName: "system:serviceaccount:" + SystemNamespace + ":appliance-manager"}
-	c, err := client.New(cfg, client.Options{Scheme: testClient.Scheme()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
+	return cfg
 }

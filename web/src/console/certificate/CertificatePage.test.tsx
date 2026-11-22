@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe('CertificatePage', () => {
   it('shows the certificate in use', async () => {
-    stubApi({ 'GET /api/v1/certificate': info() });
+    stubApi({ 'GET /appliance/api/v1/certificate': info() });
     render(<CertificatePage />);
     expect(await screen.findByText('CN=ilm.example.test')).toBeInTheDocument();
     expect(screen.getByText('ilm.example.test, node.example.test')).toBeInTheDocument();
@@ -43,12 +43,12 @@ describe('CertificatePage', () => {
   });
 
   it('warns when the certificate expires within 30 days and when it has expired', async () => {
-    const { mock } = stubApi({ 'GET /api/v1/certificate': info({}, 29) });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/certificate': info({}, 29) });
     const { unmount } = render(<CertificatePage />);
     expect(await screen.findByText(/expires within 30 days/i)).toBeInTheDocument();
     unmount();
     mock.mockClear();
-    stubApi({ 'GET /api/v1/certificate': info({}, -1) });
+    stubApi({ 'GET /appliance/api/v1/certificate': info({}, -1) });
     render(<CertificatePage />);
     expect(await screen.findByText(/has expired/i)).toBeInTheDocument();
   });
@@ -56,24 +56,24 @@ describe('CertificatePage', () => {
   it('offers the root certificate with the built-in certificate and says when none exists yet', async () => {
     const { unmount } = render(<div />);
     unmount();
-    stubApi({ 'GET /api/v1/certificate': info({ source: 'builtin' }) });
+    stubApi({ 'GET /appliance/api/v1/certificate': info({ source: 'builtin' }) });
     const first = render(<CertificatePage />);
-    expect(await screen.findByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/api/v1/ca.pem');
+    expect(await screen.findByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/appliance/api/v1/ca.pem');
     expect(screen.queryByRole('button', { name: /back to the built-in/i })).not.toBeInTheDocument();
     first.unmount();
-    stubApi({ 'GET /api/v1/certificate': [200, { source: 'builtin', csrPending: false }] });
+    stubApi({ 'GET /appliance/api/v1/certificate': [200, { source: 'builtin', csrPending: false }] });
     render(<CertificatePage />);
     expect(await screen.findByText(/has not been issued yet/i)).toBeInTheDocument();
   });
 
   it('reports a certificate that cannot be read', async () => {
-    stubApi({ 'GET /api/v1/certificate': [500, { code: 'internal', message: 'Reading failed.' }] });
+    stubApi({ 'GET /appliance/api/v1/certificate': [500, { code: 'internal', message: 'Reading failed.' }] });
     render(<CertificatePage />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Reading failed.');
   });
 
   it('uploads dropped files as multipart fields', async () => {
-    const { sent } = stubApi({ 'GET /api/v1/certificate': info(), 'PUT /api/v1/certificate': [202] });
+    const { sent } = stubApi({ 'GET /appliance/api/v1/certificate': info(), 'PUT /appliance/api/v1/certificate': [202] });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
     const submit = screen.getByRole('button', { name: 'Upload the certificate' });
@@ -87,28 +87,28 @@ describe('CertificatePage', () => {
     expect(await screen.findByText('CERTIFICATE.pem')).toBeInTheDocument();
     await userEvent.click(submit);
     expect(await screen.findByText(/within about a minute/i, { selector: 'output *' })).toBeInTheDocument();
-    const [body] = sent['PUT /api/v1/certificate'] as Record<string, File>[];
+    const [body] = sent['PUT /appliance/api/v1/certificate'] as Record<string, File>[];
     expect(Object.keys(body).sort()).toEqual(['certificate', 'key']);
     expect(await body.certificate.text()).toBe('-----BEGIN CERTIFICATE-----');
     expect(await body.key.text()).toBe('-----BEGIN KEY-----');
   });
 
   it('uploads files chosen with the file picker, chain included', async () => {
-    const { sent } = stubApi({ 'GET /api/v1/certificate': info(), 'PUT /api/v1/certificate': [202] });
+    const { sent } = stubApi({ 'GET /appliance/api/v1/certificate': info(), 'PUT /appliance/api/v1/certificate': [202] });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
     await userEvent.upload(screen.getByLabelText(/^Certificate/), pem('CERTIFICATE'));
     await userEvent.upload(screen.getByLabelText(/^Private key/), pem('KEY'));
     await userEvent.upload(screen.getByLabelText(/^Chain/), pem('CHAIN'));
     await userEvent.click(screen.getByRole('button', { name: 'Upload the certificate' }));
-    await waitFor(() => expect(sent['PUT /api/v1/certificate']).toHaveLength(1));
-    expect(Object.keys(sent['PUT /api/v1/certificate'][0] as object).sort()).toEqual(['certificate', 'chain', 'key']);
+    await waitFor(() => expect(sent['PUT /appliance/api/v1/certificate']).toHaveLength(1));
+    expect(Object.keys(sent['PUT /appliance/api/v1/certificate'][0] as object).sort()).toEqual(['certificate', 'chain', 'key']);
   });
 
   it('shows the message of a refused upload and says the current certificate stays', async () => {
     stubApi({
-      'GET /api/v1/certificate': info(),
-      'PUT /api/v1/certificate': [400, { code: 'invalid', message: 'The key does not match the certificate.', field: 'key' }],
+      'GET /appliance/api/v1/certificate': info(),
+      'PUT /appliance/api/v1/certificate': [400, { code: 'invalid', message: 'The key does not match the certificate.', field: 'key' }],
     });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
@@ -122,7 +122,7 @@ describe('CertificatePage', () => {
   });
 
   it('reports an unreachable appliance on upload', async () => {
-    const { mock } = stubApi({ 'GET /api/v1/certificate': info() });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/certificate': info() });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
     mock.mockRejectedValue(new TypeError('down'));
@@ -136,12 +136,12 @@ describe('CertificatePage', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let pending = false;
     const { sent } = stubApi({
-      'GET /api/v1/certificate': () => info({ csrPending: pending }),
-      'POST /api/v1/certificate/csr': () => {
+      'GET /appliance/api/v1/certificate': () => info({ csrPending: pending }),
+      'POST /appliance/api/v1/certificate/csr': () => {
         pending = true;
         return [200, '-----BEGIN CERTIFICATE REQUEST-----'];
       },
-      'PUT /api/v1/certificate/csr/signed': [202],
+      'PUT /appliance/api/v1/certificate/csr/signed': [202],
     });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
@@ -161,14 +161,14 @@ describe('CertificatePage', () => {
     expect(within(form).queryByLabelText(/^Private key/)).not.toBeInTheDocument();
     await userEvent.upload(within(form).getByLabelText(/^Certificate/), pem('CERTIFICATE'));
     await userEvent.click(within(form).getByRole('button', { name: 'Upload the signed certificate' }));
-    await waitFor(() => expect(sent['PUT /api/v1/certificate/csr/signed']).toHaveLength(1));
-    expect(Object.keys(sent['PUT /api/v1/certificate/csr/signed'][0] as object)).toEqual(['certificate']);
+    await waitFor(() => expect(sent['PUT /appliance/api/v1/certificate/csr/signed']).toHaveLength(1));
+    expect(Object.keys(sent['PUT /appliance/api/v1/certificate/csr/signed'][0] as object)).toEqual(['certificate']);
   });
 
   it('reports a signing request that cannot be created', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/certificate': info(),
-      'POST /api/v1/certificate/csr': [409, { code: 'conflict', message: 'The setup is not complete.' }],
+      'GET /appliance/api/v1/certificate': info(),
+      'POST /appliance/api/v1/certificate/csr': [409, { code: 'conflict', message: 'The setup is not complete.' }],
     });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
@@ -181,22 +181,22 @@ describe('CertificatePage', () => {
   });
 
   it('goes back to the built-in certificate after the confirmation', async () => {
-    const { sent } = stubApi({ 'GET /api/v1/certificate': info(), 'PUT /api/v1/certificate/builtin': [202] });
+    const { sent } = stubApi({ 'GET /appliance/api/v1/certificate': info(), 'PUT /appliance/api/v1/certificate/builtin': [202] });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');
     await userEvent.click(screen.getByRole('button', { name: 'Go back to the built-in certificate' }));
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(sent['PUT /api/v1/certificate/builtin']).toBeUndefined();
+    expect(sent['PUT /appliance/api/v1/certificate/builtin']).toBeUndefined();
     await userEvent.click(screen.getByRole('button', { name: 'Go back to the built-in certificate' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Use the built-in certificate' }));
     expect(await screen.findByText(/within about a minute/i, { selector: 'output *' })).toBeInTheDocument();
-    expect(sent['PUT /api/v1/certificate/builtin']).toHaveLength(1);
+    expect(sent['PUT /appliance/api/v1/certificate/builtin']).toHaveLength(1);
   });
 
   it('reports a refused or unreachable switch to the built-in certificate', async () => {
     const { mock } = stubApi({
-      'GET /api/v1/certificate': info(),
-      'PUT /api/v1/certificate/builtin': [409, { code: 'conflict', message: 'Not possible now.' }],
+      'GET /appliance/api/v1/certificate': info(),
+      'PUT /appliance/api/v1/certificate/builtin': [409, { code: 'conflict', message: 'Not possible now.' }],
     });
     render(<CertificatePage />);
     await screen.findByText('CN=ilm.example.test');

@@ -12,12 +12,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 )
 
 const (
 	// trustPath is the path of the trusted certificates; the other trust operations are below it.
-	trustPath = "/api/v1/trust"
+	trustPath = auth.APIBase + "/trust"
 	// pathTrustSpec is the JSON path of the trust reference, which every change of the trusted certificates records.
 	pathTrustSpec = "spec.trust"
 

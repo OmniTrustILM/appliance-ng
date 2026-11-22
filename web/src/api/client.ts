@@ -1,10 +1,11 @@
 import createClient, { type Middleware } from 'openapi-fetch';
+import { apiBase, basePath } from '../base';
 import type { paths } from './schema';
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 let csrfToken: string | undefined;
-let onUnauthorized = () => window.location.assign('/signin');
+let onUnauthorized = () => window.location.assign(`${basePath}/signin`);
 
 /** Sets the session's CSRF token, which the client sends on every request that changes state. */
 export function setCsrfToken(token: string | undefined) {
@@ -18,7 +19,7 @@ export function setUnauthorizedHandler(handler: () => void) {
 
 // Wizard part 1 has its own session, and the sign-in calls answer 401 to report a failed or missing sign-in.
 function leavesUnauthorizedToCaller(path: string) {
-  return path.startsWith('/api/v1/setup/') || path === '/api/v1/session';
+  return path.startsWith(`${apiBase}/setup/`) || path === `${apiBase}/session`;
 }
 
 const session: Middleware = {
@@ -36,7 +37,7 @@ const session: Middleware = {
   },
 };
 
-/** Creates a client of the appliance API at baseUrl. */
+/** Creates a client of the appliance API at baseUrl, which ends in the API's base path. */
 export function createApiClient(baseUrl: string) {
   const client = createClient<paths>({
     baseUrl,
@@ -49,4 +50,4 @@ export function createApiClient(baseUrl: string) {
 }
 
 /** The client of the appliance that served the console. */
-export const api = createApiClient(window.location.origin);
+export const api = createApiClient(window.location.origin + apiBase);

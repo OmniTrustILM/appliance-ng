@@ -200,15 +200,15 @@ func TestCSRFRequired(t *testing.T) {
 	}
 }
 
-func TestSessionCookies(t *testing.T) {
+func TestSessionCookieScopedToAppliance(t *testing.T) {
 	c := SessionCookie("tok")
-	if c.Name != "appliance_session" || c.Value != "tok" || !c.HttpOnly || !c.Secure ||
-		c.SameSite != http.SameSiteStrictMode || c.Path != "/" {
+	if c.Name != "__Secure-appliance_session" || c.Value != "tok" || !c.HttpOnly || !c.Secure ||
+		c.SameSite != http.SameSiteStrictMode || c.Path != "/appliance/" {
 		t.Fatalf("SessionCookie = %+v", c)
 	}
 	cl := ClearSessionCookie()
-	if cl.Name != "appliance_session" || cl.Value != "" || cl.MaxAge >= 0 || !cl.HttpOnly || !cl.Secure ||
-		cl.SameSite != http.SameSiteStrictMode || cl.Path != "/" {
+	if cl.Name != "__Secure-appliance_session" || cl.Value != "" || cl.MaxAge >= 0 || !cl.HttpOnly || !cl.Secure ||
+		cl.SameSite != http.SameSiteStrictMode || cl.Path != "/appliance/" {
 		t.Fatalf("ClearSessionCookie = %+v", cl)
 	}
 }

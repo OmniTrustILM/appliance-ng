@@ -13,9 +13,11 @@
 # Hosts: macOS on Apple silicon (arm64, HVF, edk2 from Homebrew's qemu); Linux with KVM (amd64 with OVMF from the
 # ovmf package, arm64 with AAVMF from qemu-efi-aarch64). The guest has no route out (restrict=on) and a
 # virtio-rng device. Host forwards, bound to 127.0.0.1: 18443->8443 (console), 18444->8444 (status), 10443->443 (UI),
-# 15000->50000 (apid).
+# 15000->50000 (apid), 16443->6443 (the cluster's API server).
 # CPUS, MEM and DISK override 4 / 12G / 50G (DISK applies when the disk is created). SMBIOS_OEM, when set, is passed
 # to the guest as an SMBIOS type 11 OEM string (no commas). Serial log: <dir>/serial.log.
+# EXTRA_DISK=<size> adds a second blank disk with serial ilm-data (created with the VM). It sits at a fixed PCI
+# address because a device in the automatic order would rename the NIC and lose its static address.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -80,7 +82,7 @@ start() {
   running "$dir" && die "a VM is already running in $dir"
 
   local drives=(-drive "if=none,id=hd0,file=$dir/disk.qcow2,format=qcow2,discard=unmap"
-                -device "virtio-blk-pci,drive=hd0,bootindex=0")
+                -device "virtio-blk-pci,drive=hd0,bootindex=0,serial=ilm-system")
   case "$mode" in
     iso)
       local iso="$REPO/out/$arch/$name.iso"
@@ -97,10 +99,16 @@ start() {
       fi ;;
     *) usage ;;
   esac
+  if [[ -n "${EXTRA_DISK:-}" ]]; then
+    [[ -f "$dir/extra.qcow2" ]] || qemu-img create -q -f qcow2 "$dir/extra.qcow2" "$EXTRA_DISK"
+    drives+=(-drive "if=none,id=hd1,file=$dir/extra.qcow2,format=qcow2,discard=unmap"
+             -device "virtio-blk-pci,drive=hd1,addr=0x10,serial=ilm-data")
+  fi
   [[ -f "$dir/vars.fd" ]] || cp "$VARS" "$dir/vars.fd"
 
   local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:18444-:8444"
   fwd+=",hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
+  fwd+=",hostfwd=tcp:127.0.0.1:16443-:6443"
   local smbios=()
   if [[ -n "${SMBIOS_OEM:-}" ]]; then smbios=(-smbios "type=11,value=$SMBIOS_OEM"); fi
   : >"$dir/serial.log"

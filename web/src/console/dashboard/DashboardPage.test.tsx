@@ -26,7 +26,7 @@ function renderPage() {
 
 describe('DashboardPage', () => {
   it('shows the setup state, versions, add-on step and conditions', async () => {
-    stubApi({ 'GET /api/v1/status': [200, status] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
     renderPage();
     expect(await screen.findByText('Setup is complete.')).toBeInTheDocument();
     expect(screen.getByText('1.2.0')).toBeInTheDocument();
@@ -38,19 +38,51 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('link', { name: /administrator credential/i })).toHaveAttribute('href', '/wizard/done');
   });
 
+  it('shows the free space of the data volume', async () => {
+    const GB = 1024 ** 3;
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 60 * GB, lowSpace: false } }] });
+    renderPage();
+    expect(await screen.findByText(/60\.0 GB free of 100\.0 GB/)).toBeInTheDocument();
+    expect(screen.queryByText(/running low/i)).not.toBeInTheDocument();
+  });
+
+  it('warns when the manager reports the data volume as low on space', async () => {
+    const GB = 1024 ** 3;
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 19 * GB, lowSpace: true } }] });
+    renderPage();
+    expect(await screen.findByText(/19\.0 GB free of 100\.0 GB/)).toBeInTheDocument();
+    expect(screen.getByText(/running low/i)).toBeInTheDocument();
+  });
+
+  it('does not judge low space on the rounded free space', async () => {
+    const GB = 1024 ** 3;
+    // The rounded free space is below a fifth, but the exact one was not.
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB + 99, freeBytes: 20 * GB, lowSpace: false } }] });
+    renderPage();
+    expect(await screen.findByText(/20\.0 GB free/)).toBeInTheDocument();
+    expect(screen.queryByText(/running low/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no free-space line without the data volume', async () => {
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
+    renderPage();
+    expect(await screen.findByText('Setup is complete.')).toBeInTheDocument();
+    expect(screen.queryByText(/free of/)).not.toBeInTheDocument();
+  });
+
   it('shows the node address and refresh note', async () => {
-    stubApi({ 'GET /api/v1/status': [200, { ...status, nodeAddress: '10.0.0.5' }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, nodeAddress: '10.0.0.5' }] });
     renderPage();
     expect(await screen.findByText('10.0.0.5')).toBeInTheDocument();
     expect(screen.getByText(/Refreshed every five seconds/)).toBeInTheDocument();
   });
 
   it('shows the setup badge', async () => {
-    stubApi({ 'GET /api/v1/status': [200, status] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
     const { unmount } = renderPage();
     expect(await screen.findByText('Setup complete')).toBeInTheDocument();
     unmount();
-    stubApi({ 'GET /api/v1/status': [200, { ...status, setup: 'part2' }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, setup: 'part2' }] });
     renderPage();
     expect(await screen.findByText('Setup in progress')).toBeInTheDocument();
   });
@@ -61,32 +93,32 @@ describe('DashboardPage', () => {
       { type: 'B', status: 'True' },
       { type: 'C', status: 'False' },
     ];
-    stubApi({ 'GET /api/v1/status': [200, { ...status, conditions }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, conditions }] });
     renderPage();
     expect(await screen.findByText('2 of 3 ready')).toBeInTheDocument();
   });
 
   it('shows a loading status before the first status', () => {
-    stubApi({ 'GET /api/v1/status': [200, status] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
     renderPage();
     expect(screen.getByRole('status')).toHaveTextContent('Loading…');
   });
 
   it('shows an error alert when the first read fails', async () => {
-    stubApi({ 'GET /api/v1/status': [500, { code: 'internal', message: 'x' }] });
+    stubApi({ 'GET /appliance/api/v1/status': [500, { code: 'internal', message: 'x' }] });
     renderPage();
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
   });
 
   it('marks its reads as background refreshes, which do not keep the session alive', async () => {
-    const { mock } = stubApi({ 'GET /api/v1/status': [200, status] });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/status': [200, status] });
     renderPage();
     await screen.findByText('Setup is complete.');
     expect(mock.mock.calls[0][0].headers.get('X-Background-Refresh')).toBe('1');
   });
 
   it('points to the wizard while setup is open', async () => {
-    stubApi({ 'GET /api/v1/status': [200, { ...status, setup: 'part2', addonStep: undefined, rebootRequired: false }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, setup: 'part2', addonStep: undefined, rebootRequired: false }] });
     renderPage();
     expect(await screen.findByText(/not complete/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Continue the setup' })).toHaveAttribute('href', '/wizard/');
@@ -96,7 +128,7 @@ describe('DashboardPage', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let calls = 0;
     stubApi({
-      'GET /api/v1/status': () => (++calls === 2 ? [500, { code: 'internal', message: 'x' }] : [200, status]),
+      'GET /appliance/api/v1/status': () => (++calls === 2 ? [500, { code: 'internal', message: 'x' }] : [200, status]),
     });
     renderPage();
     await screen.findByText('Setup is complete.');
@@ -127,7 +159,7 @@ describe('DashboardPage', () => {
 
   it('stops polling when it is closed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    const { mock } = stubApi({ 'GET /api/v1/status': [200, status] });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/status': [200, status] });
     const { unmount } = renderPage();
     await screen.findByText('Setup is complete.');
     unmount();
@@ -137,21 +169,21 @@ describe('DashboardPage', () => {
 
   it('warns when the certificate expires within 30 days and links to the certificate page', async () => {
     const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString();
-    stubApi({ 'GET /api/v1/status': [200, { ...status, rebootRequired: false, certificate: { notAfter: soon } }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, rebootRequired: false, certificate: { notAfter: soon } }] });
     renderPage();
     expect(await screen.findByText(/expires within 30 days/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open the certificate page' })).toHaveAttribute('href', '/certificate');
   });
 
   it('warns about an expired certificate', async () => {
-    stubApi({ 'GET /api/v1/status': [200, { ...status, certificate: { notAfter: '2020-01-01T00:00:00Z' } }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, certificate: { notAfter: '2020-01-01T00:00:00Z' } }] });
     renderPage();
     expect(await screen.findByText(/has expired/)).toBeInTheDocument();
   });
 
   it('does not warn about a certificate valid for longer than 30 days', async () => {
     const later = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
-    stubApi({ 'GET /api/v1/status': [200, { ...status, rebootRequired: false, certificate: { notAfter: later } }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, rebootRequired: false, certificate: { notAfter: later } }] });
     renderPage();
     await screen.findByText('Setup is complete.');
     expect(screen.queryByText(/expire/)).not.toBeInTheDocument();
@@ -159,15 +191,69 @@ describe('DashboardPage', () => {
     expect(screen.getByText(new Date(later).toLocaleDateString())).toBeInTheDocument();
   });
 
+  it('warns 30 days before the recovery kit\'s talosconfig expires and links to the recovery kit page', async () => {
+    const soon = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toISOString();
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, recoveryKit: { issued: true, confirmed: true, talosconfigNotAfter: soon } }] });
+    renderPage();
+    expect(await screen.findByText(/talosconfig in the recovery kit expires within 30 days/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open the recovery kit page' })).toHaveAttribute('href', '/recovery-kit');
+  });
+
+  it('judges the expiry dates again on each refresh while the dashboard stays open', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const day = 24 * 60 * 60 * 1000;
+    const certificate = { notAfter: new Date(Date.now() + 10_000).toISOString() };
+    const recoveryKit = { issued: true, confirmed: true, talosconfigNotAfter: new Date(Date.now() + 30 * day + 10_000).toISOString() };
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, rebootRequired: false, certificate, recoveryKit }] });
+    renderPage();
+    expect(await screen.findByText(/certificate expires within 30 days/i)).toBeInTheDocument();
+    expect(screen.queryByText(/talosconfig in the recovery kit/i)).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    expect(screen.getByText(/certificate has expired/i)).toBeInTheDocument();
+    expect(screen.getByText(/talosconfig in the recovery kit expires within 30 days/i)).toBeInTheDocument();
+  });
+
+  it('says when the recovery kit\'s talosconfig has expired', async () => {
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, recoveryKit: { issued: true, confirmed: true, talosconfigNotAfter: '2020-01-01T00:00:00Z' } }] });
+    renderPage();
+    expect(await screen.findByText(/talosconfig in the recovery kit has expired/i)).toBeInTheDocument();
+  });
+
+  it('does not warn about a recovery kit valid for longer than 30 days', async () => {
+    const later = new Date(Date.now() + 200 * 24 * 60 * 60 * 1000).toISOString();
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, recoveryKit: { issued: true, confirmed: true, talosconfigNotAfter: later } }] });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(screen.queryByText(/recovery kit/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no recovery kit warning while the status leaves the kit out', async () => {
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(screen.queryByText(/recovery kit/i)).not.toBeInTheDocument();
+  });
+
+  it('warns about a recovery kit that is not confirmed once setup is complete', async () => {
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, recoveryKit: { issued: true, confirmed: false } }] });
+    const first = renderPage();
+    expect(await screen.findByText(/recovery kit is not confirmed/i)).toBeInTheDocument();
+    first.unmount();
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, setup: 'part2' }] });
+    renderPage();
+    await screen.findByText('Setup is not complete.');
+    expect(screen.queryByText(/recovery kit/i)).not.toBeInTheDocument();
+  });
+
   it('links the restart warning to the system page', async () => {
-    stubApi({ 'GET /api/v1/status': [200, status] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, status] });
     renderPage();
     expect(await screen.findByText(/needs to restart/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open the system page' })).toHaveAttribute('href', '/system');
   });
 
   it('shows no restart warning when none is needed', async () => {
-    stubApi({ 'GET /api/v1/status': [200, { ...status, rebootRequired: false }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, rebootRequired: false }] });
     renderPage();
     await screen.findByText('Setup is complete.');
     expect(screen.queryByRole('link', { name: 'Open the system page' })).not.toBeInTheDocument();
@@ -175,7 +261,7 @@ describe('DashboardPage', () => {
 
   it('names every version', async () => {
     const versions = { appliance: '0.2.0', talos: 'v1.14.5', kubernetes: 'v1.37.1', operator: 'v1.1.0', ilm: '2.20.0' };
-    stubApi({ 'GET /api/v1/status': [200, { ...status, versions }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, versions }] });
     renderPage();
     const card = (await screen.findByRole('heading', { name: 'Versions' })).closest('div') as HTMLElement;
     for (const [label, version] of [['Appliance', '0.2.0'], ['Talos', 'v1.14.5'], ['Kubernetes', 'v1.37.1'], ['ILM operator', 'v1.1.0'], ['ILM', '2.20.0']]) {
@@ -190,7 +276,7 @@ describe('DashboardPage', () => {
       { type: 'PlatformReady', status: 'True', reason: 'Ready' },
       { type: 'CertificateReady', status: 'True', reason: 'Ready' },
     ];
-    stubApi({ 'GET /api/v1/status': [200, { ...status, conditions }] });
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, conditions }] });
     renderPage();
     const platform = (await screen.findByRole('heading', { name: 'Platform', level: 3 })).parentElement as HTMLElement;
     expect(within(platform).getByText('ConnectorsReady')).toBeInTheDocument();

@@ -19,14 +19,14 @@ const actions = {
     button: 'Restart',
     warning: 'The console and ILM are unavailable until the node is back, which takes a few minutes.',
     done: 'The node is restarting. The console is back in a few minutes; reload the page then.',
-    call: () => api.POST('/api/v1/system/reboot', { body: { confirm: true } }),
+    call: () => api.POST('/system/reboot', { body: { confirm: true } }),
   },
   shutdown: {
     title: 'Shut the node down?',
     button: 'Shut down',
     warning: 'The console and ILM go away and stay unavailable until someone starts the node again.',
     done: 'The node is shutting down. The console goes away; start the node again to use it.',
-    call: () => api.POST('/api/v1/system/shutdown', { body: { confirm: true } }),
+    call: () => api.POST('/system/shutdown', { body: { confirm: true } }),
   },
 } as const;
 

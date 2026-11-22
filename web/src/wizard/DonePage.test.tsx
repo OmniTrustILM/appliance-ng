@@ -39,19 +39,19 @@ async function ask(password: string) {
 
 describe('DonePage', () => {
   it('shows the ILM address and the root CA', async () => {
-    stubApi({ 'GET /api/v1/appliance': [200, appliance] });
+    stubApi({ 'GET /appliance/api/v1/appliance': [200, appliance] });
     renderPage();
     expect(await screen.findByRole('link', { name: 'https://ilm.example.test/' })).toHaveAttribute('href', 'https://ilm.example.test/');
-    expect(screen.getByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/api/v1/ca.pem');
+    expect(screen.getByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/appliance/api/v1/ca.pem');
   });
 
   it('downloads the administrator credential once and forgets the password', async () => {
-    const { mock } = stubApi({ 'GET /api/v1/appliance': [200, appliance] });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/appliance': [200, appliance] });
     renderPage();
     await screen.findByLabelText('Certificate password');
     mock.mockImplementation(async (request: Request) => {
       const key = `${request.method} ${new URL(request.url).pathname}`;
-      if (key === 'POST /api/v1/platform/admin-credential') {
+      if (key === 'POST /appliance/api/v1/platform/admin-credential') {
         expect(await request.json()).toEqual({ password: 'a long enough secret' });
         expect(request.headers.get('X-CSRF-Token')).toBe('token-3');
         return new Response(new Blob(['p12']), { status: 200, headers: { 'Content-Type': 'application/x-pkcs12' } });
@@ -71,8 +71,8 @@ describe('DonePage', () => {
 
   it('shows a refused password at its field', async () => {
     stubApi({
-      'GET /api/v1/appliance': [200, appliance],
-      'POST /api/v1/platform/admin-credential': [400, { code: 'invalid', field: 'password', message: 'Password is too short.' }],
+      'GET /appliance/api/v1/appliance': [200, appliance],
+      'POST /appliance/api/v1/platform/admin-credential': [400, { code: 'invalid', field: 'password', message: 'Password is too short.' }],
     });
     renderPage();
     await ask('short');
@@ -81,8 +81,8 @@ describe('DonePage', () => {
 
   it('says the credential was already downloaded', async () => {
     stubApi({
-      'GET /api/v1/appliance': [200, appliance],
-      'POST /api/v1/platform/admin-credential': [410, { code: 'downloaded', message: 'x' }],
+      'GET /appliance/api/v1/appliance': [200, appliance],
+      'POST /appliance/api/v1/platform/admin-credential': [410, { code: 'downloaded', message: 'x' }],
     });
     renderPage();
     await ask('a long enough secret');
@@ -91,8 +91,8 @@ describe('DonePage', () => {
 
   it('explains other failures', async () => {
     stubApi({
-      'GET /api/v1/appliance': [200, appliance],
-      'POST /api/v1/platform/admin-credential': [404, { code: 'not_issued', message: 'x' }],
+      'GET /appliance/api/v1/appliance': [200, appliance],
+      'POST /appliance/api/v1/platform/admin-credential': [404, { code: 'not_issued', message: 'x' }],
     });
     renderPage();
     await ask('a long enough secret');
@@ -100,7 +100,7 @@ describe('DonePage', () => {
   });
 
   it('says so when the appliance cannot be reached', async () => {
-    stubApi({ 'GET /api/v1/appliance': [500, { code: 'internal', message: 'x' }] });
+    stubApi({ 'GET /appliance/api/v1/appliance': [500, { code: 'internal', message: 'x' }] });
     renderPage();
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
   });

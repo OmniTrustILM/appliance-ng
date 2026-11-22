@@ -95,7 +95,7 @@ func TestAdminCredentialOnce(t *testing.T) {
 	cred := newAdminCredential(t, pkcs1)
 	createAdminSecret(t, cred)
 
-	rec := h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
 	wantStatus(t, rec, http.StatusOK)
 	if got := rec.Header().Get("Content-Type"); got != "application/x-pkcs12" {
 		t.Errorf("Content-Type %q", got)
@@ -121,7 +121,7 @@ func TestAdminCredentialOnce(t *testing.T) {
 		t.Errorf("the Secret lacks annotation %s: %v", DownloadedAnnotation, secret.Annotations)
 	}
 
-	rec = h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
+	rec = h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
 	wantStatus(t, rec, http.StatusGone)
 
 	var credentialEntries []string
@@ -142,7 +142,7 @@ func TestAdminCredentialAfterRenewal(t *testing.T) {
 	s := h.signIn()
 	createAdminSecret(t, newAdminCredential(t, pkcs1))
 	body := map[string]string{"password": credentialPassword}
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", body, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusOK)
 
 	renewed := newAdminCredential(t, pkcs1)
 	ctx := context.Background()
@@ -155,7 +155,7 @@ func TestAdminCredentialAfterRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := h.request(http.MethodPost, "/api/v1/platform/admin-credential", body, s)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
 	wantStatus(t, rec, http.StatusOK)
 	if _, leaf, err := pkcs12.Decode(rec.Body.Bytes(), credentialPassword); err != nil || !leaf.Equal(renewed.leaf) {
 		t.Errorf("the download after renewal does not hold the renewed certificate (error %v)", err)
@@ -167,20 +167,20 @@ func TestAdminCredentialAfterRenewal(t *testing.T) {
 	if got, want := secret.Annotations[DownloadedAnnotation], hex.EncodeToString(sum[:]); got != want {
 		t.Errorf("annotation %s = %q, want the renewed certificate's SHA-256 %q", DownloadedAnnotation, got, want)
 	}
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", body, s), http.StatusGone)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusGone)
 }
 
 func TestAdminCredentialAcceptsAPKCS8Key(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
 	createAdminSecret(t, newAdminCredential(t, pkcs8))
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
 }
 
 func TestAdminCredentialRefuses(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusNotFound)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusNotFound)
 
 	createAdminSecret(t, newAdminCredential(t, pkcs1))
 	for _, body := range []any{
@@ -189,7 +189,7 @@ func TestAdminCredentialRefuses(t *testing.T) {
 		map[string]string{"password": "unbelievable"},      // one of the most common passwords
 		map[string]string{"password": "my admin password"}, // holds the user name
 	} {
-		rec := h.request(http.MethodPost, "/api/v1/platform/admin-credential", body, s)
+		rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
 		wantStatus(t, rec, http.StatusBadRequest)
 		var got Error
 		decode(t, rec, &got)
@@ -203,7 +203,7 @@ func TestAdminCredentialWithABrokenSecret(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
 	createAdminSecret(t, adminCredential{cert: []byte("not a certificate"), key: []byte("not a key")})
-	rec := h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
 	wantStatus(t, rec, http.StatusInternalServerError)
 	secret := &corev1.Secret{}
 	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
@@ -221,7 +221,7 @@ func TestAdminCredentialFailsClosedWithoutAudit(t *testing.T) {
 	s := h.signIn()
 	createAdminSecret(t, newAdminCredential(t, pkcs1))
 	h.srv.deps.Audit = failingAudit{}
-	rec := h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
 	wantStatus(t, rec, http.StatusInternalServerError)
 	if rec.Header().Get("Content-Type") == "application/x-pkcs12" {
 		t.Error("the PKCS#12 file was sent without an audit entry")
@@ -235,5 +235,5 @@ func TestAdminCredentialFailsClosedWithoutAudit(t *testing.T) {
 	}
 
 	h.srv.deps.Audit = h.audit
-	wantStatus(t, h.request(http.MethodPost, "/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
 }

@@ -3,13 +3,17 @@ module github.com/OmniTrustILM/appliance-ng
 go 1.26.5
 
 require (
+	filippo.io/age v1.3.2
 	github.com/OmniTrustILM/operator v1.1.0
 	github.com/cosi-project/runtime v1.16.3
 	github.com/go-logr/logr v1.4.4
 	github.com/oapi-codegen/runtime v1.9.0
 	github.com/pquerna/otp v1.5.0
+	github.com/siderolabs/crypto v0.6.5
+	github.com/siderolabs/go-pointer v1.0.1
 	github.com/siderolabs/talos/pkg/machinery v1.14.5
 	golang.org/x/crypto v0.57.0
+	golang.org/x/sys v0.48.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.37.2
@@ -22,6 +26,7 @@ require (
 
 require (
 	cel.dev/expr v0.25.3 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/ProtonMail/gopenpgp/v3 v3.4.1 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
@@ -87,10 +92,8 @@ require (
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.9 // indirect
-	github.com/siderolabs/crypto v0.6.5 // indirect
 	github.com/siderolabs/gen v0.8.8 // indirect
 	github.com/siderolabs/go-api-signature v0.3.13 // indirect
-	github.com/siderolabs/go-pointer v1.0.1 // indirect
 	github.com/siderolabs/net v0.4.0 // indirect
 	github.com/siderolabs/protoenc v0.2.4 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
@@ -104,7 +107,6 @@ require (
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

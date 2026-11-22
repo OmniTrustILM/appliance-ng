@@ -10,13 +10,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 const (
 	// platformPath is the path of the platform settings.
-	platformPath = "/api/v1/platform"
+	platformPath = auth.APIBase + "/platform"
 
 	fieldComponents = "components"
 )

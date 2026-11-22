@@ -6,6 +6,10 @@
 //	            --host-name <fqdn> [--component <name>]
 //	drive check --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--connector <display name> --ui-url <url> --ui-addr <host:port>]
+//	drive kit --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --out <file> --passphrase-file <file> [--kube-addr <host:port>] [--apid <host:port>]
+//	drive access --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            [--kube-addr <host:port>] [--apid <host:port>]
 //	drive api METHOD PATH --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--body <json>]
 //
@@ -16,6 +20,12 @@
 // check signs in and checks that the setup is complete, the built-in certificate is served and the audit log holds
 // the sign-in and the wizard. With --connector it downloads the ILM administrator's credential and checks, through
 // the ILM Core API at --ui-url reached at --ui-addr, that the connector registered.
+// kit signs in and issues the recovery kit, unless one is issued already (a browser test did), and confirms it. The
+// kit goes to --out, mode 0600. It opens the kit with the passphrase in --passphrase-file, checks that its backup key
+// is the appliance's, that its kubeconfig and talosconfig reach the cluster and the node at --kube-addr and --apid,
+// and that no manager log holds the passphrase or a backup key.
+// access signs in, issues a one-hour view kubeconfig and an os:reader talosconfig, checks that each works and
+// revokes the kubeconfig. Neither prints a token, a key, a passphrase or a file's content.
 // api signs in to the Appliance Manager like part2, sends one request with the JSON body, if any, and prints the
 // JSON answer as it is. The caller chooses a path whose answer holds no secret: not the ILM administrator's
 // credential or a TOTP enrolment.
@@ -91,6 +101,10 @@ func main() {
 	fs.StringVar(&o.serverName, "server-name", slirpNodeAddress,
 		"node address the certificate of the first-boot service is issued for (part1)")
 	fs.StringVar(&o.body, "body", "", "JSON body of the request (api)")
+	fs.StringVar(&o.out, "out", "", "file the recovery kit is written to, or read from when it is issued (kit)")
+	fs.StringVar(&o.passphraseFile, "passphrase-file", "", "file holding the recovery kit passphrase (kit)")
+	fs.StringVar(&o.kubeAddr, "kube-addr", "127.0.0.1:16443", "address to reach the cluster's API server at (kit, access)")
+	fs.StringVar(&o.apid, "apid", "127.0.0.1:15000", "address to reach the node's Talos API at (kit, access)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {
@@ -101,7 +115,7 @@ func main() {
 	_ = fs.Parse(args)
 
 	run, ok := map[string]func(context.Context, options) error{
-		"part1": part1, "part2": part2, "check": check, "api": apiCall,
+		"part1": part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
 	}[cmd]
 	if !ok {
 		usage()
@@ -120,7 +134,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
 	os.Exit(2)
 }
@@ -129,6 +143,7 @@ type options struct {
 	url, code, user, password, seedFile, hostName, gateway, dns string
 	component, connector, uiURL, uiAddr, caFile, serverName     string
 	method, path, body                                          string
+	out, passphraseFile, kubeAddr, apid                         string
 }
 
 func (o options) validate(cmd string) error {
@@ -140,6 +155,8 @@ func (o options) validate(cmd string) error {
 		return errors.New("--code and --ca-file are required")
 	case o.hostName == "":
 		return errors.New("--host-name is required")
+	case cmd == "kit" && (o.out == "" || o.passphraseFile == ""):
+		return errors.New("--out and --passphrase-file are required")
 	case o.connector != "" && (o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--connector needs --ui-url and --ui-addr")
 	case o.body != "" && !json.Valid([]byte(o.body)):
@@ -158,23 +175,23 @@ func part1(ctx context.Context, o options) error {
 	}
 	c := newClient(o.url, roots, o.serverName)
 	step("waiting for wizard part 1")
-	if err := waitFor(ctx, func() error { return c.call(ctx, http.MethodGet, "/api/v1/setup/state", nil, nil) }); err != nil {
+	if err := waitFor(ctx, func() error { return c.call(ctx, http.MethodGet, "/appliance/api/v1/setup/state", nil, nil) }); err != nil {
 		return err
 	}
 	step("setup code")
 	var tok struct{ CsrfToken string }
-	if err := c.call(ctx, http.MethodPost, "/api/v1/setup/code", map[string]string{"code": o.code}, &tok); err != nil {
+	if err := c.call(ctx, http.MethodPost, "/appliance/api/v1/setup/code", map[string]string{"code": o.code}, &tok); err != nil {
 		return err
 	}
 	c.csrf = tok.CsrfToken
 	step("administrator")
 	admin := map[string]string{"user": o.user, "password": o.password}
-	if err := c.call(ctx, http.MethodPut, "/api/v1/setup/admin", admin, nil); err != nil {
+	if err := c.call(ctx, http.MethodPut, "/appliance/api/v1/setup/admin", admin, nil); err != nil {
 		return err
 	}
 	step("TOTP enrolment")
 	var enrol struct{ Seed string }
-	if err := c.call(ctx, http.MethodPost, "/api/v1/setup/totp", nil, &enrol); err != nil {
+	if err := c.call(ctx, http.MethodPost, "/appliance/api/v1/setup/totp", nil, &enrol); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -183,7 +200,7 @@ func part1(ctx context.Context, o options) error {
 		return err
 	}
 	step("TOTP confirmation")
-	if err := c.call(ctx, http.MethodPost, "/api/v1/setup/totp/confirm", map[string]string{"code": code}, nil); err != nil {
+	if err := c.call(ctx, http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": code}, nil); err != nil {
 		return err
 	}
 	if err := writeSeed(o.seedFile, enrol.Seed, now); err != nil {
@@ -194,11 +211,11 @@ func part1(ctx context.Context, o options) error {
 	if err != nil {
 		return err
 	}
-	if err := c.call(ctx, http.MethodPut, "/api/v1/setup/node", node, nil); err != nil {
+	if err := c.call(ctx, http.MethodPut, "/appliance/api/v1/setup/node", node, nil); err != nil {
 		return err
 	}
 	step("apply")
-	return c.call(ctx, http.MethodPost, "/api/v1/setup/apply", nil, nil)
+	return c.call(ctx, http.MethodPost, "/appliance/api/v1/setup/apply", nil, nil)
 }
 
 // nodeSettings makes the address DHCP delivered static, with the gateway and DNS servers of o or else of DHCP, the
@@ -208,7 +225,7 @@ func (c *client) nodeSettings(ctx context.Context, o options) (map[string]any, e
 		Address, Gateway string
 		DNS              []string `json:"dns"`
 	}
-	if err := c.call(ctx, http.MethodGet, "/api/v1/setup/dhcp", nil, &dhcp); err != nil {
+	if err := c.call(ctx, http.MethodGet, "/appliance/api/v1/setup/dhcp", nil, &dhcp); err != nil {
 		return nil, err
 	}
 	if o.gateway != "" {
@@ -241,7 +258,7 @@ func part2(ctx context.Context, o options) error {
 		components = append(components, o.component)
 	}
 	platform := map[string]any{"hostName": o.hostName, "components": components}
-	return c.call(ctx, http.MethodPut, "/api/v1/wizard/platform", platform, nil)
+	return c.call(ctx, http.MethodPut, "/appliance/api/v1/wizard/platform", platform, nil)
 }
 
 // check signs in and checks the outcome of the setup.
@@ -258,7 +275,7 @@ func check(ctx context.Context, o options) error {
 		Setup      string
 		Conditions []struct{ Type, Status string }
 	}
-	if err := c.call(ctx, http.MethodGet, "/api/v1/status", nil, &st); err != nil {
+	if err := c.call(ctx, http.MethodGet, "/appliance/api/v1/status", nil, &st); err != nil {
 		return err
 	}
 	fmt.Printf("drive: setup %s\n", st.Setup)
@@ -331,7 +348,7 @@ func (c *client) adminCredential(ctx context.Context) (tls.Certificate, error) {
 	var final error
 	err := waitFor(ctx, func() error {
 		body := map[string]string{"password": password}
-		err := c.call(ctx, http.MethodPost, "/api/v1/platform/admin-credential", body, &pfx)
+		err := c.call(ctx, http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, &pfx)
 		var apiErr *apiError
 		if errors.As(err, &apiErr) && apiErr.status == http.StatusNotFound {
 			return err // not issued yet
@@ -422,7 +439,7 @@ func (c *client) checkAudit(ctx context.Context) error {
 	var audit struct {
 		Items []struct{ Action, Result string }
 	}
-	if err := c.call(ctx, http.MethodGet, "/api/v1/audit", nil, &audit); err != nil {
+	if err := c.call(ctx, http.MethodGet, "/appliance/api/v1/audit", nil, &audit); err != nil {
 		return err
 	}
 	for _, action := range []string{"sign-in", "wizard-platform"} {
@@ -439,7 +456,7 @@ func (c *client) checkAudit(ctx context.Context) error {
 // fetchRootCA downloads the root CA of the built-in CA from the console and returns it with the TLS state of the
 // connection.
 func (c *client) fetchRootCA(ctx context.Context) (*x509.Certificate, *tls.ConnectionState, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/api/v1/ca.pem", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/appliance/api/v1/ca.pem", nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -456,7 +473,7 @@ func (c *client) fetchRootCA(ctx context.Context) (*x509.Certificate, *tls.Conne
 		return nil, nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("GET /api/v1/ca.pem: HTTP %d", res.StatusCode)
+		return nil, nil, fmt.Errorf("GET /appliance/api/v1/ca.pem: HTTP %d", res.StatusCode)
 	}
 	block, _ := pem.Decode(body)
 	if block == nil {
@@ -597,7 +614,7 @@ func (c *client) signInOnce(ctx context.Context, o options) error {
 	}
 	var tok struct{ CsrfToken string }
 	body := map[string]string{"user": o.user, "password": o.password, "totp": code}
-	if err := c.call(ctx, http.MethodPost, "/api/v1/session", body, &tok); err != nil {
+	if err := c.call(ctx, http.MethodPost, "/appliance/api/v1/session", body, &tok); err != nil {
 		return err
 	}
 	c.csrf = tok.CsrfToken

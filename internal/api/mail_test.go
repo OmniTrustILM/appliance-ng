@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	pathMail     = "/api/v1/mail"
+	pathMail     = "/appliance/api/v1/mail"
 	pathMailTest = pathMail + "/test"
 	mailTestTo   = "admin@example.com"
 )

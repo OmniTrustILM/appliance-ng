@@ -137,3 +137,81 @@ func TestConnectorReady(t *testing.T) {
 		t.Error("a running connector of the observed generation is not ready")
 	}
 }
+
+func TestStatusDataVolume(t *testing.T) {
+	cleanCertificates(t)
+	spec := importedSpec()
+	spec.Platform = platformSpec()
+	createAppliance(t, spec)
+	r, _ := newReconciler(testClient, &fakeCluster{})
+
+	r.DataDir = t.TempDir()
+	runReconcile(t, r)
+	volume := getAppliance(t).Status.DataVolume
+	if volume == nil || volume.SizeBytes <= 0 || volume.FreeBytes < 0 || volume.FreeBytes > volume.SizeBytes {
+		t.Errorf("data volume = %+v, want its size and free space", volume)
+	}
+
+	// A mount that cannot be read leaves the volume unset and does not fail the reconcile.
+	r.DataDir = r.DataDir + "/missing"
+	runReconcile(t, r)
+	if volume := getAppliance(t).Status.DataVolume; volume != nil {
+		t.Errorf("data volume = %+v, want unset", volume)
+	}
+}
+
+func TestVolumeStatusReportsCoarseSteps(t *testing.T) {
+	const size = 100 << 30
+	step := uint64(size / 100)
+	base := 40*step + 5
+	got := volumeStatus(size, base)
+	if got.SizeBytes != size || uint64(got.FreeBytes) != 40*step {
+		t.Fatalf("volume = %+v, want %d free", got, 40*step)
+	}
+	// Free space moving within one step leaves the status as it was.
+	if again := volumeStatus(size, base+step/2-5); *again != *got {
+		t.Errorf("volume = %+v, want %+v", again, got)
+	}
+	if again := volumeStatus(size, 40*step); *again != *got {
+		t.Errorf("volume = %+v, want %+v", again, got)
+	}
+	// Crossing a step changes it.
+	if next := volumeStatus(size, base+step); uint64(next.FreeBytes) != 41*step {
+		t.Errorf("volume = %+v, want %d free", next, 41*step)
+	}
+	if lower := volumeStatus(size, 40*step-1); uint64(lower.FreeBytes) != 39*step {
+		t.Errorf("volume = %+v, want %d free", lower, 39*step)
+	}
+}
+
+func TestVolumeStatusOfSmallAndOddVolumes(t *testing.T) {
+	// A small volume steps by 1 MiB, and free space never exceeds the size.
+	if got := volumeStatus(10<<20, 5<<20+100); got.FreeBytes != 5<<20 {
+		t.Errorf("volume = %+v, want 5 MiB free", got)
+	}
+	if got := volumeStatus(10<<20, 20<<20); got.FreeBytes > got.SizeBytes {
+		t.Errorf("volume = %+v, want free within the size", got)
+	}
+}
+
+func TestVolumeStatusJudgesLowSpaceOnTheExactFreeSpace(t *testing.T) {
+	// A size that is no multiple of 100, so that the rounded free space of 20.5% falls below a fifth.
+	const size = 100<<30 + 99
+	for _, tc := range []struct {
+		name string
+		free uint64
+		low  bool
+	}{
+		{"20.5% free", size * 205 / 1000, false},
+		{"just below a fifth free", size / 5, true},
+		{"19.9% free", size * 199 / 1000, true},
+	} {
+		got := volumeStatus(size, tc.free)
+		if got.LowSpace != tc.low {
+			t.Errorf("%s: low space = %v, want %v (%+v)", tc.name, got.LowSpace, tc.low, got)
+		}
+	}
+	if got := volumeStatus(size, size*205/1000); got.FreeBytes*5 >= got.SizeBytes {
+		t.Errorf("the rounded free space %d is not below a fifth of %d; the test no longer covers the rounding", got.FreeBytes, got.SizeBytes)
+	}
+}

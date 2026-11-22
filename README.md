@@ -13,7 +13,7 @@ to lock it. The setup wizard on port 8443 is protected only by the setup code an
 2. Switch to the first virtual console (Alt+F1 on a keyboard, or the VM's console) and read three lines:
 
    ```text
-   Open https://<address>:8443/setup/
+   Open https://<address>:8443/appliance/setup/
    Certificate SHA-256 <fingerprint>
    Setup code XXXXX-XXXXX
    ```
@@ -69,7 +69,7 @@ Setup has two parts.
 5. **Review**, then watch the progress. The page refreshes every five seconds.
 
 You can change the answers of part 2 until the first time ILM reports available. Once the manager runs, the console's
-`/setup/` address goes to the sign-in page.
+`/appliance/setup/` address goes to the sign-in page.
 
 When ILM is ready, the last page shows its address, `https://<ILM host name>/`, and hands out the ILM administrator
 credential once: a PKCS#12 client certificate protected by a password you choose (same rules as a console password).
@@ -78,8 +78,9 @@ console itself uses no client certificate.
 
 ## Console
 
-The console is at `https://<host name or node address>:8443/`. Sign in with your user name, password and the
-6-digit authenticator code (the code of the previous and next 30 seconds is also accepted, for clock drift). Five
+The console is at `https://<host name or node address>:8443/appliance/`; other addresses on port 8443 lead there.
+Sign in with your user name, password and the 6-digit authenticator code (the code of the previous and next 30 seconds
+is also accepted, for clock drift). Five
 failed sign-ins for a user from one address within 15 minutes block that user at that address for 15 minutes; sign-in
 from other addresses stays open. 20 sign-in attempts from one address within 15 minutes, successful or not, block the
 address for 15 minutes. After five failed sign-ins for a user from any address, an address that has failed for that

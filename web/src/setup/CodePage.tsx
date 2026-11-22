@@ -29,7 +29,7 @@ export function CodePage({ onDone }: Readonly<{ onDone: () => void }>) {
     event.preventDefault();
     setBusy(true);
     setError(undefined);
-    const result = await attempt(() => api.POST('/api/v1/setup/code', { body: { code } }));
+    const result = await attempt(() => api.POST('/setup/code', { body: { code } }));
     setBusy(false);
     if (!result) return setError(unreachable);
     const { data, error: body, response } = result;

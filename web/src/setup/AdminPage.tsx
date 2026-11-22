@@ -24,7 +24,7 @@ export function AdminPage({ onDone, onExpired }: Readonly<{ onDone: (user: strin
     setErrors(problems);
     if (Object.keys(problems).length > 0) return;
     setBusy(true);
-    const result = await attempt(() => api.PUT('/api/v1/setup/admin', { body: { user, password } }));
+    const result = await attempt(() => api.PUT('/setup/admin', { body: { user, password } }));
     setBusy(false);
     if (!result) return setErrors({ form: unreachable });
     const { response, error } = result;

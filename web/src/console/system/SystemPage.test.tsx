@@ -10,13 +10,13 @@ const status = (rebootRequired: boolean) => [200, { setup: 'complete', condition
 
 describe('SystemPage', () => {
   it('says whether a restart is needed', async () => {
-    stubApi({ 'GET /api/v1/status': status(true) });
+    stubApi({ 'GET /appliance/api/v1/status': status(true) });
     render(<SystemPage />);
     expect(await screen.findByText(/needs to restart/i)).toBeInTheDocument();
   });
 
   it('says that no restart is needed', async () => {
-    stubApi({ 'GET /api/v1/status': status(false) });
+    stubApi({ 'GET /appliance/api/v1/status': status(false) });
     render(<SystemPage />);
     expect(await screen.findByText('No restart is needed.')).toBeInTheDocument();
   });
@@ -45,7 +45,7 @@ describe('SystemPage', () => {
   });
 
   it('cancels with Escape after a click on the dialog text', async () => {
-    stubApi({ 'GET /api/v1/status': status(false) });
+    stubApi({ 'GET /appliance/api/v1/status': status(false) });
     render(<SystemPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     await userEvent.click(screen.getByText(/unavailable until the node is back/));
@@ -54,20 +54,20 @@ describe('SystemPage', () => {
   });
 
   it('restarts after the confirmation', async () => {
-    const { sent } = stubApi({ 'GET /api/v1/status': status(false), 'POST /api/v1/system/reboot': [202] });
+    const { sent } = stubApi({ 'GET /appliance/api/v1/status': status(false), 'POST /appliance/api/v1/system/reboot': [202] });
     render(<SystemPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     const dialog = screen.getByRole('dialog', { name: 'Restart the node?' });
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Restart' }));
     expect(await screen.findByText(/is restarting/i)).toBeInTheDocument();
-    expect(sent['POST /api/v1/system/reboot']).toEqual([{ confirm: true }]);
+    expect(sent['POST /appliance/api/v1/system/reboot']).toEqual([{ confirm: true }]);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText(/is restarting/i).closest('[tabindex="-1"]')).toHaveFocus();
   });
 
   it('sends nothing when the dialog is cancelled, by button or Escape', async () => {
-    const { sent } = stubApi({ 'GET /api/v1/status': status(false) });
+    const { sent } = stubApi({ 'GET /appliance/api/v1/status': status(false) });
     render(<SystemPage />);
     const open = screen.getByRole('button', { name: 'Restart' });
     await userEvent.click(open);
@@ -77,20 +77,20 @@ describe('SystemPage', () => {
     await userEvent.click(open);
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(sent['POST /api/v1/system/reboot']).toBeUndefined();
+    expect(sent['POST /appliance/api/v1/system/reboot']).toBeUndefined();
   });
 
   it('shuts down after the confirmation and says the console goes away', async () => {
-    const { sent } = stubApi({ 'GET /api/v1/status': status(false), 'POST /api/v1/system/shutdown': [202] });
+    const { sent } = stubApi({ 'GET /appliance/api/v1/status': status(false), 'POST /appliance/api/v1/system/shutdown': [202] });
     render(<SystemPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Shut down' }));
     await userEvent.click(within(screen.getByRole('dialog', { name: 'Shut the node down?' })).getByRole('button', { name: 'Shut down' }));
     expect(await screen.findByText(/console goes away/i)).toBeInTheDocument();
-    expect(sent['POST /api/v1/system/shutdown']).toEqual([{ confirm: true }]);
+    expect(sent['POST /appliance/api/v1/system/shutdown']).toEqual([{ confirm: true }]);
   });
 
   it('reports an unreachable node', async () => {
-    stubApi({ 'GET /api/v1/status': status(false), 'POST /api/v1/system/reboot': [503, { code: 'unavailable', message: 'x' }] });
+    stubApi({ 'GET /appliance/api/v1/status': status(false), 'POST /appliance/api/v1/system/reboot': [503, { code: 'unavailable', message: 'x' }] });
     render(<SystemPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restart' }));
@@ -98,7 +98,7 @@ describe('SystemPage', () => {
   });
 
   it('reports the message of another failure and a lost connection', async () => {
-    const { mock } = stubApi({ 'GET /api/v1/status': status(false), 'POST /api/v1/system/reboot': [403, { code: 'forbidden', message: 'Not allowed.' }] });
+    const { mock } = stubApi({ 'GET /appliance/api/v1/status': status(false), 'POST /appliance/api/v1/system/reboot': [403, { code: 'forbidden', message: 'Not allowed.' }] });
     render(<SystemPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restart' }));

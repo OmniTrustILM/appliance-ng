@@ -25,7 +25,7 @@ export function useAuditSnapshot() {
 
   useEffect(() => {
     let active = true;
-    void attempt(() => api.GET('/api/v1/audit', { params: { query: { limit: maxEntries } } })).then((result) => {
+    void attempt(() => api.GET('/audit', { params: { query: { limit: maxEntries } } })).then((result) => {
       if (!active) return;
       if (result?.data) {
         setItems(result.data.items);

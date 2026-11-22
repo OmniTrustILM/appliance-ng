@@ -38,15 +38,17 @@ function rows() {
 describe('AuditPage', () => {
   it('shows the entries with time, user, action, changed paths and result', async () => {
     stubApi({
-      'GET /api/v1/audit': [200, { items: [
+      'GET /appliance/api/v1/audit': [200, { items: [
         { time: '2026-11-19T12:00:00Z', user: 'admin', action: 'certificate-upload', result: 'failure', paths: ['spec.tls.source', 'spec.tls.secretRef'] },
         { time: '2026-11-19T11:00:00Z', user: '', action: 'sign-in', result: 'denied', paths: [] },
         { time: '2026-11-19T10:00:00Z', user: 'admin', action: 'mail-settings', result: 'success', paths: ['spec.mail'] },
+        { time: '2026-11-19T09:00:00Z', user: 'admin', action: 'kubeconfig-revoke', result: 'success', paths: [], details: { role: 'view', name: 'kc-abc12' } },
       ] }],
     });
     render(<AuditPage />);
     expect(await screen.findByRole('heading', { name: 'Audit log' })).toBeInTheDocument();
-    const [first, second, third] = await screen.findAllByRole('row').then((all) => all.slice(1));
+    const [first, second, third, fourth] = await screen.findAllByRole('row').then((all) => all.slice(1));
+    expect(within(fourth).getByText('role: view, name: kc-abc12')).toBeInTheDocument();
     expect(within(first).getByText('admin')).toBeInTheDocument();
     expect(within(first).getByText('certificate-upload')).toBeInTheDocument();
     expect(within(first).getByText('spec.tls.source, spec.tls.secretRef')).toBeInTheDocument();
@@ -106,20 +108,20 @@ describe('AuditPage', () => {
   });
 
   it('says so when there are no entries', async () => {
-    stubApi({ 'GET /api/v1/audit': [200, { items: [] }] });
+    stubApi({ 'GET /appliance/api/v1/audit': [200, { items: [] }] });
     render(<AuditPage />);
     expect(await screen.findByText('Nothing has been recorded yet.')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('shows a loading state before the entries arrive', () => {
-    stubApi({ 'GET /api/v1/audit': [200, { items: [] }] });
+    stubApi({ 'GET /appliance/api/v1/audit': [200, { items: [] }] });
     render(<AuditPage />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading…');
   });
 
   it('shows an error when the log cannot be read', async () => {
-    stubApi({ 'GET /api/v1/audit': [500, { code: 'internal', message: 'The audit log cannot be read.' }] });
+    stubApi({ 'GET /appliance/api/v1/audit': [500, { code: 'internal', message: 'The audit log cannot be read.' }] });
     render(<AuditPage />);
     expect(await screen.findByRole('alert')).toHaveTextContent('The audit log cannot be read.');
   });

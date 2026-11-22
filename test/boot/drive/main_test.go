@@ -108,7 +108,7 @@ func TestValidateRequiresTheSetupCertificate(t *testing.T) {
 }
 
 func TestValidateRequiresAJSONBody(t *testing.T) {
-	o := options{user: "u", password: "p", seedFile: "s", hostName: "h", method: "PUT", path: "/api/v1/node", body: `{"dns":`}
+	o := options{user: "u", password: "p", seedFile: "s", hostName: "h", method: "PUT", path: "/appliance/api/v1/node", body: `{"dns":`}
 	if err := o.validate("api"); err == nil || !strings.Contains(err.Error(), "--body") {
 		t.Errorf("validate api with a broken body = %v, want an error naming it", err)
 	}
@@ -140,12 +140,12 @@ func TestPart1TrustsTheSetupCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = newClient(srv.URL, roots, nodeIP).call(context.Background(), http.MethodGet, "/api/v1/setup/state", nil, nil)
+	err = newClient(srv.URL, roots, nodeIP).call(context.Background(), http.MethodGet, "/appliance/api/v1/setup/state", nil, nil)
 	var apiErr *apiError
 	if !errors.As(err, &apiErr) || apiErr.status != http.StatusUnauthorized {
 		t.Errorf("GET over the trusted setup certificate = %v, want HTTP 401", err)
 	}
-	err = newClient(srv.URL, roots, "10.0.2.16").call(context.Background(), http.MethodGet, "/api/v1/setup/state", nil, nil)
+	err = newClient(srv.URL, roots, "10.0.2.16").call(context.Background(), http.MethodGet, "/appliance/api/v1/setup/state", nil, nil)
 	if err == nil || errors.As(err, &apiErr) {
 		t.Errorf("GET for another address = %v, want a TLS error", err)
 	}
@@ -203,12 +203,12 @@ func builtinCA(t *testing.T, hosts ...string) (root *x509.Certificate, rootPEM [
 	return root, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: root.Raw}), served
 }
 
-// console serves cert and caPEM at /api/v1/ca.pem, or 404 when caPEM is nil.
+// console serves cert and caPEM at /appliance/api/v1/ca.pem, or 404 when caPEM is nil.
 func console(t *testing.T, cert tls.Certificate, caPEM []byte) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path != "/api/v1/ca.pem":
+		case r.URL.Path != "/appliance/api/v1/ca.pem":
 			_, _ = w.Write([]byte("ok"))
 		case caPEM == nil:
 			http.NotFound(w, r)

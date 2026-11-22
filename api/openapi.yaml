@@ -13,6 +13,9 @@ info:
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: /appliance/api/v1
+    description: The console and its API are served under /appliance/.
 tags:
   - name: setup
     description: Wizard part 1, served by the first-boot service.
@@ -42,8 +45,14 @@ tags:
     description: The container registries the platform and the node pull images from with credentials.
   - name: mail
     description: The mail server the platform sends notifications through.
+  - name: access
+    description: Kubeconfigs and talosconfigs for administrators of the cluster and the node.
+  - name: recovery
+    description: >-
+      The recovery kit: the backup key, break-glass credentials for the cluster and the node and the appliance
+      identity, in one file encrypted with a passphrase.
 paths:
-  /api/v1/setup/code:
+  /setup/code:
     post:
       tags: [setup]
       operationId: postSetupCode
@@ -72,7 +81,7 @@ paths:
           $ref: '#/components/responses/Locked'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/setup/state:
+  /setup/state:
     get:
       tags: [setup]
       operationId: getSetupState
@@ -85,7 +94,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SetupState'
-  /api/v1/setup/admin:
+  /setup/admin:
     put:
       tags: [setup]
       operationId: putSetupAdmin
@@ -109,7 +118,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/setup/totp:
+  /setup/totp:
     post:
       tags: [setup]
       operationId: postSetupTotp
@@ -130,7 +139,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/setup/totp/confirm:
+  /setup/totp/confirm:
     post:
       tags: [setup]
       operationId: postSetupTotpConfirm
@@ -154,7 +163,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/setup/node:
+  /setup/node:
     put:
       tags: [setup]
       operationId: putSetupNode
@@ -178,7 +187,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/setup/dhcp:
+  /setup/dhcp:
     get:
       tags: [setup]
       operationId: getSetupDhcp
@@ -194,7 +203,7 @@ paths:
                 $ref: '#/components/schemas/DhcpSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v1/setup/apply:
+  /setup/apply:
     post:
       tags: [setup]
       operationId: postSetupApply
@@ -210,7 +219,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/session:
+  /session:
     get:
       tags: [session]
       operationId: getSession
@@ -273,7 +282,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /api/v1/status:
+  /status:
     get:
       tags: [status]
       operationId: getStatus
@@ -297,7 +306,7 @@ paths:
                 $ref: '#/components/schemas/Status'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v1/appliance:
+  /appliance:
     get:
       tags: [appliance]
       operationId: getAppliance
@@ -313,7 +322,7 @@ paths:
                 $ref: '#/components/schemas/ApplianceSettings'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v1/wizard/platform:
+  /wizard/platform:
     put:
       tags: [wizard]
       operationId: putWizardPlatform
@@ -343,7 +352,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/catalogue:
+  /catalogue:
     get:
       tags: [catalogue]
       operationId: getCatalogue
@@ -359,7 +368,7 @@ paths:
                 $ref: '#/components/schemas/Catalogue'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v1/audit:
+  /audit:
     get:
       tags: [audit]
       operationId: getAudit
@@ -387,7 +396,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /api/v1/ca.pem:
+  /ca.pem:
     get:
       tags: [certificate]
       operationId: getCaPem
@@ -406,7 +415,7 @@ paths:
                 type: string
         '404':
           $ref: '#/components/responses/NotFound'
-  /api/v1/certificate:
+  /certificate:
     get:
       tags: [certificate]
       operationId: getCertificate
@@ -456,7 +465,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/certificate/csr:
+  /certificate/csr:
     post:
       tags: [certificate]
       operationId: postCertificateCsr
@@ -484,7 +493,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/certificate/csr/signed:
+  /certificate/csr/signed:
     put:
       tags: [certificate]
       operationId: putCertificateCsrSigned
@@ -512,7 +521,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/certificate/builtin:
+  /certificate/builtin:
     put:
       tags: [certificate]
       operationId: putCertificateBuiltin
@@ -529,7 +538,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/platform/admin-credential:
+  /platform/admin-credential:
     post:
       tags: [platform]
       operationId: postPlatformAdminCredential
@@ -568,7 +577,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
-  /api/v1/node:
+  /node:
     put:
       tags: [node]
       operationId: putNode
@@ -577,7 +586,7 @@ paths:
         Replaces the node settings; without `proxy` the proxy is removed. The node address and host name are fixed
         at setup: a request with `address` is answered with 400 and field `address`, one with a `hostName` other
         than the current one with 400 and field `hostName`. The public name of ILM changes through
-        `PUT /api/v1/platform` and the certificate. A gateway needs a static address. The manager applies the change
+        `PUT /platform` and the certificate. A gateway needs a static address. The manager applies the change
         to the node without a reboot; a changed proxy takes effect only after a reboot, which `rebootRequired` in
         the status reports.
       security:
@@ -599,7 +608,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/system/reboot:
+  /system/reboot:
     post:
       tags: [system]
       operationId: postSystemReboot
@@ -624,7 +633,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/system/shutdown:
+  /system/shutdown:
     post:
       tags: [system]
       operationId: postSystemShutdown
@@ -649,7 +658,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/trust:
+  /trust:
     get:
       tags: [trust]
       operationId: getTrust
@@ -697,7 +706,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/trust/preview:
+  /trust/preview:
     post:
       tags: [trust]
       operationId: postTrustPreview
@@ -729,7 +738,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/trust/{sha256}:
+  /trust/{sha256}:
     parameters:
       - name: sha256
         in: path
@@ -755,7 +764,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/registries:
+  /registries:
     get:
       tags: [registries]
       operationId: getRegistries
@@ -774,7 +783,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/registries/{host}:
+  /registries/{host}:
     parameters:
       - name: host
         in: path
@@ -849,7 +858,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/platform:
+  /platform:
     get:
       tags: [platform]
       operationId: getPlatform
@@ -899,7 +908,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/mail:
+  /mail:
     get:
       tags: [mail]
       operationId: getMail
@@ -962,7 +971,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-  /api/v1/mail/test:
+  /mail/test:
     post:
       tags: [mail]
       operationId: postMailTest
@@ -995,6 +1004,264 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MailTestFailure'
+  /access:
+    get:
+      tags: [access]
+      operationId: getAccess
+      summary: The issued kubeconfigs and the talosconfigs that have not expired
+      description: |
+        The kubeconfigs that can still be revoked and a record of the talosconfigs issued, which cannot be revoked
+        and are listed until they expire. Never a token, certificate or key.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The issued credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /access/kubeconfig:
+    post:
+      tags: [access]
+      operationId: postAccessKubeconfig
+      summary: Issue a kubeconfig
+      description: |
+        Issues a kubeconfig for the cluster with the `view` or `cluster-admin` role. With `hours` (1 to 24) its
+        token expires after that time; without `hours` it is long-lived and needs a `name`. A name that is taken is
+        answered with 409. The appliance does not keep the file.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KubeconfigRequest'
+      responses:
+        '200':
+          description: The kubeconfig.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /access/kubeconfig/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The name of the kubeconfig, as listed.
+        schema:
+          type: string
+    delete:
+      tags: [access]
+      operationId: deleteAccessKubeconfig
+      summary: Revoke a kubeconfig
+      description: >-
+        Its token stops working at once. The break-glass kubeconfig of the recovery kit is answered with 409; issuing
+        the recovery kit again revokes it.
+      security:
+        - session: []
+      responses:
+        '204':
+          description: The kubeconfig is revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /access/talosconfig:
+    post:
+      tags: [access]
+      operationId: postAccessTalosconfig
+      summary: Issue a talosconfig
+      description: |
+        Issues a talosconfig for the node with the `os:reader` or `os:admin` role, valid for `hours` (1 to 8). A
+        talosconfig cannot be revoked; it is listed until it expires. The appliance does not keep the file.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TalosconfigRequest'
+      responses:
+        '200':
+          description: The talosconfig.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /recovery-kit:
+    get:
+      tags: [recovery]
+      operationId: getRecoveryKit
+      summary: Whether the recovery kit is issued and confirmed
+      description: Never the backup key or the passphrase; the appliance keeps only the public key the backups are encrypted to.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The state of the recovery kit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryKit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [recovery]
+      operationId: postRecoveryKit
+      summary: Issue the recovery kit
+      description: |
+        Generates the backup key pair and issues the recovery kit: a tar of the backup private key, a break-glass
+        kubeconfig with the `cluster-admin` role, a talosconfig with the `os:admin` role valid for a year, the
+        appliance identity and a README, encrypted with the passphrase using the age scrypt recipient. The appliance
+        keeps only the public key. Answered with 409 once a kit was issued; use reissue or replace instead. The
+        passphrase has at least 12 characters and is not one of the most common passwords.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKitRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryKitFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /recovery-kit/reissue:
+    post:
+      tags: [recovery]
+      operationId: postRecoveryKitReissue
+      summary: Issue the recovery kit again with the same backup key
+      description: |
+        Opens the uploaded kit with its passphrase and issues a new kit with the same backup key, a new passphrase
+        and new break-glass credentials; the earlier break-glass kubeconfig stops working. A wrong passphrase is
+        answered with 400, a kit whose key is not the appliance's backup key with 409. The request body is limited
+        to 1 MiB. The new kit counts as confirmed only once confirmed again.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RecoveryKitReissue'
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryKitFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /recovery-kit/replace:
+    post:
+      tags: [recovery]
+      operationId: postRecoveryKitReplace
+      summary: Replace a lost recovery kit with a new backup key
+      description: |
+        Generates a new backup key pair and issues a kit with it and new break-glass credentials. Backups made
+        before stay readable only with the key of the lost kit. Needs `confirm` set to true. The new kit counts as
+        confirmed only once confirmed again.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKitReplace'
+      responses:
+        '200':
+          $ref: '#/components/responses/RecoveryKitFile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /recovery-kit/confirm:
+    post:
+      tags: [recovery]
+      operationId: postRecoveryKitConfirm
+      summary: Confirm that the recovery kit is stored safely
+      description: |
+        Confirms the kit with the given issuance, which must be the latest: answered with 409 and code
+        `kit_superseded` when the kit was issued again or replaced since, and the latest kit must be downloaded first.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKitConfirm'
+      responses:
+        '204':
+          description: The kit is confirmed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 components:
   securitySchemes:
     session:
@@ -1064,6 +1331,21 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    RecoveryKitFile:
+      description: The recovery kit, an age file encrypted with the passphrase; the appliance does not keep it.
+      headers:
+        Content-Disposition:
+          schema:
+            type: string
+        X-Recovery-Kit-Issuance:
+          description: The issuance of this kit, to confirm it with.
+          schema:
+            type: string
+      content:
+        application/octet-stream:
+          schema:
+            type: string
+            format: binary
     ServiceUnavailable:
       description: The node's Talos API cannot be reached at the moment.
       content:
@@ -1294,6 +1576,25 @@ components:
           description: A change takes effect only after the node restarts.
         certificate:
           $ref: '#/components/schemas/StatusCertificate'
+        dataVolume:
+          $ref: '#/components/schemas/DataVolume'
+        recoveryKit:
+          $ref: '#/components/schemas/RecoveryKit'
+    DataVolume:
+      type: object
+      description: The size and free space of the data volume; absent while the manager cannot read it.
+      required: [sizeBytes, freeBytes, lowSpace]
+      properties:
+        sizeBytes:
+          type: integer
+          format: int64
+        freeBytes:
+          type: integer
+          format: int64
+          description: The free space, rounded down to steps of 1% of the size.
+        lowSpace:
+          type: boolean
+          description: Less than a fifth of the volume is free, judged on the exact free space.
     StatusCertificate:
       type: object
       description: The certificate the console and ILM serve; absent while none is issued or installed.
@@ -1439,12 +1740,14 @@ components:
           format: date-time
         user:
           type: string
-          description: The signed-in user, or the existing account a sign-in attempt named; empty otherwise.
+          description: The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise.
         action:
           type: string
           enum: [sign-in, sign-out, wizard-platform, admin-credential, node-settings, reboot, shutdown, certificate-upload,
             certificate-csr, certificate-signed, certificate-builtin, trust-add, trust-remove, registry-set,
-            registry-remove, platform-settings, mail-settings, mail-remove, mail-test]
+            registry-remove, platform-settings, mail-settings, mail-remove, mail-test, kubeconfig-issue,
+            kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
+            recovery-kit-confirm]
         result:
           type: string
           enum: [success, failure, denied]
@@ -1455,6 +1758,13 @@ components:
           type: array
           description: The Appliance fields the request changed, as JSON paths; never their values.
           items:
+            type: string
+        details:
+          type: object
+          description: >-
+            What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the
+            `recipient` public key and the talosconfig's `expires`; never a token, certificate, key or passphrase.
+          additionalProperties:
             type: string
     CertificateInfo:
       type: object
@@ -1565,6 +1875,141 @@ components:
             type: string
         proxy:
           $ref: '#/components/schemas/Proxy'
+    AccessList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessCredential'
+    AccessCredential:
+      type: object
+      required: [kind, role, issuedBy, issuedAt]
+      properties:
+        kind:
+          type: string
+          enum: [kubeconfig, talosconfig]
+        name:
+          type: string
+          description: The name a kubeconfig is revoked by; talosconfigs have none.
+        role:
+          type: string
+        issuedBy:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        expires:
+          type: string
+          format: date-time
+          description: When the credential stops working; absent for a long-lived kubeconfig.
+        breakGlass:
+          type: boolean
+          description: Set on the break-glass kubeconfig of the recovery kit, which only issuing the kit again revokes.
+    KubeconfigRequest:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [view, cluster-admin]
+        hours:
+          type: integer
+          minimum: 1
+          maximum: 24
+          description: How long the token is valid; without it the kubeconfig is long-lived and needs `name`.
+        name:
+          type: string
+          description: Up to 40 lower-case letters, digits and hyphens; required for a long-lived kubeconfig.
+    TalosconfigRequest:
+      type: object
+      required: [role, hours]
+      properties:
+        role:
+          type: string
+          enum: ['os:reader', 'os:admin']
+        hours:
+          type: integer
+          minimum: 1
+          maximum: 8
+    RecoveryKit:
+      type: object
+      required: [issued, confirmed]
+      properties:
+        issued:
+          type: boolean
+          description: >-
+            A backup key is stored. When the latest kit was not handed out, the other fields but the recipient are
+            absent and the kit can only be replaced.
+        confirmed:
+          type: boolean
+          description: The administrator confirmed that the latest kit is stored safely.
+        issuedAt:
+          type: string
+          format: date-time
+        talosconfigNotAfter:
+          type: string
+          format: date-time
+          description: When the kit's talosconfig expires; issue the kit again before then.
+        recipient:
+          type: string
+          description: The public key the backups are encrypted to.
+        issuance:
+          type: string
+          description: >-
+            A random identifier of the latest kit, new with every issue, reissue and replace; absent while the latest
+            kit was not handed out.
+    RecoveryKitConfirm:
+      type: object
+      required: [issuance]
+      properties:
+        issuance:
+          type: string
+          description: The issuance of the kit that was stored, as its download answer named it.
+    RecoveryKitRequest:
+      type: object
+      required: [passphrase]
+      properties:
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 12
+          description: >-
+            The passphrase that encrypts the kit. Like a console password, it has at least 12 characters and is not
+            one of the most common passwords.
+    RecoveryKitReplace:
+      type: object
+      required: [passphrase, confirm]
+      properties:
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 12
+        confirm:
+          type: boolean
+          description: Must be true; backups made before stay readable only with the lost kit.
+    RecoveryKitReissue:
+      type: object
+      required: [kit, passphrase, newPassphrase]
+      properties:
+        kit:
+          type: string
+          format: binary
+          description: The current recovery kit.
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+          description: The passphrase of the uploaded kit.
+        newPassphrase:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 12
+          description: The passphrase of the new kit.
     Confirmation:
       type: object
       required: [confirm]
