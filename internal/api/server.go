@@ -163,7 +163,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPut, backupTargetsPath+"/{name}"), change(AuditEntryActionBackupTargetSet))
 	mux.Handle(route(http.MethodDelete, backupTargetsPath+"/{name}"), change(AuditEntryActionBackupTargetRemove))
 	mux.Handle(route(http.MethodPost, backupTargetsPath+"/hostkey"), withWriteDeadline(targetTestTimeout, change(AuditEntryActionBackupHostKeyScan)))
-	mux.Handle(route(http.MethodPost, backupTargetsPath+"/{name}/test"), withWriteDeadline(targetTestTimeout, change(AuditEntryActionBackupTargetTest)))
+	mux.Handle(route(http.MethodPost, backupTargetsPath+"/{name}/test"), withWriteDeadline(targetTestWriteTimeout(), change(AuditEntryActionBackupTargetTest)))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
 }

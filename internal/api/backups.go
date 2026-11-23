@@ -42,12 +42,25 @@ const (
 	// downloadWriteTimeout bounds each write of a download, in place of the server's write timeout, which would cut
 	// off a large backup.
 	downloadWriteTimeout = time.Minute
-	// targetTestTimeout bounds a target test, which for NFS starts a pod; the write timeout of a test and of a host key
-	// scan, which may dial and shake hands for a minute, is extended to it.
-	targetTestTimeout = 3 * time.Minute
 
 	fieldTimeZone = "timeZone"
 )
+
+var (
+	// targetTestTimeout bounds a target test, which for NFS starts a pod; the write timeout of a host key scan, which
+	// may dial and shake hands for a minute, is extended to it.
+	targetTestTimeout = 3 * time.Minute
+	// targetTestCleanup is how long a target test may still clean up after its limit.
+	targetTestCleanup = target.TestCleanupLimit
+)
+
+// answerMargin is the time left to write an answer once the work behind it has ended.
+const answerMargin = 10 * time.Second
+
+// targetTestWriteTimeout is the write timeout of a target test: its limit, its cleanup and the answer.
+func targetTestWriteTimeout() time.Duration {
+	return targetTestTimeout + targetTestCleanup + answerMargin
+}
 
 var (
 	refusedBackupRunning = ConflictJSONResponse{Code: "backup_running", Message: "A backup is running; try again once it has finished."}

@@ -40,6 +40,9 @@ const (
 	dialTimeout = 30 * time.Second
 	// cleanupTimeout bounds the removal of what a failed or cancelled operation left behind.
 	cleanupTimeout = 30 * time.Second
+	// TestCleanupLimit is how long Test may run after its context ends: the driver removes what the failed operation
+	// left behind, then Test deletes its file, which on NFS starts a pod that is removed in turn.
+	TestCleanupLimit = 3 * cleanupTimeout
 )
 
 var (

@@ -48,10 +48,12 @@ const (
 // fakeRunner serves the local backups of a directory and records the backups it is asked to start.
 type fakeRunner struct {
 	*backup.Runner
-	startErr    error
-	started     [][]string
-	testErr     error
-	tested      []string
+	startErr error
+	started  [][]string
+	testErr  error
+	tested   []string
+	// testCleanup, when set, makes TestTarget run until its context ends and clean up for this long afterwards.
+	testCleanup time.Duration
 	fingerprint string
 	scanErr     error
 	scanned     []string
@@ -69,8 +71,13 @@ func (f *fakeRunner) Start(_ context.Context, reason string, targets []string, o
 	return f.startErr
 }
 
-func (f *fakeRunner) TestTarget(_ context.Context, name string) error {
+func (f *fakeRunner) TestTarget(ctx context.Context, name string) error {
 	f.tested = append(f.tested, name)
+	if f.testCleanup > 0 {
+		<-ctx.Done()
+		time.Sleep(f.testCleanup)
+		return ctx.Err()
+	}
 	return f.testErr
 }
 
@@ -656,6 +663,39 @@ func TestBackupTargetTest(t *testing.T) {
 	wantStatus(t, h.request(http.MethodPost, pathTargets+"/a/test", nil, s), http.StatusNotFound)
 	resetCluster(t)
 	wantStatus(t, h.request(http.MethodPost, pathTargets+"/a/test", nil, s), http.StatusConflict)
+}
+
+func TestTargetTestAtItsLimitAnswers(t *testing.T) {
+	limit, cleanup := targetTestTimeout, targetTestCleanup
+	targetTestTimeout, targetTestCleanup = 200*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { targetTestTimeout, targetTestCleanup = limit, cleanup })
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupComplete)
+	f, _ := withRunner(t, h)
+	wantStatus(t, h.request(http.MethodPut, pathTargets+"/a", nfsUpdate(), s), http.StatusAccepted)
+	f.testCleanup = 150 * time.Millisecond
+
+	srv := httptest.NewUnstartedServer(h.handler)
+	srv.Config.WriteTimeout = 100 * time.Millisecond
+	srv.Start()
+	t.Cleanup(srv.Close)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+pathTargets+"/a/test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(auth.CSRFHeader, s.csrf)
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: s.cookie})
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("the answer broke off: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	var out BackupTargetTest
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil || res.StatusCode != http.StatusOK || out.Ok ||
+		out.Reason == nil || *out.Reason != BackupTargetReasonTimeout {
+		t.Errorf("answer %d %+v %v", res.StatusCode, out, err)
+	}
 }
 
 func TestBackupHostKey(t *testing.T) {
