@@ -211,6 +211,23 @@ describe('BackupsPage', () => {
     expect(await screen.findByText(/the test failed\.$/i)).toBeInTheDocument();
   });
 
+  it('drops a test result once its target is saved with other settings', async () => {
+    stubApi({
+      [BACKUPS]: [200, backups()],
+      'POST /appliance/api/v1/backups/targets/offsite/test': [200, { ok: true }],
+      'PUT /appliance/api/v1/backups/targets/offsite': [202],
+    });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Test offsite' }));
+    expect(await screen.findByText(/the test succeeded/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit offsite' }));
+    await userEvent.clear(screen.getByLabelText('Bucket'));
+    await userEvent.type(screen.getByLabelText('Bucket'), 'other');
+    await userEvent.click(screen.getByRole('button', { name: 'Save the target' }));
+    expect(await screen.findByRole('heading', { name: 'Add a target' })).toBeInTheDocument();
+    expect(screen.queryByText(/the test succeeded/i)).not.toBeInTheDocument();
+  });
+
   it('reports a test the appliance did not answer', async () => {
     stubApi({ [BACKUPS]: [200, backups()] });
     render(<BackupsPage />);

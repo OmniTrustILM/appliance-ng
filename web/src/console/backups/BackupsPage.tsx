@@ -86,7 +86,7 @@ export function BackupsPage() {
             {data.targets.length === 0 && <p className="text-content-muted">No target receives copies yet.</p>}
             <ul className="m-0 list-none p-0">
               {data.targets.map((target) => (
-                <TargetRow key={target.name} target={target} onEdit={() => setEditing(target)} onRemove={() => removal.ask(target)} />
+                <TargetRow key={`${target.name}-${saves}`} target={target} onEdit={() => setEditing(target)} onRemove={() => removal.ask(target)} />
               ))}
             </ul>
           </Card>
