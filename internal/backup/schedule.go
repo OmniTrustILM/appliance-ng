@@ -95,9 +95,12 @@ type Scheduler struct {
 	entries string
 	jobs    []*entry
 	targets []dueTarget
-	// last is the due time the last scheduled backup ran for.
-	last time.Time
+	// handled holds the due times, as Unix seconds, that scheduled backups ran for in the last handledFor.
+	handled map[int64]bool
 }
+
+// handledFor is how long a due time is remembered, so that entries whose times coincide take one backup.
+const handledFor = 24 * time.Hour
 
 // NewScheduler returns a Scheduler that takes the backups with r; now is the clock a firing entry reads.
 func NewScheduler(r *Runner, now func() time.Time) *Scheduler {
@@ -108,8 +111,9 @@ func NewScheduler(r *Runner, now func() time.Time) *Scheduler {
 			_, err := r.Run(ctx, RunSchedule, targets)
 			return err
 		},
-		cron: cron.New(cron.WithParser(scheduleParser), cron.WithLocation(time.UTC)),
-		ctx:  context.Background(),
+		cron:    cron.New(cron.WithParser(scheduleParser), cron.WithLocation(time.UTC)),
+		ctx:     context.Background(),
+		handled: map[int64]bool{},
 	}
 }
 
@@ -165,7 +169,7 @@ func (s *Scheduler) fire(e *entry) {
 		return
 	}
 	e.handled = at
-	if !at.After(s.last) {
+	if s.handled[at.Unix()] {
 		s.mu.Unlock()
 		return
 	}
@@ -180,7 +184,12 @@ func (s *Scheduler) fire(e *entry) {
 		s.log.Info("no backup target is due at the scheduled time", "due", at)
 		return
 	}
-	s.last = at
+	for due := range s.handled {
+		if now.Sub(time.Unix(due, 0)) >= handledFor {
+			delete(s.handled, due)
+		}
+	}
+	s.handled[at.Unix()] = true
 	ctx := s.ctx
 	s.mu.Unlock()
 	s.log.Info("scheduled backup due", "due", at, "targets", names)

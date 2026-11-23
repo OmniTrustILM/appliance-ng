@@ -115,6 +115,24 @@ func TestSchedulerRunsALateJobForItsDueTime(t *testing.T) {
 	}
 }
 
+func TestSchedulerRunsAnEarlierDueTimeThatFiresLate(t *testing.T) {
+	sc := newScheduled(t)
+	sc.s.Sync([]v1alpha1.BackupTarget{scheduledTarget("a", "0 2 * * *", "UTC"), scheduledTarget("b", "1 2 * * *", "UTC")})
+	// The job of 02:01 runs before the delayed job of 02:00.
+	sc.at = time.Date(2026, 11, 20, 2, 1, 0, 2e8, time.UTC)
+	sc.s.fire(sc.s.jobs[1])
+	sc.s.fire(sc.s.jobs[0])
+	if got := sc.taken(); len(got) != 2 || !slices.Equal(got[0], []string{"b"}) || !slices.Equal(got[1], []string{"a"}) {
+		t.Fatalf("runs %v, want b for 02:01 and a for 02:00", got)
+	}
+	// A day later, the due times of the day before are forgotten and the new ones run once.
+	sc.fireAll(time.Date(2026, 11, 21, 2, 1, 0, 0, time.UTC))
+	sc.fireAll(time.Date(2026, 11, 21, 2, 1, 0, 1e8, time.UTC))
+	if got := sc.taken(); len(got) != 4 || len(sc.s.handled) != 2 {
+		t.Errorf("runs %v with %d handled due times, want 4 runs and the 2 due times of the day", got, len(sc.s.handled))
+	}
+}
+
 func TestSchedulerLogsADueTimeWithoutTargets(t *testing.T) {
 	sc := newScheduled(t)
 	sc.s.Sync([]v1alpha1.BackupTarget{scheduledTarget("a", "0 2 * * *", "UTC")})
