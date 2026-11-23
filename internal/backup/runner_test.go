@@ -658,13 +658,13 @@ func TestOverlappingSchedulesCopyToEveryDueTarget(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.fire(s.jobs[0])
+		s.fire(context.Background(), s.jobs[0])
 	}()
 	<-f.dumper.started
 	at(2, 15)
-	s.fire(s.jobs[1])
+	s.fire(context.Background(), s.jobs[1])
 	at(2, 30)
-	s.fire(s.jobs[2])
+	s.fire(context.Background(), s.jobs[2])
 	close(f.dumper.block)
 	<-done
 	select {

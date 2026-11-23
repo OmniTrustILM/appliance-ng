@@ -88,10 +88,12 @@ type Scheduler struct {
 	now  func() time.Time
 	run  func(ctx context.Context, targets []string) error
 	cron *cron.Cron
+	// due hands the entries whose time came to Start; stopped is closed once Start stops taking them.
+	due     chan *entry
+	stopped chan struct{}
 
 	// mu guards the fields below.
 	mu      sync.Mutex
-	ctx     context.Context
 	entries string
 	jobs    []*entry
 	targets []dueTarget
@@ -112,7 +114,8 @@ func NewScheduler(r *Runner, now func() time.Time) *Scheduler {
 			return err
 		},
 		cron:    cron.New(cron.WithParser(scheduleParser), cron.WithLocation(time.UTC)),
-		ctx:     context.Background(),
+		due:     make(chan *entry),
+		stopped: make(chan struct{}),
 		handled: map[int64]bool{},
 	}
 }
@@ -148,15 +151,23 @@ func (s *Scheduler) Sync(targets []v1alpha1.BackupTarget) {
 	for _, key := range keys {
 		job := &entry{schedule: schedules[key], handled: now}
 		s.jobs = append(s.jobs, job)
-		s.cron.Schedule(job.schedule, cron.FuncJob(func() { s.fire(job) }))
+		s.cron.Schedule(job.schedule, cron.FuncJob(func() { s.trigger(job) }))
 	}
 	s.entries = entries
 	s.log.Info("backup schedules set", "schedules", keys)
 }
 
+// trigger hands e to Start, or drops it when Start stopped.
+func (s *Scheduler) trigger(e *entry) {
+	select {
+	case s.due <- e:
+	case <-s.stopped:
+	}
+}
+
 // fire takes one backup to every target due at e's latest due time, however late the job runs. Entries whose times
 // coincide fire together; the first takes the backup and the others find it taken.
-func (s *Scheduler) fire(e *entry) {
+func (s *Scheduler) fire(ctx context.Context, e *entry) {
 	now := s.now()
 	s.mu.Lock()
 	var at time.Time
@@ -190,7 +201,6 @@ func (s *Scheduler) fire(e *entry) {
 		}
 	}
 	s.handled[at.Unix()] = true
-	ctx := s.ctx
 	s.mu.Unlock()
 	s.log.Info("scheduled backup due", "due", at, "targets", names)
 	// A backup that is running already takes the due targets once it ends.
@@ -201,11 +211,17 @@ func (s *Scheduler) fire(e *entry) {
 
 // Start runs the schedule until ctx ends, then waits for a scheduled backup that runs.
 func (s *Scheduler) Start(ctx context.Context) error {
-	s.mu.Lock()
-	s.ctx = ctx
-	s.mu.Unlock()
 	s.cron.Start()
-	<-ctx.Done()
-	<-s.cron.Stop().Done()
-	return nil
+	var running sync.WaitGroup
+	for {
+		select {
+		case e := <-s.due:
+			running.Go(func() { s.fire(ctx, e) })
+		case <-ctx.Done():
+			close(s.stopped)
+			<-s.cron.Stop().Done()
+			running.Wait()
+			return nil
+		}
+	}
 }

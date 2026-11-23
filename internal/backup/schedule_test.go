@@ -41,7 +41,7 @@ func newScheduled(t *testing.T) *scheduled {
 func (sc *scheduled) fireAll(at time.Time) {
 	sc.at = at
 	for _, e := range sc.s.jobs {
-		sc.s.fire(e)
+		sc.s.fire(context.Background(), e)
 	}
 }
 
@@ -103,13 +103,13 @@ func TestSchedulerRunsALateJobForItsDueTime(t *testing.T) {
 	sc.s.Sync([]v1alpha1.BackupTarget{scheduledTarget("a", "0 2 * * *", "UTC"), scheduledTarget("b", "1 2 * * *", "UTC")})
 	// The job of 02:00 runs only after 02:01, the job of 02:01 just after it.
 	sc.at = time.Date(2026, 11, 20, 2, 1, 0, 2e8, time.UTC)
-	sc.s.fire(sc.s.jobs[0])
-	sc.s.fire(sc.s.jobs[1])
+	sc.s.fire(context.Background(), sc.s.jobs[0])
+	sc.s.fire(context.Background(), sc.s.jobs[1])
 	if got := sc.taken(); len(got) != 2 || !slices.Equal(got[0], []string{"a"}) || !slices.Equal(got[1], []string{"b"}) {
 		t.Errorf("runs %v, want a for 02:00 and b for 02:01", got)
 	}
 	// Firing again finds both due times handled.
-	sc.s.fire(sc.s.jobs[0])
+	sc.s.fire(context.Background(), sc.s.jobs[0])
 	if got := sc.taken(); len(got) != 2 {
 		t.Errorf("runs %v after the due times were handled", got)
 	}
@@ -120,8 +120,8 @@ func TestSchedulerRunsAnEarlierDueTimeThatFiresLate(t *testing.T) {
 	sc.s.Sync([]v1alpha1.BackupTarget{scheduledTarget("a", "0 2 * * *", "UTC"), scheduledTarget("b", "1 2 * * *", "UTC")})
 	// The job of 02:01 runs before the delayed job of 02:00.
 	sc.at = time.Date(2026, 11, 20, 2, 1, 0, 2e8, time.UTC)
-	sc.s.fire(sc.s.jobs[1])
-	sc.s.fire(sc.s.jobs[0])
+	sc.s.fire(context.Background(), sc.s.jobs[1])
+	sc.s.fire(context.Background(), sc.s.jobs[0])
 	if got := sc.taken(); len(got) != 2 || !slices.Equal(got[0], []string{"b"}) || !slices.Equal(got[1], []string{"a"}) {
 		t.Fatalf("runs %v, want b for 02:01 and a for 02:00", got)
 	}
@@ -203,6 +203,35 @@ func TestSchedulerStartsAndStops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the scheduler did not stop")
 	}
+}
+
+func TestSchedulerFiresWithTheStartContext(t *testing.T) {
+	sc := newScheduled(t)
+	type key struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), key{}, "start"))
+	got := make(chan any, 1)
+	sc.s.run = func(ctx context.Context, _ []string) error {
+		got <- ctx.Value(key{})
+		return nil
+	}
+	sc.s.Sync([]v1alpha1.BackupTarget{scheduledTarget("a", "0 2 * * *", "UTC")})
+	sc.at = time.Date(2026, 11, 20, 2, 0, 0, 0, time.UTC)
+	done := make(chan error, 1)
+	go func() { done <- sc.s.Start(ctx) }()
+	sc.s.trigger(sc.s.jobs[0])
+	select {
+	case v := <-got:
+		if v != "start" {
+			t.Errorf("run context value = %v, want the Start context", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the due entry was not fired")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	sc.s.trigger(sc.s.jobs[0])
 }
 
 func TestParseSchedule(t *testing.T) {
