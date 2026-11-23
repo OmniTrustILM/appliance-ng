@@ -469,6 +469,41 @@ func TestManifestSizeBounded(t *testing.T) {
 	assertTampered(t, id, rawArchive(t, id, func(put func(string, int64, string)) { put(manifestName, int64(len(large)), large) }))
 }
 
+func TestWriterRefusesAManifestTheReaderRefuses(t *testing.T) {
+	id := newIdentity(t)
+	content := "a: b\n"
+	// manifest is testManifest padded through its components to size bytes once encoded as Close encodes it.
+	manifest := func(size int) Manifest {
+		m := testManifest()
+		m.Format, m.Members, m.Components = FormatVersion, map[string]string{"appliance.yaml": sum([]byte(content))}, []string{""}
+		body, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Members, m.Components = nil, []string{strings.Repeat("a", size-len(body))}
+		return m
+	}
+	write := func(m Manifest) ([]byte, error) {
+		var buf bytes.Buffer
+		w := newWriter(t, &buf, id)
+		if err := w.Add("appliance.yaml", int64(len(content)), strings.NewReader(content)); err != nil {
+			t.Fatal(err)
+		}
+		err := w.Close(m)
+		return buf.Bytes(), err
+	}
+	data, err := write(manifest(maxManifestSize))
+	if err != nil {
+		t.Fatalf("a manifest of the largest size: %v", err)
+	}
+	if _, err := Verify(bytes.NewReader(data), id); err != nil {
+		t.Fatalf("verify a manifest of the largest size: %v", err)
+	}
+	if _, err := write(manifest(maxManifestSize + 1)); err == nil {
+		t.Error("closed an archive whose manifest the reader refuses")
+	}
+}
+
 func assertTampered(t *testing.T, id *age.X25519Identity, data []byte) {
 	t.Helper()
 	if _, err := Verify(bytes.NewReader(data), id); !errors.Is(err, ErrTampered) {

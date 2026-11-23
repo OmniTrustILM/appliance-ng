@@ -114,7 +114,8 @@ func fill(r io.Reader, buf []byte) (int, error) {
 	return n, nil
 }
 
-// Close writes the manifest as the last member and finishes the archive. The caller still closes the destination.
+// Close writes the manifest as the last member and finishes the archive; a manifest larger than a reader accepts
+// fails it. The caller still closes the destination.
 func (w *Writer) Close(m Manifest) error { return w.close(m, FormatVersion) }
 
 func (w *Writer) close(m Manifest, format int) error {
@@ -130,6 +131,9 @@ func (w *Writer) close(m Manifest, format int) error {
 	body, err := json.Marshal(m)
 	if err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
+	}
+	if len(body) > maxManifestSize {
+		return fmt.Errorf("manifest of %d bytes exceeds the %d bytes a reader accepts", len(body), maxManifestSize)
 	}
 	if err := w.addMember(manifestName, int64(len(body)), bytes.NewReader(body)); err != nil {
 		return err

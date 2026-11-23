@@ -14,9 +14,6 @@ import (
 	"filippo.io/age"
 )
 
-// maxManifestSize bounds the manifest, which is decoded in memory.
-const maxManifestSize = 4 << 20
-
 // decoder walks the tar members of a decrypted archive, hashing each one as it is read.
 type decoder struct {
 	plain    io.Reader

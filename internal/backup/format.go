@@ -17,6 +17,9 @@ const (
 	manifestName = "manifest.json"
 	// chunkSize bounds a streamed member of unknown length; each chunk is buffered in memory.
 	chunkSize = 16 << 20
+	// maxManifestSize bounds the manifest, which is decoded in memory. A chunk adds about 90 bytes to it, so it is
+	// reached by a dump of some 750 GiB.
+	maxManifestSize = 4 << 20
 )
 
 var (
