@@ -265,6 +265,22 @@ func TestAddKnownSizeReadErrorWithLastDataFails(t *testing.T) {
 	}
 }
 
+func TestAddStreamReadErrorWithAFullChunkFails(t *testing.T) {
+	w := newWriter(t, io.Discard, newIdentity(t))
+	r := &lastReadErrReader{data: bytes.Repeat([]byte("x"), chunkSize), err: errors.New("boom")}
+	if err := w.Add("database.sql", -1, r); err == nil {
+		t.Fatal("a read error returned with the bytes that fill a chunk was dropped")
+	}
+}
+
+func TestAddStreamUnexpectedEOFFails(t *testing.T) {
+	w := newWriter(t, io.Discard, newIdentity(t))
+	r := &partialReader{data: []byte("INSERT INTO"), err: io.ErrUnexpectedEOF}
+	if err := w.Add("database.sql", -1, r); err == nil {
+		t.Fatal("a source that ended early ended the stream")
+	}
+}
+
 func TestVerifyDetectsTamper(t *testing.T) {
 	id := newIdentity(t)
 	data := sampleArchive(t, id)

@@ -83,10 +83,9 @@ func (w *Writer) addChunks(name string, r io.Reader) error {
 		w.buf = make([]byte, chunkSize)
 	}
 	for i := 0; ; i++ {
-		n, err := io.ReadFull(r, w.buf)
-		// Only the end conditions of io.ReadFull itself end the stream; a source error that wraps one is a failure.
-		last := err == io.EOF || err == io.ErrUnexpectedEOF
-		if err != nil && !last {
+		n, err := fill(r, w.buf)
+		// Only io.EOF itself ends the stream; any other error, one that wraps io.EOF included, is a failure.
+		if err != nil && err != io.EOF {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
 		if n == 0 && i > 0 {
@@ -95,10 +94,24 @@ func (w *Writer) addChunks(name string, r io.Reader) error {
 		if err := w.addMember(chunkName(name, i), int64(n), bytes.NewReader(w.buf[:n])); err != nil {
 			return err
 		}
-		if last {
+		if err != nil {
 			return nil
 		}
 	}
+}
+
+// fill reads r into buf until buf is full or r returns an error. Unlike io.ReadFull, it keeps an error returned with
+// the bytes that fill buf, and a source's own io.ErrUnexpectedEOF stays an error.
+func fill(r io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		k, err := r.Read(buf[n:])
+		n += k
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // Close writes the manifest as the last member and finishes the archive. The caller still closes the destination.
