@@ -45,7 +45,7 @@ func TestExecStreamsStdinStdout(t *testing.T) {
 		return err
 	})
 	var out bytes.Buffer
-	err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, "ilm", "db-1", "postgres",
+	err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, Container{Namespace: "ilm", Pod: "db-1", Name: "postgres"},
 		[]string{"psql", "-d", "ilm"}, strings.NewReader("select 1;"), &out)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestExecWithoutStdinDoesNotRequestIt(t *testing.T) {
 		}
 		return nil
 	})
-	if err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, "ilm", "p", "c", []string{"true"}, nil, io.Discard); err != nil {
+	if err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, Container{Namespace: "ilm", Pod: "p", Name: "c"}, []string{"true"}, nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if (*got).Query().Get("stdin") != "" {
@@ -83,7 +83,7 @@ func TestExecErrorCarriesTheExitCodeOnly(t *testing.T) {
 		_, _ = o.Stderr.Write([]byte("password=hunter2"))
 		return utilexec.CodeExitError{Err: errors.New("command terminated: password=hunter2"), Code: 3}
 	})
-	err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, "ilm", "p", "c", []string{"x"}, nil, io.Discard)
+	err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, Container{Namespace: "ilm", Pod: "p", Name: "c"}, []string{"x"}, nil, io.Discard)
 	var exit *ExitError
 	if !errors.As(err, &exit) || exit.Code != 3 {
 		t.Fatalf("error = %v, want exit code 3", err)
@@ -95,7 +95,7 @@ func TestExecErrorCarriesTheExitCodeOnly(t *testing.T) {
 
 func TestExecReportsTransportFailure(t *testing.T) {
 	withExecutor(t, func(remotecommand.StreamOptions) error { return errors.New("connection reset") })
-	err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, "ilm", "p", "c", []string{"x"}, nil, io.Discard)
+	err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, Container{Namespace: "ilm", Pod: "p", Name: "c"}, []string{"x"}, nil, io.Discard)
 	var exit *ExitError
 	if err == nil || errors.As(err, &exit) {
 		t.Fatalf("error = %v, want a transport error", err)
@@ -106,7 +106,7 @@ func TestExecReportsExecutorFailure(t *testing.T) {
 	old := newExecutor
 	newExecutor = func(*rest.Config, *url.URL) (remotecommand.Executor, error) { return nil, errors.New("no executor") }
 	t.Cleanup(func() { newExecutor = old })
-	if err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, "ilm", "p", "c", nil, nil, io.Discard); err == nil {
+	if err := Exec(context.Background(), &rest.Config{Host: "https://k.example"}, Container{Namespace: "ilm", Pod: "p", Name: "c"}, nil, nil, io.Discard); err == nil {
 		t.Fatal("expected an error")
 	}
 }

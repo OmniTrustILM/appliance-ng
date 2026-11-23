@@ -36,8 +36,8 @@ type fakeExec struct {
 	handler func(c call, stdout io.Writer) error
 }
 
-func (f *fakeExec) exec(_ context.Context, _ *rest.Config, ns, pod, container string, cmd []string, stdin io.Reader, stdout io.Writer) error {
-	c := call{ns: ns, pod: pod, container: container, cmd: cmd, hadStdin: stdin != nil}
+func (f *fakeExec) exec(_ context.Context, _ *rest.Config, k kube.Container, cmd []string, stdin io.Reader, stdout io.Writer) error {
+	c := call{ns: k.Namespace, pod: k.Pod, container: k.Name, cmd: cmd, hadStdin: stdin != nil}
 	if stdin != nil {
 		data, err := io.ReadAll(stdin)
 		if err != nil {

@@ -40,17 +40,22 @@ var newExecutor = func(cfg *rest.Config, u *url.URL) (remotecommand.Executor, er
 	return remotecommand.NewFallbackExecutor(ws, spdy, httpstream.IsUpgradeFailure)
 }
 
-// Exec runs cmd in the container of the pod, streaming stdin into it when stdin is not nil and its output into
+// Container names a container of a pod.
+type Container struct {
+	Namespace, Pod, Name string
+}
+
+// Exec runs cmd in the container c, streaming stdin into it when stdin is not nil and its output into
 // stdout. What the command writes to standard error is discarded: it may carry anything the command saw. A command
 // that exits non-zero gives an *ExitError.
-func Exec(ctx context.Context, cfg *rest.Config, ns, pod, container string, cmd []string, stdin io.Reader, stdout io.Writer) error {
+func Exec(ctx context.Context, cfg *rest.Config, c Container, cmd []string, stdin io.Reader, stdout io.Writer) error {
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("exec client: %w", err)
 	}
-	req := cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("exec").
+	req := cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(c.Namespace).Name(c.Pod).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
-			Container: container,
+			Container: c.Name,
 			Command:   cmd,
 			Stdin:     stdin != nil,
 			Stdout:    true,
@@ -68,6 +73,6 @@ func Exec(ctx context.Context, cfg *rest.Config, ns, pod, container string, cmd 
 	case errors.As(err, &exit):
 		return &ExitError{Code: exit.ExitStatus()}
 	default:
-		return fmt.Errorf("exec in %s/%s: %w", ns, pod, err)
+		return fmt.Errorf("exec in %s/%s: %w", c.Namespace, c.Pod, err)
 	}
 }

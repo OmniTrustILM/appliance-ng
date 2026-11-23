@@ -69,7 +69,7 @@ func newExternalDumper(db ExternalDatabase, c client.Client, cfg *rest.Config, e
 // Dump streams pg_dump into w; ErrDatabaseUnreachable when pg_isready finds no answer.
 func (d *externalDumper) Dump(ctx context.Context, w io.Writer) error {
 	return d.inPod(ctx, func(pod string) error {
-		err := d.exec(ctx, d.cfg, kube.SystemNamespace, pod, dumpContainer, []string{"pg_isready", "-t", "10"}, nil, io.Discard)
+		err := d.exec(ctx, d.cfg, kube.Container{Namespace: kube.SystemNamespace, Pod: pod, Name: dumpContainer}, []string{"pg_isready", "-t", "10"}, nil, io.Discard)
 		var exit *kube.ExitError
 		if errors.As(err, &exit) {
 			return ErrDatabaseUnreachable
@@ -77,7 +77,7 @@ func (d *externalDumper) Dump(ctx context.Context, w io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("check the external database: %w", err)
 		}
-		if err := d.exec(ctx, d.cfg, kube.SystemNamespace, pod, dumpContainer, dumpCommand(d.db.Name), nil, w); err != nil {
+		if err := d.exec(ctx, d.cfg, kube.Container{Namespace: kube.SystemNamespace, Pod: pod, Name: dumpContainer}, dumpCommand(d.db.Name), nil, w); err != nil {
 			return fmt.Errorf("dump the external database: %w", err)
 		}
 		return nil
@@ -87,7 +87,7 @@ func (d *externalDumper) Dump(ctx context.Context, w io.Writer) error {
 // Load streams r into psql as the database user of the credentials.
 func (d *externalDumper) Load(ctx context.Context, r io.Reader) error {
 	return d.inPod(ctx, func(pod string) error {
-		if err := d.exec(ctx, d.cfg, kube.SystemNamespace, pod, dumpContainer, loadCommand(d.db.Name), r, io.Discard); err != nil {
+		if err := d.exec(ctx, d.cfg, kube.Container{Namespace: kube.SystemNamespace, Pod: pod, Name: dumpContainer}, loadCommand(d.db.Name), r, io.Discard); err != nil {
 			return fmt.Errorf("load the external database: %w", err)
 		}
 		return nil

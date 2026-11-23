@@ -74,8 +74,8 @@ func quickPods(t *testing.T) {
 	t.Cleanup(func() { podPollInterval, podStartTimeout = oldPoll, oldWait })
 }
 
-func (f *fakeNFS) exec(ctx context.Context, _ *rest.Config, ns, pod, container string, cmd []string, stdin io.Reader, stdout io.Writer) error {
-	c := nfsCall{ns: ns, pod: pod, container: container, cmd: cmd}
+func (f *fakeNFS) exec(ctx context.Context, _ *rest.Config, k kube.Container, cmd []string, stdin io.Reader, stdout io.Writer) error {
+	c := nfsCall{ns: k.Namespace, pod: k.Pod, container: k.Name, cmd: cmd}
 	pods, pvcs, pvs := &corev1.PodList{}, &corev1.PersistentVolumeClaimList{}, &corev1.PersistentVolumeList{}
 	for _, l := range []client.ObjectList{pods, pvcs, pvs} {
 		if err := f.client.List(ctx, l); err != nil {

@@ -158,7 +158,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		return err
 	}
 
-	backups, err := newBackupRunner(ctx, mgr, cfg, direct, auditLog, rel, log, filepath.Join(data, backupDir))
+	backups, err := newBackupRunner(ctx, mgr, direct, auditLog, rel, log, filepath.Join(data, backupDir))
 	if err != nil {
 		return err
 	}
@@ -214,7 +214,7 @@ func addBackupSchedule(mgr crmanager.Manager, reconciler *manager.ApplianceRecon
 
 // newBackupRunner returns the backup runner on dir, after deleting the partial files a backup cut off by a crash or
 // a restart left there and clearing the backup the status still shows running.
-func newBackupRunner(ctx context.Context, mgr crmanager.Manager, cfg *rest.Config, direct client.Client, auditLog *audit.Log, rel *release.Manifest, log *slog.Logger, dir string) (*backup.Runner, error) {
+func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.Client, auditLog *audit.Log, rel *release.Manifest, log *slog.Logger, dir string) (*backup.Runner, error) {
 	if err := backup.RemoveStale(dir); err != nil {
 		return nil, fmt.Errorf("remove the partial backups: %w", err)
 	}
@@ -222,6 +222,7 @@ func newBackupRunner(ctx context.Context, mgr crmanager.Manager, cfg *rest.Confi
 	if err != nil {
 		return nil, err
 	}
+	cfg := mgr.GetConfig()
 	runner := backup.NewRunner(backup.RunnerDeps{
 		Client:  mgr.GetClient(),
 		Reader:  mgr.GetAPIReader(),

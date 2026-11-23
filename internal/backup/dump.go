@@ -29,7 +29,7 @@ type Dumper interface {
 }
 
 // execFunc runs a command in a container, as kube.Exec does.
-type execFunc func(ctx context.Context, cfg *rest.Config, ns, pod, container string, cmd []string, stdin io.Reader, stdout io.Writer) error
+type execFunc func(ctx context.Context, cfg *rest.Config, c kube.Container, cmd []string, stdin io.Reader, stdout io.Writer) error
 
 // The managed database, as the operator names it for the Platform.
 const (
@@ -69,7 +69,7 @@ func (d *managedDumper) Dump(ctx context.Context, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := d.exec(ctx, d.cfg, platform.Namespace, pod, managedContainer, dumpCommand(database), nil, w); err != nil {
+	if err := d.exec(ctx, d.cfg, kube.Container{Namespace: platform.Namespace, Pod: pod, Name: managedContainer}, dumpCommand(database), nil, w); err != nil {
 		return fmt.Errorf("dump the managed database: %w", err)
 	}
 	return nil
@@ -83,7 +83,7 @@ func (d *managedDumper) Load(ctx context.Context, r io.Reader) error {
 	}
 	role := `SET ROLE "` + strings.ReplaceAll(owner, `"`, `""`) + "\";\n"
 	stdin := io.MultiReader(strings.NewReader(role), r)
-	if err := d.exec(ctx, d.cfg, platform.Namespace, pod, managedContainer, loadCommand(database), stdin, io.Discard); err != nil {
+	if err := d.exec(ctx, d.cfg, kube.Container{Namespace: platform.Namespace, Pod: pod, Name: managedContainer}, loadCommand(database), stdin, io.Discard); err != nil {
 		return fmt.Errorf("load the managed database: %w", err)
 	}
 	return nil

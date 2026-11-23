@@ -80,7 +80,7 @@ var (
 )
 
 // execFunc runs a command in a container, as kube.Exec does.
-type execFunc func(ctx context.Context, cfg *rest.Config, ns, pod, container string, cmd []string, stdin io.Reader, stdout io.Writer) error
+type execFunc func(ctx context.Context, cfg *rest.Config, c kube.Container, cmd []string, stdin io.Reader, stdout io.Writer) error
 
 // nfsTarget reaches the export through a short-lived pod per operation that mounts it from a static volume; an
 // inline pod volume cannot carry the NFS version as a mount option.
@@ -194,7 +194,7 @@ func (t *nfsTarget) Delete(ctx context.Context, name string) error {
 // run runs script in the pod with the target directory and args as its positional arguments.
 func (t *nfsTarget) run(ctx context.Context, pod, script string, stdin io.Reader, stdout io.Writer, args ...string) error {
 	cmd := append([]string{"sh", "-c", script, "sh", t.dir}, args...)
-	return t.exec(ctx, t.deps.Config, t.deps.Namespace, pod, nfsContainer, cmd, stdin, stdout)
+	return t.exec(ctx, t.deps.Config, kube.Container{Namespace: t.deps.Namespace, Pod: pod, Name: nfsContainer}, cmd, stdin, stdout)
 }
 
 // nfsError maps the exit codes of the scripts, and the error output of a failed write or removal, to their sentinels.

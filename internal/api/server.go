@@ -34,6 +34,8 @@ const (
 	maxBody = 16 << 10
 	// maxPasswordChecks bounds the password checks that run at once; each takes 64 MiB of the manager's memory.
 	maxPasswordChecks = 1
+	// namePath ends the path of a named item.
+	namePath = "/{name}"
 )
 
 // AuditStore records the changes made through the API.
@@ -153,15 +155,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodDelete, mailPath), change(AuditEntryActionMailRemove))
 	mux.Handle(route(http.MethodPost, mailPath+"/test"), change(AuditEntryActionMailTest))
 	mux.Handle(route(http.MethodPost, kubeconfigPath), change(AuditEntryActionKubeconfigIssue))
-	mux.Handle(route(http.MethodDelete, kubeconfigPath+"/{name}"), change(AuditEntryActionKubeconfigRevoke))
+	mux.Handle(route(http.MethodDelete, kubeconfigPath+namePath), change(AuditEntryActionKubeconfigRevoke))
 	mux.Handle(route(http.MethodPost, talosconfigPath), change(AuditEntryActionTalosconfigIssue))
 	mux.Handle(route(http.MethodPost, recoveryKitPath), change(AuditEntryActionRecoveryKitIssue))
 	mux.Handle(route(http.MethodPost, recoveryKitPath+"/reissue"), change(AuditEntryActionRecoveryKitReissue))
 	mux.Handle(route(http.MethodPost, recoveryKitPath+"/replace"), change(AuditEntryActionRecoveryKitReplace))
 	mux.Handle(route(http.MethodPost, recoveryKitPath+"/confirm"), change(AuditEntryActionRecoveryKitConfirm))
 	mux.Handle(route(http.MethodPost, backupsPath), change(AuditEntryActionBackup))
-	mux.Handle(route(http.MethodPut, backupTargetsPath+"/{name}"), change(AuditEntryActionBackupTargetSet))
-	mux.Handle(route(http.MethodDelete, backupTargetsPath+"/{name}"), change(AuditEntryActionBackupTargetRemove))
+	mux.Handle(route(http.MethodPut, backupTargetsPath+namePath), change(AuditEntryActionBackupTargetSet))
+	mux.Handle(route(http.MethodDelete, backupTargetsPath+namePath), change(AuditEntryActionBackupTargetRemove))
 	mux.Handle(route(http.MethodPost, backupTargetsPath+"/hostkey"), withWriteDeadline(targetTestTimeout, change(AuditEntryActionBackupHostKeyScan)))
 	mux.Handle(route(http.MethodPost, backupTargetsPath+"/{name}/test"), withWriteDeadline(targetTestWriteTimeout(), change(AuditEntryActionBackupTargetTest)))
 	mux.Handle(auth.BasePath+"/api/", protected)

@@ -8,11 +8,16 @@ import { ItemRow } from '../shared/ItemRow';
 import { reasonText, type Reason } from './reasons';
 import type { Target } from './TargetForm';
 
+/** The optional sub-path of a location, with its leading slash. */
+function subPath(path: string | undefined) {
+  return path ? '/' + path : '';
+}
+
 /** Where the target keeps the backups. */
 function location(target: Target) {
-  if (target.s3) return `${target.s3.endpoint} · ${target.s3.bucket}${target.s3.prefix ? `/${target.s3.prefix}` : ''}`;
+  if (target.s3) return `${target.s3.endpoint} · ${target.s3.bucket}${subPath(target.s3.prefix)}`;
   if (target.sftp) return `${target.sftp.user}@${target.sftp.host}:${target.sftp.path}`;
-  if (target.nfs) return `${target.nfs.server}:${target.nfs.export}${target.nfs.path ? `/${target.nfs.path}` : ''}`;
+  if (target.nfs) return `${target.nfs.server}:${target.nfs.export}${subPath(target.nfs.path)}`;
   return '';
 }
 
