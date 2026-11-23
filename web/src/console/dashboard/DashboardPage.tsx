@@ -6,6 +6,8 @@ import { PageHeading } from '../../components/PageHeading';
 import { PageWidth } from '../../components/PageWidth';
 import { Loading } from '../../components/Spinner';
 import { expiryNotice, warnWithinMs } from '../certificate/expiry';
+import { formatBytes } from '../shared/format';
+import { BackupCard, BackupWarnings } from './BackupSummary';
 import { ConditionAreas } from './ConditionAreas';
 import { useStatus, type Status } from './useStatus';
 
@@ -18,19 +20,6 @@ const versionLabels: ReadonlyArray<readonly [keyof Status['versions'], string]> 
   ['operator', 'ILM operator'],
   ['ilm', 'ILM'],
 ];
-
-const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-
-/** Formats a size in binary multiples with one decimal, such as 60.0 GB. */
-function formatBytes(bytes: number) {
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < byteUnits.length - 1) {
-    value /= 1024;
-    unit++;
-  }
-  return `${value.toFixed(unit === 0 ? 0 : 1)} ${byteUnits[unit]}`;
-}
 
 /** The warning about the recovery kit: not confirmed once setup is complete, or its talosconfig near its expiry. */
 function recoveryKitNotice(status: Status, now: number) {
@@ -47,7 +36,7 @@ function recoveryKitNotice(status: Status, now: number) {
 
 /**
  * The warnings that ask the administrator to act: a certificate near its expiry, the recovery kit, a data volume
- * running low and a pending restart. Expiry dates are judged against now, the time of the last status read.
+ * running low, the backups and a pending restart. Expiry dates are judged against now, the time of the last status read.
  */
 function Warnings({ status, now }: Readonly<{ status: Status; now: number }>) {
   const lowSpace = status.dataVolume?.lowSpace;
@@ -68,6 +57,7 @@ function Warnings({ status, now }: Readonly<{ status: Status; now: number }>) {
       {lowSpace && (
         <Alert tone="warning">The data volume's free space is running low.</Alert>
       )}
+      <BackupWarnings status={status} now={now} />
       {status.rebootRequired && (
         <Alert tone="warning">
           The node needs to restart to apply a change. <Link className={LINK} to="/system">Open the system page</Link>
@@ -136,6 +126,11 @@ export function DashboardPage() {
                 ))}
               </dl>
             </Card>
+            {status.backup && (
+              <div className="sm:col-span-2">
+                <BackupCard backup={status.backup} />
+              </div>
+            )}
             <div className="sm:col-span-2">
               <Card>
                 <div className="mb-3 flex items-baseline justify-between">

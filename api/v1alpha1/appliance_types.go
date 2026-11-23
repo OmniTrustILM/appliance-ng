@@ -15,6 +15,7 @@ const (
 	ConditionCertificateReady = "CertificateReady"
 	ConditionHandoverComplete = "HandoverComplete"
 	ConditionConnectorsReady  = "ConnectorsReady"
+	ConditionBackupHealthy    = "BackupHealthy"
 )
 
 // Setup phases reported in ApplianceStatus.Setup.
@@ -37,6 +38,19 @@ const (
 	MailSecurityTLS      = "tls"
 )
 
+// Backup target types of BackupTarget.Type.
+const (
+	BackupTypeS3   = "s3"
+	BackupTypeSFTP = "sftp"
+	BackupTypeNFS  = "nfs"
+)
+
+// Database states of BackupRecord.Database.
+const (
+	BackupDatabaseIncluded    = "included"
+	BackupDatabaseNotIncluded = "notIncluded"
+)
+
 // ApplianceSpec is the desired configuration of the appliance.
 type ApplianceSpec struct {
 	Node NodeSpec `json:"node"`
@@ -57,6 +71,8 @@ type ApplianceSpec struct {
 	Mail *MailSpec `json:"mail,omitempty"`
 	// +optional
 	Platform *PlatformSpec `json:"platform,omitempty"`
+	// +optional
+	Backup *BackupSpec `json:"backup,omitempty"`
 }
 
 // NodeSpec is the network identity of the node.
@@ -161,6 +177,88 @@ type PlatformSpec struct {
 	Components []string `json:"components,omitempty"`
 }
 
+// BackupSpec configures the targets that receive copies of the backups.
+type BackupSpec struct {
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	Targets []BackupTarget `json:"targets,omitempty"`
+}
+
+// BackupTarget is a place that receives scheduled backups. Exactly the block matching Type is set.
+// +kubebuilder:validation:XValidation:rule="self.type == 's3' ? has(self.s3) : !has(self.s3)",message="backup target s3 must be set exactly when type is s3"
+// +kubebuilder:validation:XValidation:rule="self.type == 'sftp' ? has(self.sftp) : !has(self.sftp)",message="backup target sftp must be set exactly when type is sftp"
+// +kubebuilder:validation:XValidation:rule="self.type == 'nfs' ? has(self.nfs) : !has(self.nfs)",message="backup target nfs must be set exactly when type is nfs"
+type BackupTarget struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=s3;sftp;nfs
+	Type string `json:"type"`
+	// Schedule is a five-field cron expression; empty selects the default schedule.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^(\s*\S+(\s+\S+){4}\s*)?$`
+	Schedule string `json:"schedule,omitempty"`
+	// TimeZone is the IANA time zone of Schedule; empty selects the default zone.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	TimeZone string `json:"timeZone,omitempty"`
+	// Retention is the number of backups kept on the target.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=365
+	Retention int32 `json:"retention"`
+	// +optional
+	S3 *S3Target `json:"s3,omitempty"`
+	// +optional
+	SFTP *SFTPTarget `json:"sftp,omitempty"`
+	// +optional
+	NFS *NFSTarget `json:"nfs,omitempty"`
+	// CredentialsRef names the Secret in the appliance namespace holding the target credentials: accessKey and
+	// secretKey for s3, password or privateKey for sftp.
+	// +optional
+	CredentialsRef string `json:"credentialsRef,omitempty"`
+}
+
+// S3Target is an S3 compatible bucket.
+type S3Target struct {
+	Endpoint string `json:"endpoint"`
+	Bucket   string `json:"bucket"`
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+	// +optional
+	Region string `json:"region,omitempty"`
+	// CA references the Secret key holding the PEM CA bundle that signs the endpoint certificate.
+	// +optional
+	CA *SecretKeyRef `json:"ca,omitempty"`
+}
+
+// SFTPTarget is a directory on an SFTP server.
+type SFTPTarget struct {
+	Host string `json:"host"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32  `json:"port"`
+	Path string `json:"path"`
+	User string `json:"user"`
+	// HostKey is the SHA256 fingerprint of the server's host key, as printed by ssh-keygen -l.
+	// +kubebuilder:validation:Pattern=`^SHA256:.+$`
+	HostKey string `json:"hostKey"`
+}
+
+// NFSTarget is a directory on an NFS export.
+type NFSTarget struct {
+	Server string `json:"server"`
+	Export string `json:"export"`
+	// +optional
+	Path string `json:"path,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Enum="3";"4.1";"4.2"
+	Version string `json:"version,omitempty"`
+}
+
 // Versions are the component versions running on the appliance.
 type Versions struct {
 	// +optional
@@ -198,6 +296,53 @@ type ApplianceStatus struct {
 	// RecoveryKit describes the latest recovery kit; unset until one is issued.
 	// +optional
 	RecoveryKit *RecoveryKitStatus `json:"recoveryKit,omitempty"`
+	// Backup reports the local backups and the state of every target.
+	// +optional
+	Backup *BackupStatus `json:"backup,omitempty"`
+	// LastRestoreTest is when a restore test last succeeded.
+	// +optional
+	LastRestoreTest *metav1.Time `json:"lastRestoreTest,omitempty"`
+}
+
+// BackupStatus is the observed state of the backups.
+type BackupStatus struct {
+	// +optional
+	Running bool `json:"running,omitempty"`
+	// Last is the most recent backup taken.
+	// +optional
+	Last *BackupRecord `json:"last,omitempty"`
+	// Local lists the backup copies kept on the data volume.
+	// +optional
+	Local []BackupRecord `json:"local,omitempty"`
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Targets []TargetStatus `json:"targets,omitempty"`
+}
+
+// BackupRecord is one backup file.
+type BackupRecord struct {
+	Name      string      `json:"name"`
+	Time      metav1.Time `json:"time"`
+	SizeBytes int64       `json:"sizeBytes"`
+	// +kubebuilder:validation:Enum=included;notIncluded
+	Database string `json:"database"`
+}
+
+// TargetStatus is the state of a backup target.
+type TargetStatus struct {
+	Name string `json:"name"`
+	// +optional
+	LastSuccess *metav1.Time `json:"lastSuccess,omitempty"`
+	// +optional
+	LastAttempt *metav1.Time `json:"lastAttempt,omitempty"`
+	// FirstAttempt is the first copy attempted to the target, from which a target without a success is overdue.
+	// +optional
+	FirstAttempt *metav1.Time `json:"firstAttempt,omitempty"`
+	// LastError is a fixed reason, never an error text of the target.
+	// +optional
+	// +kubebuilder:validation:Enum=unreachable;authFailed;hostKeyMismatch;notFound;noSpace;timeout;failed
+	LastError string `json:"lastError,omitempty"`
 }
 
 // RecoveryKitStatus describes the latest recovery kit, never its key or passphrase.

@@ -17,9 +17,9 @@ import (
 
 const caFileName = `attachment; filename="ilm-appliance-ca.pem"`
 
-// GetStatus returns the setup phase, the conditions, the versions, the node address, whether a reboot is required
-// and, when it can be read, when the certificate in use expires. The condition messages are fixed texts the manager
-// sets; they carry no error text and no secret.
+// GetStatus returns the setup phase, the conditions, the versions, the node address, whether a reboot is required,
+// the backups and, when it can be read, when the certificate in use expires. The condition messages are fixed texts
+// the manager sets; they carry no error text and no secret.
 func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetStatusResponseObject, error) {
 	a, err := s.appliance(ctx)
 	if err != nil {
@@ -44,19 +44,13 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 		out.Setup = Part2
 	}
 	for i, c := range st.Conditions {
-		changed := c.LastTransitionTime.UTC()
-		out.Conditions[i] = Condition{
-			Type:               c.Type,
-			Status:             ConditionStatus(c.Status),
-			Reason:             optional(c.Reason),
-			Message:            optional(c.Message),
-			LastTransitionTime: &changed,
-		}
+		out.Conditions[i] = condition(c)
 	}
 	if v := st.DataVolume; v != nil {
 		out.DataVolume = &DataVolume{SizeBytes: v.SizeBytes, FreeBytes: v.FreeBytes, LowSpace: v.LowSpace}
 	}
 	out.AddonStep = addonStep(st.Conditions)
+	out.Backup = s.statusBackup(a)
 	// Without the kit the rest of the status still helps; the console reads an absent kit as unknown.
 	if out.RecoveryKit, err = s.recoveryKitInfo(ctx, st.RecoveryKit); err != nil {
 		s.deps.Log.Warn("recovery kit not read for the status", "error", err)
@@ -71,6 +65,17 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 		out.Certificate = &StatusCertificate{NotAfter: certificate.NotAfter}
 	}
 	return GetStatus200JSONResponse(out), nil
+}
+
+func condition(c metav1.Condition) Condition {
+	changed := c.LastTransitionTime.UTC()
+	return Condition{
+		Type:               c.Type,
+		Status:             ConditionStatus(c.Status),
+		Reason:             optional(c.Reason),
+		Message:            optional(c.Message),
+		LastTransitionTime: &changed,
+	}
 }
 
 // addonStep is the add-on step of the AddonsReady condition while it progresses; its message starts with the

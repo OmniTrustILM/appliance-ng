@@ -205,3 +205,110 @@ func TestApplianceNetworkFormat(t *testing.T) {
 		})
 	}
 }
+
+func s3Target(name string) v1alpha1.BackupTarget {
+	return v1alpha1.BackupTarget{
+		Name: name, Type: v1alpha1.BackupTypeS3, Retention: 14, CredentialsRef: "backup-" + name,
+		S3: &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "ilm"},
+	}
+}
+
+func sftpTarget(name string) v1alpha1.BackupTarget {
+	return v1alpha1.BackupTarget{
+		Name: name, Type: v1alpha1.BackupTypeSFTP, Retention: 14, CredentialsRef: "backup-" + name,
+		SFTP: &v1alpha1.SFTPTarget{Host: "sftp.example.com", Port: 22, Path: "/backups", User: "ilm", HostKey: "SHA256:abc"},
+	}
+}
+
+func nfsTarget(name string) v1alpha1.BackupTarget {
+	return v1alpha1.BackupTarget{
+		Name: name, Type: v1alpha1.BackupTypeNFS, Retention: 14,
+		NFS: &v1alpha1.NFSTarget{Server: "nfs.example.com", Export: "/export", Version: "4.1"},
+	}
+}
+
+func applianceWithTargets(targets ...v1alpha1.BackupTarget) *v1alpha1.Appliance {
+	a := newAppliance(v1alpha1.ApplianceName)
+	a.Spec.Backup = &v1alpha1.BackupSpec{Targets: targets}
+	return a
+}
+
+func TestBackupValidTargetsAreAccepted(t *testing.T) {
+	a := applianceWithTargets(s3Target("s3"), sftpTarget("sftp"), nfsTarget("nfs"))
+	a.Spec.Backup.Targets[0].Schedule = "0 2 * * *"
+	a.Spec.Backup.Targets[0].TimeZone = "Europe/Prague"
+	if err := create(t, a); err != nil {
+		t.Fatalf("valid targets must be accepted: %v", err)
+	}
+}
+
+func TestBackupTargetBlockMatchesType(t *testing.T) {
+	cases := map[string]func(*v1alpha1.BackupTarget){
+		"block of another type":   func(b *v1alpha1.BackupTarget) { b.SFTP = sftpTarget("x").SFTP },
+		"block of its type unset": func(b *v1alpha1.BackupTarget) { b.S3 = nil },
+		"unknown type":            func(b *v1alpha1.BackupTarget) { b.Type = "ftp" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			target := s3Target("s3")
+			mutate(&target)
+			wantInvalid(t, create(t, applianceWithTargets(target)))
+		})
+	}
+}
+
+func TestBackupTargetNamesUnique(t *testing.T) {
+	wantInvalid(t, create(t, applianceWithTargets(s3Target("same"), sftpTarget("same"))))
+}
+
+func TestBackupTargetNameIsALabel(t *testing.T) {
+	for _, name := range []string{"Upper", "under_score", "-lead", "trail-", strings.Repeat("a", 64)} {
+		wantInvalid(t, create(t, applianceWithTargets(s3Target(name))))
+	}
+}
+
+func TestBackupRetentionRange(t *testing.T) {
+	for _, retention := range []int32{0, 366} {
+		target := s3Target("s3")
+		target.Retention = retention
+		wantInvalid(t, create(t, applianceWithTargets(target)))
+	}
+	for _, retention := range []int32{1, 365} {
+		target := s3Target("s3")
+		target.Retention = retention
+		if err := create(t, applianceWithTargets(target)); err != nil {
+			t.Fatalf("retention %d must be accepted: %v", retention, err)
+		}
+		_ = testClient.Delete(context.Background(), newAppliance(v1alpha1.ApplianceName))
+	}
+}
+
+func TestBackupScheduleHasFiveFields(t *testing.T) {
+	for _, schedule := range []string{"0 2 * *", "0 2 * * * *", "daily"} {
+		target := s3Target("s3")
+		target.Schedule = schedule
+		wantInvalid(t, create(t, applianceWithTargets(target)))
+	}
+}
+
+func TestSFTPNeedsHostKey(t *testing.T) {
+	for _, hostKey := range []string{"", "MD5:abc", "abc"} {
+		target := sftpTarget("sftp")
+		target.SFTP.HostKey = hostKey
+		wantInvalid(t, create(t, applianceWithTargets(target)))
+	}
+}
+
+func TestSFTPPortRange(t *testing.T) {
+	for _, port := range []int32{0, 65536} {
+		target := sftpTarget("sftp")
+		target.SFTP.Port = port
+		wantInvalid(t, create(t, applianceWithTargets(target)))
+	}
+}
+
+func TestNFSVersion(t *testing.T) {
+	target := nfsTarget("nfs")
+	target.NFS.Version = "2"
+	wantInvalid(t, create(t, applianceWithTargets(target)))
+}

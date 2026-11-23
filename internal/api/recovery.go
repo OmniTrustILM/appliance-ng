@@ -19,6 +19,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 )
 
@@ -79,10 +80,10 @@ func (s *Server) recoveryKitInfo(ctx context.Context, st *v1alpha1.RecoveryKitSt
 		return nil, err
 	}
 	out.Issued, out.Recipient = true, &stored.Recipient
-	if !handedOut(st, stored) {
+	if !recovery.HandedOut(st, stored) {
 		return out, nil
 	}
-	out.Confirmed, out.Issuance = st.Confirmed, &stored.Issuance
+	out.Confirmed, out.Issuance = recovery.Usable(st, stored), &stored.Issuance
 	if st.IssuedAt != nil {
 		out.IssuedAt = &st.IssuedAt.Time
 	}
@@ -90,11 +91,6 @@ func (s *Server) recoveryKitInfo(ctx context.Context, st *v1alpha1.RecoveryKitSt
 		out.TalosconfigNotAfter = &st.TalosconfigNotAfter.Time
 	}
 	return out, nil
-}
-
-// handedOut tells whether st records the stored kit, which it does once that kit was handed out.
-func handedOut(st *v1alpha1.RecoveryKitStatus, stored recovery.Stored) bool {
-	return st != nil && st.Recipient == stored.Recipient && st.Issuance == stored.Issuance
 }
 
 // PostRecoveryKit issues the first recovery kit with a new backup key.
@@ -340,13 +336,13 @@ func (s *Server) PostRecoveryKitConfirm(ctx context.Context, req PostRecoveryKit
 		return PostRecoveryKitConfirm409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
 	case err != nil:
 		return nil, err
-	case !handedOut(a.Status.RecoveryKit, stored):
+	case !recovery.HandedOut(a.Status.RecoveryKit, stored):
 		return confirmRefused(refusedKitNotDelivered), nil
 	case req.Body.Issuance != stored.Issuance:
 		return confirmRefused(refusedKitSuperseded), nil
 	}
 	err = s.updateRecoveryKit(ctx, func(st *v1alpha1.RecoveryKitStatus) *v1alpha1.RecoveryKitStatus {
-		if !handedOut(st, stored) {
+		if !recovery.HandedOut(st, stored) {
 			return nil
 		}
 		st.Confirmed = true
@@ -359,7 +355,32 @@ func (s *Server) PostRecoveryKitConfirm(ctx context.Context, req PostRecoveryKit
 		return nil, err
 	}
 	s.deps.Log.Info("recovery kit confirmed", "issuance", stored.Issuance)
+	s.startKitBackup(a, requestFrom(ctx).user)
 	return PostRecoveryKitConfirm204Response{}, nil
+}
+
+// startKitBackup backs up to every target of a in the background for user, so that a backup readable with the
+// confirmed kit exists right away; after a replaced kit, the earlier backups are readable only with the lost one.
+// While another backup runs, the runner starts this one after it.
+func (s *Server) startKitBackup(a *v1alpha1.Appliance, user string) {
+	if s.deps.Backups == nil {
+		return
+	}
+	targets := []string{}
+	if a.Spec.Backup != nil {
+		for _, t := range a.Spec.Backup.Targets {
+			targets = append(targets, t.Name)
+		}
+	}
+	go func() {
+		_, err := s.deps.Backups.Run(context.Background(), backup.RunReplace, targets, backup.ByUser(user))
+		switch {
+		case errors.Is(err, backup.ErrBusy):
+			s.deps.Log.Info("the backup for the confirmed recovery kit starts after the running one")
+		case err != nil:
+			s.deps.Log.Warn("the backup for the confirmed recovery kit did not complete", "failure", backup.Describe(err))
+		}
+	}()
 }
 
 func confirmRefused(ref *refusal) PostRecoveryKitConfirm409JSONResponse {

@@ -12,6 +12,7 @@ export const consoleLinks = [
   { to: '/mail', label: 'Mail' },
   { to: '/access', label: 'Cluster access' },
   { to: '/recovery-kit', label: 'Recovery kit' },
+  { to: '/backups', label: 'Backups' },
   { to: '/system', label: 'System' },
   { to: '/audit', label: 'Audit log' },
 ] as const;

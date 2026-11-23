@@ -8,6 +8,7 @@ const areas = [
   { name: 'Add-ons', types: ['AddonsReady'] },
   { name: 'Platform', types: ['PlatformReady', 'ConnectorsReady'] },
   { name: 'Certificate', types: ['CertificateReady'] },
+  { name: 'Backups', types: ['BackupHealthy'] },
 ] as const;
 
 const known: ReadonlySet<string> = new Set(areas.flatMap((area) => area.types));

@@ -51,6 +51,8 @@ tags:
     description: >-
       The recovery kit: the backup key, break-glass credentials for the cluster and the node and the appliance
       identity, in one file encrypted with a passphrase.
+  - name: backups
+    description: The encrypted backups, kept on the data volume and copied to S3, SFTP and NFS targets on a schedule.
 paths:
   /setup/code:
     post:
@@ -1262,6 +1264,237 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /backups:
+    get:
+      tags: [backups]
+      operationId: getBackups
+      summary: The local backups and the backup targets
+      description: |
+        The local backups, newest first, the last backup, whether one runs, the targets with their health, the
+        BackupHealthy condition and when a restore test last succeeded. Target secrets are reported only as set or
+        not set.
+      security:
+        - session: []
+      parameters:
+        - name: X-Background-Refresh
+          in: header
+          required: false
+          description: 1 marks a read the console makes on its own, which does not keep the session from going idle.
+          schema:
+            type: string
+            enum: ['1']
+      responses:
+        '200':
+          description: The backups.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backups'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    post:
+      tags: [backups]
+      operationId: postBackups
+      summary: Back up now
+      description: |
+        Starts a backup copied to every target and answers before it ends; the status and the audit log record how
+        it ends. A backup that may not start is answered with 409: `backup_running`, `no_recovery_kit`,
+        `upgrade_in_progress` or `no_space`.
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The backup started.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/BackupsUnavailable'
+  /backups/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The file name of a local backup.
+        schema:
+          type: string
+    get:
+      tags: [backups]
+      operationId: getBackup
+      summary: Download a local backup
+      description: The encrypted backup file, streamed; only names of the local list are served. Every download is audited.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The backup file, encrypted to the backup key of the recovery kit.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/BackupsUnavailable'
+  /backups/targets/hostkey:
+    post:
+      tags: [backups]
+      operationId: postBackupHostKey
+      summary: Read the host key of an SSH server
+      description: |
+        Connects to the SSH server through the appliance's proxy and returns the SHA256 fingerprint of its host key
+        without signing in, for the administrator to compare and accept. A failure is answered with 502 and a fixed
+        reason as its code. Every scan is audited with the host and port.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostKeyRequest'
+      responses:
+        '200':
+          description: The host key's fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostKey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          description: The server could not be reached or sent no host key; the code is a fixed reason.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/BackupsUnavailable'
+  /backups/targets/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: The target's name, a DNS label.
+        schema:
+          type: string
+    get:
+      tags: [backups]
+      operationId: getBackupTarget
+      summary: A backup target
+      description: The target, its health and which secrets are set; never a secret.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The target.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupTarget'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    put:
+      tags: [backups]
+      operationId: putBackupTarget
+      summary: Add a backup target or replace its settings
+      description: |
+        Sets the target. The schedule is a five-field cron expression, `0 2 * * *` by default, in `timeZone`, an
+        IANA zone name; the retention is 14 by default and the NFS version 4.1. Secrets are write-only and stored in
+        a Secret: an S3 target needs `accessKey` and `secretKey`, an SFTP target `password` or `privateKey`; left
+        out or empty, the stored ones are kept, unless the type, the S3 endpoint or the SFTP host, port or user
+        changes: then they must be given again. Setting one of `password` and `privateKey` drops the other;
+        `removeCa` drops the stored S3 CA bundle.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupTargetUpdate'
+      responses:
+        '202':
+          description: The target is saved; the schedule follows shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [backups]
+      operationId: deleteBackupTarget
+      summary: Remove a backup target and its secrets
+      description: The copies already on the target stay there.
+      security:
+        - session: []
+      responses:
+        '202':
+          description: The target is removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /backups/targets/{name}/test:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags: [backups]
+      operationId: postBackupTargetTest
+      summary: Test a saved backup target
+      description: Writes a 1 KiB file to the target, reads it back and deletes it. A failure is reported with a fixed reason.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The result of the test.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupTargetTest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/BackupsUnavailable'
 components:
   securitySchemes:
     session:
@@ -1348,6 +1581,12 @@ components:
             format: binary
     ServiceUnavailable:
       description: The node's Talos API cannot be reached at the moment.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BackupsUnavailable:
+      description: The manager runs without backups.
       content:
         application/json:
           schema:
@@ -1580,6 +1819,8 @@ components:
           $ref: '#/components/schemas/DataVolume'
         recoveryKit:
           $ref: '#/components/schemas/RecoveryKit'
+        backup:
+          $ref: '#/components/schemas/StatusBackup'
     DataVolume:
       type: object
       description: The size and free space of the data volume; absent while the manager cannot read it.
@@ -1740,14 +1981,15 @@ components:
           format: date-time
         user:
           type: string
-          description: The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise.
+          description: The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise.
         action:
           type: string
           enum: [sign-in, sign-out, wizard-platform, admin-credential, node-settings, reboot, shutdown, certificate-upload,
             certificate-csr, certificate-signed, certificate-builtin, trust-add, trust-remove, registry-set,
             registry-remove, platform-settings, mail-settings, mail-remove, mail-test, kubeconfig-issue,
             kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
-            recovery-kit-confirm]
+            recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
+            backup-target-test, backup-host-key-scan]
         result:
           type: string
           enum: [success, failure, denied]
@@ -2147,3 +2389,248 @@ components:
               enum: [connect, tls, auth, send]
               x-enum-varnames: [StageConnect, StageTLS, StageAuth, StageSend]
               description: The stage that failed.
+    BackupRecord:
+      type: object
+      required: [name, time, sizeBytes, database]
+      properties:
+        name:
+          type: string
+        time:
+          type: string
+          format: date-time
+        sizeBytes:
+          type: integer
+          format: int64
+        database:
+          type: string
+          enum: [included, notIncluded]
+          description: >-
+            `notIncluded` when the database did not answer, as an external database may not; its owner must back it
+            up.
+    BackupTargetReason:
+      type: string
+      enum: [unreachable, authFailed, hostKeyMismatch, notFound, noSpace, timeout, failed]
+      description: A fixed reason; the error text of the target is never passed on.
+    BackupTargetHealth:
+      type: object
+      required: [name, warning]
+      properties:
+        name:
+          type: string
+        lastSuccess:
+          type: string
+          format: date-time
+        lastAttempt:
+          type: string
+          format: date-time
+        lastError:
+          $ref: '#/components/schemas/BackupTargetReason'
+        warning:
+          type: boolean
+          description: >-
+            Twice the target's interval passed since its last successful copy, or no copy succeeded although one was
+            attempted; judged at each read.
+    S3Settings:
+      type: object
+      required: [endpoint, bucket]
+      properties:
+        endpoint:
+          type: string
+          description: The https or http URL of the S3 service, without a path; without a scheme it is https.
+        bucket:
+          type: string
+        prefix:
+          type: string
+        region:
+          type: string
+    SFTPSettings:
+      type: object
+      required: [host, path, user, hostKey]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: 22 when left out.
+        path:
+          type: string
+        user:
+          type: string
+        hostKey:
+          type: string
+          description: The SHA256 fingerprint of the accepted host key, as the host key scan returns it.
+    NFSSettings:
+      type: object
+      required: [server, export]
+      properties:
+        server:
+          type: string
+        export:
+          type: string
+        path:
+          type: string
+        version:
+          type: string
+          enum: ['3', '4.1', '4.2']
+          description: 4.1 when left out.
+    BackupSecretsSet:
+      type: object
+      description: Which secrets of the target are stored; never their values.
+      required: [accessKey, secretKey, ca, password, privateKey]
+      properties:
+        accessKey:
+          type: boolean
+        secretKey:
+          type: boolean
+        ca:
+          type: boolean
+        password:
+          type: boolean
+        privateKey:
+          type: boolean
+    BackupTarget:
+      type: object
+      required: [name, type, schedule, timeZone, retention, secretsSet, health]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [s3, sftp, nfs]
+        schedule:
+          type: string
+        timeZone:
+          type: string
+        retention:
+          type: integer
+        s3:
+          $ref: '#/components/schemas/S3Settings'
+        sftp:
+          $ref: '#/components/schemas/SFTPSettings'
+        nfs:
+          $ref: '#/components/schemas/NFSSettings'
+        secretsSet:
+          $ref: '#/components/schemas/BackupSecretsSet'
+        health:
+          $ref: '#/components/schemas/BackupTargetHealth'
+    BackupTargetUpdate:
+      type: object
+      required: [type, timeZone]
+      properties:
+        type:
+          type: string
+          enum: [s3, sftp, nfs]
+        schedule:
+          type: string
+          description: A five-field cron expression; `0 2 * * *` when left out.
+        timeZone:
+          type: string
+          description: The IANA time zone of the schedule, such as Europe/Prague.
+        retention:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: The backups kept on the target; 14 when left out.
+        s3:
+          allOf:
+            - $ref: '#/components/schemas/S3Settings'
+            - type: object
+              properties:
+                accessKey:
+                  type: string
+                  format: password
+                  writeOnly: true
+                secretKey:
+                  type: string
+                  format: password
+                  writeOnly: true
+                ca:
+                  type: string
+                  writeOnly: true
+                  description: The PEM CA bundle that signs the endpoint's certificate, when it is not publicly trusted.
+                removeCa:
+                  type: boolean
+                  description: Removes the stored CA bundle; the endpoint must then be publicly trusted.
+        sftp:
+          allOf:
+            - $ref: '#/components/schemas/SFTPSettings'
+            - type: object
+              properties:
+                password:
+                  type: string
+                  format: password
+                  writeOnly: true
+                privateKey:
+                  type: string
+                  format: password
+                  writeOnly: true
+                  description: An OpenSSH or PEM private key without a passphrase.
+        nfs:
+          $ref: '#/components/schemas/NFSSettings'
+    Backups:
+      type: object
+      required: [running, local, targets]
+      properties:
+        running:
+          type: boolean
+        last:
+          $ref: '#/components/schemas/BackupRecord'
+        local:
+          type: array
+          description: The backups on the data volume, newest first.
+          items:
+            $ref: '#/components/schemas/BackupRecord'
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupTarget'
+        healthy:
+          $ref: '#/components/schemas/Condition'
+        lastRestoreTest:
+          type: string
+          format: date-time
+          description: When a restore test last succeeded.
+    StatusBackup:
+      type: object
+      required: [running, targets]
+      properties:
+        running:
+          type: boolean
+        last:
+          $ref: '#/components/schemas/BackupRecord'
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackupTargetHealth'
+        lastRestoreTest:
+          type: string
+          format: date-time
+          description: When a restore test last succeeded; absent when none did.
+    BackupTargetTest:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        reason:
+          $ref: '#/components/schemas/BackupTargetReason'
+    HostKeyRequest:
+      type: object
+      required: [host]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: 22 when left out.
+    HostKey:
+      type: object
+      required: [fingerprint]
+      properties:
+        fingerprint:
+          type: string
+          description: The SHA256 fingerprint of the host key, as ssh-keygen -l prints it.

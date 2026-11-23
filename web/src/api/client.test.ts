@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, createApiClient, setCsrfToken, setUnauthorizedHandler } from './client';
+import { api, createApiClient, requestTimeoutMs, setCsrfToken, setUnauthorizedHandler, timeoutSignal } from './client';
 
 function reply(status: number, body: unknown = {}) {
   return vi.fn<(request: Request) => Promise<Response>>(async () => new Response(status === 204 ? null : JSON.stringify(body), {
@@ -68,5 +68,23 @@ describe('api client', () => {
     vi.stubGlobal('fetch', reply(401, { code: 'unauthorized', message: 'No session.' }));
     await client.GET(path);
     expect(unauthorized).not.toHaveBeenCalled();
+  });
+});
+
+describe('timeoutSignal', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('aborts after the read limit by default, or after the given time', () => {
+    vi.useFakeTimers();
+    const read = timeoutSignal();
+    const slow = timeoutSignal(2 * requestTimeoutMs);
+    vi.advanceTimersByTime(requestTimeoutMs - 1);
+    expect(read.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(read.aborted).toBe(true);
+    expect(read.reason).toBeInstanceOf(DOMException);
+    expect(slow.aborted).toBe(false);
+    vi.advanceTimersByTime(requestTimeoutMs);
+    expect(slow.aborted).toBe(true);
   });
 });

@@ -59,3 +59,30 @@ func TestConnectorRegistryHost(t *testing.T) {
 		}
 	}
 }
+
+func TestPinnedImage(t *testing.T) {
+	m := &Manifest{Images: []Image{
+		{Ref: "docker.io/library/busybox:latest", Digest: "sha256:1"},
+		{Ref: "ghcr.io/example/tool:2", Digest: "sha256:2"},
+		{Ref: "registry.example.com/pinned:3@sha256:3", Digest: "sha256:3"},
+		{Ref: "registry.example.com/untagged@sha256:4", Digest: "sha256:4"},
+	}}
+	for _, tc := range []struct{ name, want string }{
+		{"busybox", "docker.io/library/busybox:latest@sha256:1"},
+		{"library/busybox:latest", "docker.io/library/busybox:latest@sha256:1"},
+		{"busybox@sha256:1", "docker.io/library/busybox:latest@sha256:1"},
+		{"ghcr.io/example/tool:2", "ghcr.io/example/tool:2@sha256:2"},
+		{"registry.example.com/pinned:3", "registry.example.com/pinned:3@sha256:3"},
+		{"registry.example.com/pinned:3@sha256:3", "registry.example.com/pinned:3@sha256:3"},
+		{"registry.example.com/untagged", "registry.example.com/untagged:latest@sha256:4"},
+	} {
+		if got, err := m.PinnedImage(tc.name); err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v, want %q", tc.name, got, err, tc.want)
+		}
+	}
+	for _, name := range []string{"postgresql:18", "busybox@sha256:9", "registry.example.com/pinned:3@sha256:9"} {
+		if got, err := m.PinnedImage(name); err == nil {
+			t.Errorf("%s: got %q, want an error", name, got)
+		}
+	}
+}

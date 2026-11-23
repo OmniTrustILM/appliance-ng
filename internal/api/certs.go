@@ -408,17 +408,19 @@ func (s *Server) writeSystemSecret(ctx context.Context, name string, typ corev1.
 	return s.putSystemSecret(ctx, secret, name, typ, data)
 }
 
-// putSystemSecret creates the Secret name in SystemNamespace when secret, the one read, is nil, and otherwise replaces
-// its data; the update fails with a conflict when the Secret changed since it was read.
+// putSystemSecret creates the Secret name in SystemNamespace when secret, the one read, is nil or was never stored,
+// and otherwise replaces its data; the update fails with a conflict when the Secret changed since it was read.
 func (s *Server) putSystemSecret(ctx context.Context, secret *corev1.Secret, name string, typ corev1.SecretType, data map[string][]byte) error {
 	if secret == nil {
-		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: name}, Type: typ, Data: data}
+		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: name}, Type: typ}
+	}
+	secret.Data = data
+	if secret.ResourceVersion == "" {
 		if err := s.deps.Client.Create(ctx, secret, client.FieldOwner(FieldManager)); err != nil {
 			return fmt.Errorf("create secret %s/%s: %w", SystemNamespace, name, err)
 		}
 		return nil
 	}
-	secret.Data = data
 	if err := s.deps.Client.Update(ctx, secret, client.FieldOwner(FieldManager)); err != nil {
 		return fmt.Errorf("update secret %s/%s: %w", SystemNamespace, name, err)
 	}

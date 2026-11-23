@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
+	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
@@ -124,6 +126,60 @@ func accessAnswers(t *testing.T, h *harness, s *session) {
 	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
 }
 
+// TestManagerRBACCoversTheBackupContent checks, as the manager's ServiceAccount, what a backup needs: exec into the
+// database primary, its Cluster, the Secrets it collects, a short-lived pod for an external database and the volume,
+// claim and pod of an NFS target; and that exec stays within those two namespaces.
+func TestManagerRBACCoversTheBackupContent(t *testing.T) {
+	c := clientFor(t, managerConfig(t))
+	allowed := func(verb, group, resource, ns, name string) bool {
+		t.Helper()
+		review := &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{Verb: verb, Group: group, Resource: resource, Namespace: ns, Name: name},
+		}}
+		if err := c.Create(context.Background(), review); err != nil {
+			t.Fatal(err)
+		}
+		return review.Status.Allowed
+	}
+	for _, tc := range []struct {
+		verb, group, resource, ns, name string
+		want                            bool
+	}{
+		{"create", "", "pods/exec", platform.Namespace, "", true},
+		{"list", "", "pods", platform.Namespace, "", true},
+		{"get", "postgresql.cnpg.io", "clusters", platform.Namespace, "ilm-db", true},
+		{"list", "otilm.com", "connectors", platform.Namespace, "", true},
+		{"get", "", "secrets", platform.Namespace, "ca-keypair", true},
+		{"get", "", "secrets", certs.ClusterResourceNamespace, certs.RootCAName, true},
+		{"create", "", "pods", SystemNamespace, "", true},
+		{"get", "", "pods", SystemNamespace, "", true},
+		{"delete", "", "pods", SystemNamespace, "", true},
+		{"create", "", "pods/exec", SystemNamespace, "", true},
+		{"create", "", "persistentvolumes", "", "", true},
+		{"get", "", "persistentvolumes", "", "", true},
+		{"delete", "", "persistentvolumes", "", "", true},
+		{"list", "", "persistentvolumes", "", "", true},
+		{"list", "", "persistentvolumeclaims", SystemNamespace, "", true},
+		{"list", "", "persistentvolumeclaims", platform.Namespace, "", false},
+		{"create", "", "persistentvolumeclaims", SystemNamespace, "", true},
+		{"get", "", "persistentvolumeclaims", SystemNamespace, "", true},
+		{"delete", "", "persistentvolumeclaims", SystemNamespace, "", true},
+		{"create", "", "persistentvolumeclaims", platform.Namespace, "", false},
+		{"update", "", "persistentvolumes", "", "", false},
+		{"create", "", "pods", platform.Namespace, "", false},
+		{"delete", "", "pods", platform.Namespace, "", false},
+		{"create", "", "pods/exec", "kube-system", "", false},
+		{"get", "", "pods", platform.Namespace, "", false},
+		{"get", "postgresql.cnpg.io", "clusters", platform.Namespace, "other", false},
+		{"get", "", "secrets", certs.ClusterResourceNamespace, "another", false},
+		{"list", "", "secrets", certs.ClusterResourceNamespace, "", false},
+	} {
+		if got := allowed(tc.verb, tc.group, tc.resource, tc.ns, tc.name); got != tc.want {
+			t.Errorf("%s %s/%s %s in %s: allowed = %v, want %v", tc.verb, tc.group, tc.resource, tc.name, tc.ns, got, tc.want)
+		}
+	}
+}
+
 func clientFor(t *testing.T, cfg *rest.Config) client.Client {
 	t.Helper()
 	c, err := client.New(cfg, client.Options{Scheme: testClient.Scheme()})
@@ -151,7 +207,7 @@ func managerConfig(t *testing.T) *rest.Config {
 			}
 			t.Fatal(err)
 		}
-		if obj.GroupVersionKind().Group != rbacv1.GroupName || !slices.Contains([]string{"", SystemNamespace, platform.Namespace, access.Namespace}, obj.GetNamespace()) {
+		if obj.GroupVersionKind().Group != rbacv1.GroupName || !slices.Contains([]string{"", SystemNamespace, platform.Namespace, access.Namespace, certs.ClusterResourceNamespace}, obj.GetNamespace()) {
 			continue
 		}
 		if err := testClient.Create(ctx, obj); err != nil {

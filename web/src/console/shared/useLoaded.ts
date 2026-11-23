@@ -3,11 +3,15 @@ import { attempt, unreachable } from '../../setup/failure';
 
 type Loaded<T> = { data?: T; error?: { message: string } };
 
-/** Loads one resource when the page opens and again on `reload`; `load` must be a stable function. */
+/**
+ * Loads one resource when the page opens and again on `reload`; `load` must be a stable function.
+ * `settled` counts the reads that ended, failed ones included.
+ */
 export function useLoaded<T>(load: () => Promise<Loaded<T>>) {
   const [reads, setReads] = useState(0);
   const [data, setData] = useState<T>();
   const [error, setError] = useState<string>();
+  const [settled, setSettled] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -19,6 +23,7 @@ export function useLoaded<T>(load: () => Promise<Loaded<T>>) {
       } else {
         setError(result?.error?.message ?? unreachable);
       }
+      setSettled((count) => count + 1);
     });
     return () => {
       active = false;
@@ -26,5 +31,5 @@ export function useLoaded<T>(load: () => Promise<Loaded<T>>) {
   }, [load, reads]);
 
   const reload = useCallback(() => setReads((count) => count + 1), []);
-  return { data, error, reload };
+  return { data, error, reload, settled };
 }

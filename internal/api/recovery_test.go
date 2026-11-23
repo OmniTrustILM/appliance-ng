@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 )
 
@@ -202,6 +204,51 @@ func TestIssueAndConfirmTheKit(t *testing.T) {
 	decode(t, statusRec, &status)
 	if status.RecoveryKit == nil || !status.RecoveryKit.Confirmed || status.RecoveryKit.TalosconfigNotAfter == nil {
 		t.Errorf("status recovery kit %+v", status.RecoveryKit)
+	}
+}
+
+// fakeBackups records the backups the API starts.
+type fakeBackups struct {
+	BackupRunner
+	runs chan []string
+	err  error
+}
+
+func (f *fakeBackups) Run(_ context.Context, reason string, targets []string, opts ...backup.RunOption) (v1alpha1.BackupRecord, error) {
+	f.runs <- append([]string{reason, fmt.Sprint(len(opts))}, targets...)
+	return v1alpha1.BackupRecord{}, f.err
+}
+
+func TestConfirmStartsABackup(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	withKitAccess(t, h)
+	a := getAppliance(t)
+	a.Spec.Backup = &v1alpha1.BackupSpec{Targets: []v1alpha1.BackupTarget{
+		{Name: "s3", Type: v1alpha1.BackupTypeS3, Retention: 14, S3: &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "b"}},
+		{Name: "nfs", Type: v1alpha1.BackupTypeNFS, Retention: 14, NFS: &v1alpha1.NFSTarget{Server: "nfs.example.com", Export: "/e"}},
+	}}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeBackups{runs: make(chan []string, 1), err: backup.ErrBusy}
+	h.srv.deps.Backups = runner
+
+	issueKit(t, h, s)
+	select {
+	case run := <-runner.runs:
+		t.Fatalf("a backup started before the kit was confirmed: %v", run)
+	default:
+	}
+	wantStatus(t, confirmStored(t, h, s), http.StatusNoContent)
+	select {
+	case run := <-runner.runs:
+		// The one option records the confirming user.
+		if want := []string{backup.RunReplace, "1", "s3", "nfs"}; !reflect.DeepEqual(run, want) {
+			t.Errorf("backup %v, want %v", run, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no backup started after the kit was confirmed")
 	}
 }
 

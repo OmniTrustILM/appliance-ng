@@ -59,6 +59,12 @@ func (e ApplianceSettingsTlsSource) Valid() bool {
 // Defines values for AuditEntryAction.
 const (
 	AuditEntryActionAdminCredential    AuditEntryAction = "admin-credential"
+	AuditEntryActionBackup             AuditEntryAction = "backup"
+	AuditEntryActionBackupDownload     AuditEntryAction = "backup-download"
+	AuditEntryActionBackupHostKeyScan  AuditEntryAction = "backup-host-key-scan"
+	AuditEntryActionBackupTargetRemove AuditEntryAction = "backup-target-remove"
+	AuditEntryActionBackupTargetSet    AuditEntryAction = "backup-target-set"
+	AuditEntryActionBackupTargetTest   AuditEntryAction = "backup-target-test"
 	AuditEntryActionCertificateBuiltin AuditEntryAction = "certificate-builtin"
 	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
 	AuditEntryActionCertificateSigned  AuditEntryAction = "certificate-signed"
@@ -90,6 +96,18 @@ const (
 func (e AuditEntryAction) Valid() bool {
 	switch e {
 	case AuditEntryActionAdminCredential:
+		return true
+	case AuditEntryActionBackup:
+		return true
+	case AuditEntryActionBackupDownload:
+		return true
+	case AuditEntryActionBackupHostKeyScan:
+		return true
+	case AuditEntryActionBackupTargetRemove:
+		return true
+	case AuditEntryActionBackupTargetSet:
+		return true
+	case AuditEntryActionBackupTargetTest:
 		return true
 	case AuditEntryActionCertificateBuiltin:
 		return true
@@ -161,6 +179,99 @@ func (e AuditEntryResult) Valid() bool {
 	case Failure:
 		return true
 	case Success:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupRecordDatabase.
+const (
+	Included    BackupRecordDatabase = "included"
+	NotIncluded BackupRecordDatabase = "notIncluded"
+)
+
+// Valid indicates whether the value is a known member of the BackupRecordDatabase enum.
+func (e BackupRecordDatabase) Valid() bool {
+	switch e {
+	case Included:
+		return true
+	case NotIncluded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupTargetType.
+const (
+	BackupTargetTypeNfs  BackupTargetType = "nfs"
+	BackupTargetTypeS3   BackupTargetType = "s3"
+	BackupTargetTypeSftp BackupTargetType = "sftp"
+)
+
+// Valid indicates whether the value is a known member of the BackupTargetType enum.
+func (e BackupTargetType) Valid() bool {
+	switch e {
+	case BackupTargetTypeNfs:
+		return true
+	case BackupTargetTypeS3:
+		return true
+	case BackupTargetTypeSftp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupTargetReason.
+const (
+	BackupTargetReasonAuthFailed      BackupTargetReason = "authFailed"
+	BackupTargetReasonFailed          BackupTargetReason = "failed"
+	BackupTargetReasonHostKeyMismatch BackupTargetReason = "hostKeyMismatch"
+	BackupTargetReasonNoSpace         BackupTargetReason = "noSpace"
+	BackupTargetReasonNotFound        BackupTargetReason = "notFound"
+	BackupTargetReasonTimeout         BackupTargetReason = "timeout"
+	BackupTargetReasonUnreachable     BackupTargetReason = "unreachable"
+)
+
+// Valid indicates whether the value is a known member of the BackupTargetReason enum.
+func (e BackupTargetReason) Valid() bool {
+	switch e {
+	case BackupTargetReasonAuthFailed:
+		return true
+	case BackupTargetReasonFailed:
+		return true
+	case BackupTargetReasonHostKeyMismatch:
+		return true
+	case BackupTargetReasonNoSpace:
+		return true
+	case BackupTargetReasonNotFound:
+		return true
+	case BackupTargetReasonTimeout:
+		return true
+	case BackupTargetReasonUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupTargetUpdateType.
+const (
+	BackupTargetUpdateTypeNfs  BackupTargetUpdateType = "nfs"
+	BackupTargetUpdateTypeS3   BackupTargetUpdateType = "s3"
+	BackupTargetUpdateTypeSftp BackupTargetUpdateType = "sftp"
+)
+
+// Valid indicates whether the value is a known member of the BackupTargetUpdateType enum.
+func (e BackupTargetUpdateType) Valid() bool {
+	switch e {
+	case BackupTargetUpdateTypeNfs:
+		return true
+	case BackupTargetUpdateTypeS3:
+		return true
+	case BackupTargetUpdateTypeSftp:
 		return true
 	default:
 		return false
@@ -269,6 +380,27 @@ func (e MailTestFailureStage) Valid() bool {
 	}
 }
 
+// Defines values for NFSSettingsVersion.
+const (
+	N3  NFSSettingsVersion = "3"
+	N41 NFSSettingsVersion = "4.1"
+	N42 NFSSettingsVersion = "4.2"
+)
+
+// Valid indicates whether the value is a known member of the NFSSettingsVersion enum.
+func (e NFSSettingsVersion) Valid() bool {
+	switch e {
+	case N3:
+		return true
+	case N41:
+		return true
+	case N42:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StatusSetup.
 const (
 	Complete StatusSetup = "complete"
@@ -308,15 +440,30 @@ func (e TalosconfigRequestRole) Valid() bool {
 	}
 }
 
+// Defines values for GetBackupsParamsXBackgroundRefresh.
+const (
+	GetBackupsParamsXBackgroundRefreshN1 GetBackupsParamsXBackgroundRefresh = "1"
+)
+
+// Valid indicates whether the value is a known member of the GetBackupsParamsXBackgroundRefresh enum.
+func (e GetBackupsParamsXBackgroundRefresh) Valid() bool {
+	switch e {
+	case GetBackupsParamsXBackgroundRefreshN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetStatusParamsXBackgroundRefresh.
 const (
-	N1 GetStatusParamsXBackgroundRefresh = "1"
+	GetStatusParamsXBackgroundRefreshN1 GetStatusParamsXBackgroundRefresh = "1"
 )
 
 // Valid indicates whether the value is a known member of the GetStatusParamsXBackgroundRefresh enum.
 func (e GetStatusParamsXBackgroundRefresh) Valid() bool {
 	switch e {
-	case N1:
+	case GetStatusParamsXBackgroundRefreshN1:
 		return true
 	default:
 		return false
@@ -393,7 +540,7 @@ type AuditEntry struct {
 	Result AuditEntryResult `json:"result"`
 	Time   time.Time        `json:"time"`
 
-	// User The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise.
+	// User The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise.
 	User string `json:"user"`
 }
 
@@ -406,6 +553,133 @@ type AuditEntryResult string
 // AuditLog defines model for AuditLog.
 type AuditLog struct {
 	Items []AuditEntry `json:"items"`
+}
+
+// BackupRecord defines model for BackupRecord.
+type BackupRecord struct {
+	// Database `notIncluded` when the database did not answer, as an external database may not; its owner must back it up.
+	Database  BackupRecordDatabase `json:"database"`
+	Name      string               `json:"name"`
+	SizeBytes int64                `json:"sizeBytes"`
+	Time      time.Time            `json:"time"`
+}
+
+// BackupRecordDatabase `notIncluded` when the database did not answer, as an external database may not; its owner must back it up.
+type BackupRecordDatabase string
+
+// BackupSecretsSet Which secrets of the target are stored; never their values.
+type BackupSecretsSet struct {
+	AccessKey  bool `json:"accessKey"`
+	Ca         bool `json:"ca"`
+	Password   bool `json:"password"`
+	PrivateKey bool `json:"privateKey"`
+	SecretKey  bool `json:"secretKey"`
+}
+
+// BackupTarget defines model for BackupTarget.
+type BackupTarget struct {
+	Health    BackupTargetHealth `json:"health"`
+	Name      string             `json:"name"`
+	Nfs       *NFSSettings       `json:"nfs,omitempty"`
+	Retention int                `json:"retention"`
+	S3        *S3Settings        `json:"s3,omitempty"`
+	Schedule  string             `json:"schedule"`
+
+	// SecretsSet Which secrets of the target are stored; never their values.
+	SecretsSet BackupSecretsSet `json:"secretsSet"`
+	Sftp       *SFTPSettings    `json:"sftp,omitempty"`
+	TimeZone   string           `json:"timeZone"`
+	Type       BackupTargetType `json:"type"`
+}
+
+// BackupTargetType defines model for BackupTarget.Type.
+type BackupTargetType string
+
+// BackupTargetHealth defines model for BackupTargetHealth.
+type BackupTargetHealth struct {
+	LastAttempt *time.Time `json:"lastAttempt,omitempty"`
+
+	// LastError A fixed reason; the error text of the target is never passed on.
+	LastError   *BackupTargetReason `json:"lastError,omitempty"`
+	LastSuccess *time.Time          `json:"lastSuccess,omitempty"`
+	Name        string              `json:"name"`
+
+	// Warning Twice the target's interval passed since its last successful copy, or no copy succeeded although one was attempted; judged at each read.
+	Warning bool `json:"warning"`
+}
+
+// BackupTargetReason A fixed reason; the error text of the target is never passed on.
+type BackupTargetReason string
+
+// BackupTargetTest defines model for BackupTargetTest.
+type BackupTargetTest struct {
+	Ok bool `json:"ok"`
+
+	// Reason A fixed reason; the error text of the target is never passed on.
+	Reason *BackupTargetReason `json:"reason,omitempty"`
+}
+
+// BackupTargetUpdate defines model for BackupTargetUpdate.
+type BackupTargetUpdate struct {
+	Nfs *NFSSettings `json:"nfs,omitempty"`
+
+	// Retention The backups kept on the target; 14 when left out.
+	Retention *int `json:"retention,omitempty"`
+	S3        *struct {
+		AccessKey *string `json:"accessKey,omitempty"`
+		Bucket    string  `json:"bucket"`
+
+		// Ca The PEM CA bundle that signs the endpoint's certificate, when it is not publicly trusted.
+		Ca *string `json:"ca,omitempty"`
+
+		// Endpoint The https or http URL of the S3 service, without a path; without a scheme it is https.
+		Endpoint string  `json:"endpoint"`
+		Prefix   *string `json:"prefix,omitempty"`
+		Region   *string `json:"region,omitempty"`
+
+		// RemoveCa Removes the stored CA bundle; the endpoint must then be publicly trusted.
+		RemoveCa  *bool   `json:"removeCa,omitempty"`
+		SecretKey *string `json:"secretKey,omitempty"`
+	} `json:"s3,omitempty"`
+
+	// Schedule A five-field cron expression; `0 2 * * *` when left out.
+	Schedule *string `json:"schedule,omitempty"`
+	Sftp     *struct {
+		Host string `json:"host"`
+
+		// HostKey The SHA256 fingerprint of the accepted host key, as the host key scan returns it.
+		HostKey  string  `json:"hostKey"`
+		Password *string `json:"password,omitempty"`
+		Path     string  `json:"path"`
+
+		// Port 22 when left out.
+		Port *int `json:"port,omitempty"`
+
+		// PrivateKey An OpenSSH or PEM private key without a passphrase.
+		PrivateKey *string `json:"privateKey,omitempty"`
+		User       string  `json:"user"`
+	} `json:"sftp,omitempty"`
+
+	// TimeZone The IANA time zone of the schedule, such as Europe/Prague.
+	TimeZone string                 `json:"timeZone"`
+	Type     BackupTargetUpdateType `json:"type"`
+}
+
+// BackupTargetUpdateType defines model for BackupTargetUpdate.Type.
+type BackupTargetUpdateType string
+
+// Backups defines model for Backups.
+type Backups struct {
+	Healthy *Condition    `json:"healthy,omitempty"`
+	Last    *BackupRecord `json:"last,omitempty"`
+
+	// LastRestoreTest When a restore test last succeeded.
+	LastRestoreTest *time.Time `json:"lastRestoreTest,omitempty"`
+
+	// Local The backups on the data volume, newest first.
+	Local   []BackupRecord `json:"local"`
+	Running bool           `json:"running"`
+	Targets []BackupTarget `json:"targets"`
 }
 
 // Catalogue defines model for Catalogue.
@@ -503,6 +777,20 @@ type Error struct {
 	Message string  `json:"message"`
 }
 
+// HostKey defines model for HostKey.
+type HostKey struct {
+	// Fingerprint The SHA256 fingerprint of the host key, as ssh-keygen -l prints it.
+	Fingerprint string `json:"fingerprint"`
+}
+
+// HostKeyRequest defines model for HostKeyRequest.
+type HostKeyRequest struct {
+	Host string `json:"host"`
+
+	// Port 22 when left out.
+	Port *int `json:"port,omitempty"`
+}
+
 // KubeconfigRequest defines model for KubeconfigRequest.
 type KubeconfigRequest struct {
 	// Hours How long the token is valid; without it the kubeconfig is long-lived and needs `name`.
@@ -578,6 +866,19 @@ type MailTestFailure struct {
 
 // MailTestFailureStage The stage that failed.
 type MailTestFailureStage string
+
+// NFSSettings defines model for NFSSettings.
+type NFSSettings struct {
+	Export string  `json:"export"`
+	Path   *string `json:"path,omitempty"`
+	Server string  `json:"server"`
+
+	// Version 4.1 when left out.
+	Version *NFSSettingsVersion `json:"version,omitempty"`
+}
+
+// NFSSettingsVersion 4.1 when left out.
+type NFSSettingsVersion string
 
 // NodeUpdate defines model for NodeUpdate.
 type NodeUpdate struct {
@@ -722,6 +1023,29 @@ type RegistryList struct {
 	Items []RegistryCredentials `json:"items"`
 }
 
+// S3Settings defines model for S3Settings.
+type S3Settings struct {
+	Bucket string `json:"bucket"`
+
+	// Endpoint The https or http URL of the S3 service, without a path; without a scheme it is https.
+	Endpoint string  `json:"endpoint"`
+	Prefix   *string `json:"prefix,omitempty"`
+	Region   *string `json:"region,omitempty"`
+}
+
+// SFTPSettings defines model for SFTPSettings.
+type SFTPSettings struct {
+	Host string `json:"host"`
+
+	// HostKey The SHA256 fingerprint of the accepted host key, as the host key scan returns it.
+	HostKey string `json:"hostKey"`
+	Path    string `json:"path"`
+
+	// Port 22 when left out.
+	Port *int   `json:"port,omitempty"`
+	User string `json:"user"`
+}
+
 // Session defines model for Session.
 type Session struct {
 	CsrfToken string `json:"csrfToken"`
@@ -760,7 +1084,8 @@ type SignedCertificateUpload struct {
 // Status defines model for Status.
 type Status struct {
 	// AddonStep The add-on being installed while AddonsReady is not true yet.
-	AddonStep *string `json:"addonStep,omitempty"`
+	AddonStep *string       `json:"addonStep,omitempty"`
+	Backup    *StatusBackup `json:"backup,omitempty"`
 
 	// Certificate The certificate the console and ILM serve; absent while none is issued or installed.
 	Certificate *StatusCertificate `json:"certificate,omitempty"`
@@ -781,6 +1106,16 @@ type Status struct {
 
 // StatusSetup defines model for Status.Setup.
 type StatusSetup string
+
+// StatusBackup defines model for StatusBackup.
+type StatusBackup struct {
+	Last *BackupRecord `json:"last,omitempty"`
+
+	// LastRestoreTest When a restore test last succeeded; absent when none did.
+	LastRestoreTest *time.Time           `json:"lastRestoreTest,omitempty"`
+	Running         bool                 `json:"running"`
+	Targets         []BackupTargetHealth `json:"targets"`
+}
 
 // StatusCertificate The certificate the console and ILM serve; absent while none is issued or installed.
 type StatusCertificate struct {
@@ -829,6 +1164,9 @@ type Versions struct {
 	Talos      *string `json:"talos,omitempty"`
 }
 
+// BackupsUnavailable defines model for BackupsUnavailable.
+type BackupsUnavailable = Error
+
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
@@ -862,6 +1200,15 @@ type GetAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetBackupsParams defines parameters for GetBackups.
+type GetBackupsParams struct {
+	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
+	XBackgroundRefresh *GetBackupsParamsXBackgroundRefresh `json:"X-Background-Refresh,omitempty"`
+}
+
+// GetBackupsParamsXBackgroundRefresh defines parameters for GetBackups.
+type GetBackupsParamsXBackgroundRefresh string
+
 // GetStatusParams defines parameters for GetStatus.
 type GetStatusParams struct {
 	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
@@ -876,6 +1223,12 @@ type PostAccessKubeconfigJSONRequestBody = KubeconfigRequest
 
 // PostAccessTalosconfigJSONRequestBody defines body for PostAccessTalosconfig for application/json ContentType.
 type PostAccessTalosconfigJSONRequestBody = TalosconfigRequest
+
+// PostBackupHostKeyJSONRequestBody defines body for PostBackupHostKey for application/json ContentType.
+type PostBackupHostKeyJSONRequestBody = HostKeyRequest
+
+// PutBackupTargetJSONRequestBody defines body for PutBackupTarget for application/json ContentType.
+type PutBackupTargetJSONRequestBody = BackupTargetUpdate
 
 // PutCertificateMultipartRequestBody defines body for PutCertificate for multipart/form-data ContentType.
 type PutCertificateMultipartRequestBody = CertificateUpload
@@ -951,6 +1304,30 @@ type ServerInterface interface {
 	// GetAudit The most recent audit entries, newest first
 	// (GET /audit)
 	GetAudit(w http.ResponseWriter, r *http.Request, params GetAuditParams)
+	// GetBackups The local backups and the backup targets
+	// (GET /backups)
+	GetBackups(w http.ResponseWriter, r *http.Request, params GetBackupsParams)
+	// PostBackups Back up now
+	// (POST /backups)
+	PostBackups(w http.ResponseWriter, r *http.Request)
+	// PostBackupHostKey Read the host key of an SSH server
+	// (POST /backups/targets/hostkey)
+	PostBackupHostKey(w http.ResponseWriter, r *http.Request)
+	// DeleteBackupTarget Remove a backup target and its secrets
+	// (DELETE /backups/targets/{name})
+	DeleteBackupTarget(w http.ResponseWriter, r *http.Request, name string)
+	// GetBackupTarget A backup target
+	// (GET /backups/targets/{name})
+	GetBackupTarget(w http.ResponseWriter, r *http.Request, name string)
+	// PutBackupTarget Add a backup target or replace its settings
+	// (PUT /backups/targets/{name})
+	PutBackupTarget(w http.ResponseWriter, r *http.Request, name string)
+	// PostBackupTargetTest Test a saved backup target
+	// (POST /backups/targets/{name}/test)
+	PostBackupTargetTest(w http.ResponseWriter, r *http.Request, name string)
+	// GetBackup Download a local backup
+	// (GET /backups/{name})
+	GetBackup(w http.ResponseWriter, r *http.Request, name string)
 	// GetCaPem The root certificate of the built-in certificate authority
 	// (GET /ca.pem)
 	GetCaPem(w http.ResponseWriter, r *http.Request)
@@ -1173,6 +1550,205 @@ func (siw *ServerInterfaceWrapper) GetAudit(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAudit(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBackups operation middleware
+func (siw *ServerInterfaceWrapper) GetBackups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetBackupsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Background-Refresh" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Background-Refresh")]; found {
+		var XBackgroundRefresh GetBackupsParamsXBackgroundRefresh
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Background-Refresh", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Background-Refresh", valueList[0], &XBackgroundRefresh, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Background-Refresh", Err: err})
+			return
+		}
+
+		params.XBackgroundRefresh = &XBackgroundRefresh
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBackups(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostBackups operation middleware
+func (siw *ServerInterfaceWrapper) PostBackups(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostBackups(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostBackupHostKey operation middleware
+func (siw *ServerInterfaceWrapper) PostBackupHostKey(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostBackupHostKey(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteBackupTarget operation middleware
+func (siw *ServerInterfaceWrapper) DeleteBackupTarget(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteBackupTarget(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBackupTarget operation middleware
+func (siw *ServerInterfaceWrapper) GetBackupTarget(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBackupTarget(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutBackupTarget operation middleware
+func (siw *ServerInterfaceWrapper) PutBackupTarget(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutBackupTarget(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostBackupTargetTest operation middleware
+func (siw *ServerInterfaceWrapper) PostBackupTargetTest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostBackupTargetTest(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetBackup operation middleware
+func (siw *ServerInterfaceWrapper) GetBackup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetBackup(w, r, name)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1908,9 +2484,19 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit/reissue", wrapper.PostRecoveryKitReissue)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit/replace", wrapper.PostRecoveryKitReplace)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/recovery-kit/confirm", wrapper.PostRecoveryKitConfirm)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/backups", wrapper.GetBackups)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/backups", wrapper.PostBackups)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/backups/{name}", wrapper.GetBackup)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/backups/targets/hostkey", wrapper.PostBackupHostKey)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/backups/targets/{name}", wrapper.DeleteBackupTarget)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/backups/targets/{name}", wrapper.GetBackupTarget)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/backups/targets/{name}", wrapper.PutBackupTarget)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/backups/targets/{name}/test", wrapper.PostBackupTargetTest)
 
 	return m
 }
+
+type BackupsUnavailableJSONResponse Error
 
 type BadRequestJSONResponse Error
 
@@ -2327,6 +2913,612 @@ func (response GetAudit401JSONResponse) VisitGetAuditResponse(w http.ResponseWri
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackupsRequestObject struct {
+	Params GetBackupsParams
+}
+
+type GetBackupsResponseObject interface {
+	VisitGetBackupsResponse(w http.ResponseWriter) error
+}
+
+type GetBackups200JSONResponse Backups
+
+func (response GetBackups200JSONResponse) VisitGetBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackups401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetBackups401JSONResponse) VisitGetBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackups409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetBackups409JSONResponse) VisitGetBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupsRequestObject struct {
+}
+
+type PostBackupsResponseObject interface {
+	VisitPostBackupsResponse(w http.ResponseWriter) error
+}
+
+type PostBackups202Response struct {
+}
+
+func (response PostBackups202Response) VisitPostBackupsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostBackups401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostBackups401JSONResponse) VisitPostBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackups403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostBackups403JSONResponse) VisitPostBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackups409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostBackups409JSONResponse) VisitPostBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackups503JSONResponse struct{ BackupsUnavailableJSONResponse }
+
+func (response PostBackups503JSONResponse) VisitPostBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKeyRequestObject struct {
+	Body *PostBackupHostKeyJSONRequestBody
+}
+
+type PostBackupHostKeyResponseObject interface {
+	VisitPostBackupHostKeyResponse(w http.ResponseWriter) error
+}
+
+type PostBackupHostKey200JSONResponse HostKey
+
+func (response PostBackupHostKey200JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKey400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostBackupHostKey400JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKey401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostBackupHostKey401JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKey403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostBackupHostKey403JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKey409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostBackupHostKey409JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKey502JSONResponse Error
+
+func (response PostBackupHostKey502JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupHostKey503JSONResponse struct{ BackupsUnavailableJSONResponse }
+
+func (response PostBackupHostKey503JSONResponse) VisitPostBackupHostKeyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBackupTargetRequestObject struct {
+	Name string `json:"name"`
+}
+
+type DeleteBackupTargetResponseObject interface {
+	VisitDeleteBackupTargetResponse(w http.ResponseWriter) error
+}
+
+type DeleteBackupTarget202Response struct {
+}
+
+func (response DeleteBackupTarget202Response) VisitDeleteBackupTargetResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type DeleteBackupTarget401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response DeleteBackupTarget401JSONResponse) VisitDeleteBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBackupTarget403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response DeleteBackupTarget403JSONResponse) VisitDeleteBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBackupTarget404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response DeleteBackupTarget404JSONResponse) VisitDeleteBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteBackupTarget409JSONResponse struct{ ConflictJSONResponse }
+
+func (response DeleteBackupTarget409JSONResponse) VisitDeleteBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackupTargetRequestObject struct {
+	Name string `json:"name"`
+}
+
+type GetBackupTargetResponseObject interface {
+	VisitGetBackupTargetResponse(w http.ResponseWriter) error
+}
+
+type GetBackupTarget200JSONResponse BackupTarget
+
+func (response GetBackupTarget200JSONResponse) VisitGetBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackupTarget401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetBackupTarget401JSONResponse) VisitGetBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackupTarget404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetBackupTarget404JSONResponse) VisitGetBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackupTarget409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetBackupTarget409JSONResponse) VisitGetBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBackupTargetRequestObject struct {
+	Name string `json:"name"`
+	Body *PutBackupTargetJSONRequestBody
+}
+
+type PutBackupTargetResponseObject interface {
+	VisitPutBackupTargetResponse(w http.ResponseWriter) error
+}
+
+type PutBackupTarget202Response struct {
+}
+
+func (response PutBackupTarget202Response) VisitPutBackupTargetResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutBackupTarget400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutBackupTarget400JSONResponse) VisitPutBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBackupTarget401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutBackupTarget401JSONResponse) VisitPutBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBackupTarget403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutBackupTarget403JSONResponse) VisitPutBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutBackupTarget409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutBackupTarget409JSONResponse) VisitPutBackupTargetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupTargetTestRequestObject struct {
+	Name string `json:"name"`
+}
+
+type PostBackupTargetTestResponseObject interface {
+	VisitPostBackupTargetTestResponse(w http.ResponseWriter) error
+}
+
+type PostBackupTargetTest200JSONResponse BackupTargetTest
+
+func (response PostBackupTargetTest200JSONResponse) VisitPostBackupTargetTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupTargetTest401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostBackupTargetTest401JSONResponse) VisitPostBackupTargetTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupTargetTest403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostBackupTargetTest403JSONResponse) VisitPostBackupTargetTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupTargetTest404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PostBackupTargetTest404JSONResponse) VisitPostBackupTargetTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupTargetTest409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostBackupTargetTest409JSONResponse) VisitPostBackupTargetTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostBackupTargetTest503JSONResponse struct{ BackupsUnavailableJSONResponse }
+
+func (response PostBackupTargetTest503JSONResponse) VisitPostBackupTargetTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackupRequestObject struct {
+	Name string `json:"name"`
+}
+
+type GetBackupResponseObject interface {
+	VisitGetBackupResponse(w http.ResponseWriter) error
+}
+
+type GetBackup200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type GetBackup200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	Headers       GetBackup200ResponseHeaders
+	ContentLength int64
+}
+
+func (response GetBackup200ApplicationoctetStreamResponse) VisitGetBackupResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetBackup401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetBackup401JSONResponse) VisitGetBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackup404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetBackup404JSONResponse) VisitGetBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetBackup503JSONResponse struct{ BackupsUnavailableJSONResponse }
+
+func (response GetBackup503JSONResponse) VisitGetBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -4654,6 +5846,30 @@ type StrictServerInterface interface {
 	// GetAudit The most recent audit entries, newest first
 	// (GET /audit)
 	GetAudit(ctx context.Context, request GetAuditRequestObject) (GetAuditResponseObject, error)
+	// GetBackups The local backups and the backup targets
+	// (GET /backups)
+	GetBackups(ctx context.Context, request GetBackupsRequestObject) (GetBackupsResponseObject, error)
+	// PostBackups Back up now
+	// (POST /backups)
+	PostBackups(ctx context.Context, request PostBackupsRequestObject) (PostBackupsResponseObject, error)
+	// PostBackupHostKey Read the host key of an SSH server
+	// (POST /backups/targets/hostkey)
+	PostBackupHostKey(ctx context.Context, request PostBackupHostKeyRequestObject) (PostBackupHostKeyResponseObject, error)
+	// DeleteBackupTarget Remove a backup target and its secrets
+	// (DELETE /backups/targets/{name})
+	DeleteBackupTarget(ctx context.Context, request DeleteBackupTargetRequestObject) (DeleteBackupTargetResponseObject, error)
+	// GetBackupTarget A backup target
+	// (GET /backups/targets/{name})
+	GetBackupTarget(ctx context.Context, request GetBackupTargetRequestObject) (GetBackupTargetResponseObject, error)
+	// PutBackupTarget Add a backup target or replace its settings
+	// (PUT /backups/targets/{name})
+	PutBackupTarget(ctx context.Context, request PutBackupTargetRequestObject) (PutBackupTargetResponseObject, error)
+	// PostBackupTargetTest Test a saved backup target
+	// (POST /backups/targets/{name}/test)
+	PostBackupTargetTest(ctx context.Context, request PostBackupTargetTestRequestObject) (PostBackupTargetTestResponseObject, error)
+	// GetBackup Download a local backup
+	// (GET /backups/{name})
+	GetBackup(ctx context.Context, request GetBackupRequestObject) (GetBackupResponseObject, error)
 	// GetCaPem The root certificate of the built-in certificate authority
 	// (GET /ca.pem)
 	GetCaPem(ctx context.Context, request GetCaPemRequestObject) (GetCaPemResponseObject, error)
@@ -4955,6 +6171,224 @@ func (sh *strictHandler) GetAudit(w http.ResponseWriter, r *http.Request, params
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetAuditResponseObject); ok {
 		if err := validResponse.VisitGetAuditResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBackups operation middleware
+func (sh *strictHandler) GetBackups(w http.ResponseWriter, r *http.Request, params GetBackupsParams) {
+	var request GetBackupsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBackups(ctx, request.(GetBackupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBackups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBackupsResponseObject); ok {
+		if err := validResponse.VisitGetBackupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostBackups operation middleware
+func (sh *strictHandler) PostBackups(w http.ResponseWriter, r *http.Request) {
+	var request PostBackupsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostBackups(ctx, request.(PostBackupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostBackups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostBackupsResponseObject); ok {
+		if err := validResponse.VisitPostBackupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostBackupHostKey operation middleware
+func (sh *strictHandler) PostBackupHostKey(w http.ResponseWriter, r *http.Request) {
+	var request PostBackupHostKeyRequestObject
+
+	var body PostBackupHostKeyJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostBackupHostKey(ctx, request.(PostBackupHostKeyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostBackupHostKey")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostBackupHostKeyResponseObject); ok {
+		if err := validResponse.VisitPostBackupHostKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteBackupTarget operation middleware
+func (sh *strictHandler) DeleteBackupTarget(w http.ResponseWriter, r *http.Request, name string) {
+	var request DeleteBackupTargetRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteBackupTarget(ctx, request.(DeleteBackupTargetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteBackupTarget")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteBackupTargetResponseObject); ok {
+		if err := validResponse.VisitDeleteBackupTargetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBackupTarget operation middleware
+func (sh *strictHandler) GetBackupTarget(w http.ResponseWriter, r *http.Request, name string) {
+	var request GetBackupTargetRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBackupTarget(ctx, request.(GetBackupTargetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBackupTarget")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBackupTargetResponseObject); ok {
+		if err := validResponse.VisitGetBackupTargetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutBackupTarget operation middleware
+func (sh *strictHandler) PutBackupTarget(w http.ResponseWriter, r *http.Request, name string) {
+	var request PutBackupTargetRequestObject
+
+	request.Name = name
+
+	var body PutBackupTargetJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutBackupTarget(ctx, request.(PutBackupTargetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutBackupTarget")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutBackupTargetResponseObject); ok {
+		if err := validResponse.VisitPutBackupTargetResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostBackupTargetTest operation middleware
+func (sh *strictHandler) PostBackupTargetTest(w http.ResponseWriter, r *http.Request, name string) {
+	var request PostBackupTargetTestRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostBackupTargetTest(ctx, request.(PostBackupTargetTestRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostBackupTargetTest")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostBackupTargetTestResponseObject); ok {
+		if err := validResponse.VisitPostBackupTargetTestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetBackup operation middleware
+func (sh *strictHandler) GetBackup(w http.ResponseWriter, r *http.Request, name string) {
+	var request GetBackupRequestObject
+
+	request.Name = name
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetBackup(ctx, request.(GetBackupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetBackup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetBackupResponseObject); ok {
+		if err := validResponse.VisitGetBackupResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
