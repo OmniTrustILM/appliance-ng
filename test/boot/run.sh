@@ -38,6 +38,8 @@ PRESET_KEY=io.otilm.appliance.setup-code-sha256=
 ADMIN='admin'
 # QEMU's user network with restrict=on offers no router or DNS server by DHCP; wizard part 1 sets these.
 KUBE_API=127.0.0.1:16443
+# An unused address of QEMU's user network at which the guest reaches the SFTP and S3 servers on the host (see vm.sh).
+HOST_ALIAS=10.0.2.100
 GATEWAY=10.0.2.2
 DNS=10.0.2.3
 E2E="${E2E:-0}"
@@ -55,7 +57,7 @@ seed_file="$dir/totp.seed"
 kit_file="$dir/recovery-kit.tar.age"
 kit_passphrase_file="$dir/kit.passphrase"
 setup_cert="$dir/setup-cert.pem"
-# serve-targets keeps the SFTP and S3 files in targets_dir; the guest reaches the ports at 10.0.2.100 (see vm.sh).
+# serve-targets keeps the SFTP and S3 files and the CA of the S3 server's certificate in targets_dir.
 targets_dir="$dir/targets"
 sftp_password_file="$dir/sftp.password"
 s3_secret_file="$dir/s3.secret"
@@ -161,8 +163,8 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access> [<SFTP hos
     check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$UI_HOST:10443" --ui-addr "$UI_ADDR") ;;
     kit) args+=(--out "$kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     backup) args+=(--kit "$kit_file" --passphrase-file "$kit_passphrase_file" --dir "$targets_dir"
-      --sftp-fingerprint "$fingerprint" --sftp-password-file "$sftp_password_file" --s3-secret-file "$s3_secret_file"
-      --kube-addr "$KUBE_API" --apid "$APID") ;;
+      --guest-host "$HOST_ALIAS" --sftp-fingerprint "$fingerprint" --sftp-password-file "$sftp_password_file"
+      --s3-secret-file "$s3_secret_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     access) args+=(--kube-addr "$KUBE_API" --apid "$APID") ;;
     *) fail "unknown wizard part $part" ;;
   esac
@@ -173,7 +175,7 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access> [<SFTP hos
 serve_targets() {
   local _
   mkdir -p "$targets_dir"
-  "$drive" serve-targets --sftp 127.0.0.1:2222 --s3 127.0.0.1:9000 --dir "$targets_dir" \
+  "$drive" serve-targets --sftp 127.0.0.1:2222 --s3 127.0.0.1:9000 --dir "$targets_dir" --guest-host "$HOST_ALIAS" \
     --sftp-password-file "$sftp_password_file" --s3-secret-file "$s3_secret_file" >"$targets_log" 2>&1 &
   targets_pid=$!
   for _ in $(seq 20); do
@@ -221,7 +223,7 @@ trap 'rm -f "$kit_file" "$kit_passphrase_file" "$sftp_password_file" "$s3_secret
 (umask 077 && printf '%s' "$kit_passphrase" >"$kit_passphrase_file" &&
   printf '%s' "$sftp_password" >"$sftp_password_file" && printf '%s' "$s3_secret" >"$s3_secret_file") ||
   fail "could not write the secret files"
-SMBIOS_OEM="$PRESET_KEY$code_hash" "$VM" start "$mode" "$arch" "$dir" || fail "VM did not start"
+HOST_ALIAS="$HOST_ALIAS" SMBIOS_OEM="$PRESET_KEY$code_hash" "$VM" start "$mode" "$arch" "$dir" || fail "VM did not start"
 start=$SECONDS
 
 reached=false last="" part1=false part2=false

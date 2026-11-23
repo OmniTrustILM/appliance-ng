@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"io"
 	"net"
 	"net/http"
@@ -25,7 +27,7 @@ func startTestTargets(t *testing.T) (*servedTargets, string) {
 	t.Helper()
 	dir := t.TempDir()
 	served, err := startTargets(targetsConfig{
-		sftpListen: "127.0.0.1:0", s3Listen: "127.0.0.1:0", dir: dir,
+		sftpListen: "127.0.0.1:0", s3Listen: "127.0.0.1:0", guestHost: "127.0.0.1", dir: dir,
 		sftpPassword: testSFTPPassword, s3Secret: testS3Secret,
 	})
 	if err != nil {
@@ -120,8 +122,9 @@ func TestServeTargetsRoundTrip(t *testing.T) {
 
 	t.Run("s3", func(t *testing.T) {
 		spec := v1alpha1.BackupTarget{Name: "s3", Type: v1alpha1.BackupTypeS3, S3: &v1alpha1.S3Target{
-			Endpoint: "http://" + served.s3Addr, Bucket: s3Bucket, Prefix: s3Prefix, Region: "us-east-1"}}
-		creds := map[string][]byte{target.AccessKeyKey: []byte(s3AccessKey), target.SecretKeyKey: []byte(testS3Secret)}
+			Endpoint: "https://" + served.s3Addr, Bucket: s3Bucket, Prefix: s3Prefix, Region: "us-east-1"}}
+		creds := map[string][]byte{target.AccessKeyKey: []byte(s3AccessKey), target.SecretKeyKey: []byte(testS3Secret),
+			target.CAKey: readCA(t, dir)}
 		tg, err := target.New(spec, creds, target.Deps{})
 		if err != nil {
 			t.Fatal(err)
@@ -130,12 +133,12 @@ func TestServeTargetsRoundTrip(t *testing.T) {
 	})
 
 	t.Run("s3 refuses another access key", func(t *testing.T) {
-		req, err := http.NewRequest(http.MethodGet, "http://"+served.s3Addr+"/"+s3Bucket, nil)
+		req, err := http.NewRequest(http.MethodGet, "https://"+served.s3Addr+"/"+s3Bucket, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=other/20260101/us-east-1/s3/aws4_request")
-		res, err := http.DefaultClient.Do(req)
+		res, err := caClient(t, dir).Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,6 +147,41 @@ func TestServeTargetsRoundTrip(t *testing.T) {
 			t.Errorf("status = %d, want 403", res.StatusCode)
 		}
 	})
+
+	t.Run("s3 serves no plain HTTP and no certificate of another host", func(t *testing.T) {
+		res, err := http.Get("http://" + served.s3Addr + "/" + s3Bucket)
+		if err == nil {
+			_ = res.Body.Close()
+			if res.StatusCode != http.StatusBadRequest {
+				t.Errorf("plain HTTP status = %d, want 400", res.StatusCode)
+			}
+		}
+		client := caClient(t, dir)
+		client.Transport.(*http.Transport).TLSClientConfig.ServerName = "other.test"
+		if res, err := client.Get("https://" + served.s3Addr + "/" + s3Bucket); err == nil {
+			_ = res.Body.Close()
+			t.Error("the S3 certificate is valid for another host")
+		}
+	})
+}
+
+func readCA(t *testing.T, dir string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(s3CAFile(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// caClient trusts only the CA serve-targets wrote to dir.
+func caClient(t *testing.T, dir string) *http.Client {
+	t.Helper()
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(readCA(t, dir)) {
+		t.Fatal("the CA file holds no PEM certificate")
+	}
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}}
 }
 
 func TestCredentialIsReadOrGenerated(t *testing.T) {

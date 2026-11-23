@@ -10,10 +10,11 @@
 //	            --out <file> --passphrase-file <file> [--kube-addr <host:port>] [--apid <host:port>]
 //	drive access --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
 //	            [--kube-addr <host:port>] [--apid <host:port>]
-//	drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> [--sftp-password-file <file>] [--s3-secret-file <file>]
+//	drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> --sftp-password-file <file>
+//	            --s3-secret-file <file>
 //	drive backup --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
-//	            --kit <file> --passphrase-file <file> --dir <dir> --sftp-fingerprint <fingerprint>
-//	            --sftp-password-file <file> --s3-secret-file <file> [--sftp-guest <host:port>] [--s3-guest <host:port>]
+//	            --kit <file> --passphrase-file <file> --dir <dir> --guest-host <host> --sftp-fingerprint <fingerprint>
+//	            --sftp-password-file <file> --s3-secret-file <file> [--sftp <addr>] [--s3 <addr>]
 //	drive api METHOD PATH --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--body <json>]
 //
@@ -32,12 +33,13 @@
 // revokes the kubeconfig. Neither prints a token, a key, a passphrase or a file's content.
 // serve-targets runs an SFTP and an S3 server on the host until it is stopped, for the appliance to back up to; both
 // keep their files under --dir. Their passwords are read from the given files or generated into them, mode 0600, and
-// never printed; drive prints where they listen and the SFTP host key's fingerprint.
+// never printed; drive prints where they listen and the SFTP host key's fingerprint. S3 is served over HTTPS with a
+// certificate for --guest-host from a CA generated at start, whose certificate goes to s3-ca.pem in --dir.
 // backup signs in, scans the SFTP host key and checks it against --sftp-fingerprint, saves an SFTP and an S3 target
-// at the addresses the appliance reaches the servers at, tests both, backs up now and waits until both hold exactly
-// the new backup under --dir. It downloads the backup and opens it with the key of the kit in --kit: the database
-// must be included and managed, and the host name in appliance.yaml the one of --host-name. It prints names, sizes
-// and counts, never a secret or a dump's content.
+// at --guest-host and the ports of --sftp and --s3, the S3 one trusting the CA in --dir, tests both, backs up now and
+// waits until both hold exactly the new backup under --dir. It downloads the backup and opens it with the key of the
+// kit in --kit: the database must be included and managed, and the host name in appliance.yaml the one of
+// --host-name. It prints names, sizes and counts, never a secret or a dump's content.
 // api signs in to the Appliance Manager like part2, sends one request with the JSON body, if any, and prints the
 // JSON answer as it is. The caller chooses a path whose answer holds no secret: not the ILM administrator's
 // credential or a TOTP enrolment.
@@ -124,8 +126,7 @@ func main() {
 	fs.StringVar(&o.sftpPasswordFile, "sftp-password-file", "", "file holding the SFTP password, generated when missing (serve-targets, backup)")
 	fs.StringVar(&o.s3SecretFile, "s3-secret-file", "", "file holding the S3 secret key, generated when missing (serve-targets, backup)")
 	fs.StringVar(&o.sftpFingerprint, "sftp-fingerprint", "", "host key fingerprint serve-targets printed (backup)")
-	fs.StringVar(&o.sftpGuest, "sftp-guest", "10.0.2.100:2222", "address the appliance reaches the SFTP server at (backup)")
-	fs.StringVar(&o.s3Guest, "s3-guest", "10.0.2.100:9000", "address the appliance reaches the S3 server at (backup)")
+	fs.StringVar(&o.guestHost, "guest-host", "", "address the appliance reaches the servers' ports at (serve-targets, backup)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {
@@ -157,7 +158,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup --url <console> [flags]")
-	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> [flags]")
+	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
 	os.Exit(2)
 }
@@ -169,13 +170,13 @@ type options struct {
 	out, passphraseFile, kubeAddr, apid                         string
 	kitFile, dir, sftpListen, s3Listen                          string
 	sftpPasswordFile, s3SecretFile, sftpFingerprint             string
-	sftpGuest, s3Guest                                          string
+	guestHost                                                   string
 }
 
 func (o options) validate(cmd string) error {
 	if cmd == "serve-targets" {
-		if o.dir == "" || o.sftpPasswordFile == "" || o.s3SecretFile == "" {
-			return errors.New("--dir, --sftp-password-file and --s3-secret-file are required")
+		if o.dir == "" || o.guestHost == "" || o.sftpPasswordFile == "" || o.s3SecretFile == "" {
+			return errors.New("--dir, --guest-host, --sftp-password-file and --s3-secret-file are required")
 		}
 		return nil
 	}
@@ -189,9 +190,9 @@ func (o options) validate(cmd string) error {
 		return errors.New("--host-name is required")
 	case cmd == "kit" && (o.out == "" || o.passphraseFile == ""):
 		return errors.New("--out and --passphrase-file are required")
-	case cmd == "backup" && (o.kitFile == "" || o.passphraseFile == "" || o.dir == "" || o.sftpFingerprint == "" ||
-		o.sftpPasswordFile == "" || o.s3SecretFile == ""):
-		return errors.New("--kit, --passphrase-file, --dir, --sftp-fingerprint, --sftp-password-file and --s3-secret-file are required")
+	case cmd == "backup" && (o.kitFile == "" || o.passphraseFile == "" || o.dir == "" || o.guestHost == "" ||
+		o.sftpFingerprint == "" || o.sftpPasswordFile == "" || o.s3SecretFile == ""):
+		return errors.New("--kit, --passphrase-file, --dir, --guest-host, --sftp-fingerprint, --sftp-password-file and --s3-secret-file are required")
 	case o.connector != "" && (o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--connector needs --ui-url and --ui-addr")
 	case o.body != "" && !json.Valid([]byte(o.body)):

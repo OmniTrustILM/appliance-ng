@@ -70,7 +70,11 @@ func (c *client) backUp(ctx context.Context, o options, k recovery.Kit, cl clust
 	if err != nil {
 		return err
 	}
-	if err := c.addTargets(ctx, o, password, secretKey); err != nil {
+	ca, err := os.ReadFile(s3CAFile(o.dir))
+	if err != nil {
+		return err
+	}
+	if err := c.addTargets(ctx, o, password, secretKey, string(ca)); err != nil {
 		return err
 	}
 	name, err := c.backUpNow(ctx, o)
@@ -90,12 +94,18 @@ func readSecret(path string) (string, error) {
 	return strings.TrimSpace(string(data)), err
 }
 
-// addTargets accepts the host key the SFTP server printed, saves an SFTP and an S3 target and tests both.
-func (c *client) addTargets(ctx context.Context, o options, password, secretKey string) error {
-	host, port, err := splitHostPort(o.sftpGuest)
+// addTargets accepts the host key the SFTP server printed, saves an SFTP and an S3 target trusting ca and tests both.
+// The appliance reaches the servers at o.guestHost on the ports they listen at on the host.
+func (c *client) addTargets(ctx context.Context, o options, password, secretKey, ca string) error {
+	_, port, err := splitHostPort(o.sftpListen)
 	if err != nil {
 		return err
 	}
+	_, s3Port, err := net.SplitHostPort(o.s3Listen)
+	if err != nil {
+		return err
+	}
+	host := o.guestHost
 	step("scan the SFTP host key")
 	var scanned struct{ Fingerprint string }
 	if err := c.call(ctx, http.MethodPost, backupsPath+"/targets/hostkey", map[string]any{"host": host, "port": port}, &scanned); err != nil {
@@ -109,8 +119,8 @@ func (c *client) addTargets(ctx context.Context, o options, password, secretKey 
 			"host": host, "port": port, "path": "/", "user": sftpUser, "hostKey": scanned.Fingerprint, "password": password,
 		}},
 		"s3": {"type": "s3", "timeZone": "UTC", "schedule": neverSchedule, "retention": 3, "s3": map[string]any{
-			"endpoint": "http://" + o.s3Guest, "bucket": s3Bucket, "prefix": s3Prefix, "region": "us-east-1",
-			"accessKey": s3AccessKey, "secretKey": secretKey,
+			"endpoint": "https://" + net.JoinHostPort(host, s3Port), "bucket": s3Bucket, "prefix": s3Prefix,
+			"region": "us-east-1", "accessKey": s3AccessKey, "secretKey": secretKey, "ca": ca,
 		}},
 	}
 	for _, name := range []string{"sftp", "s3"} {

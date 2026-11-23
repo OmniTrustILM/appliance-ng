@@ -23,6 +23,7 @@ const (
 	testHostName = "ilm.appliance.internal"
 	testDump     = "INSERT INTO certificate VALUES ('dump-content-3e8a1f');"
 	testBackup   = "ilm-20260101T000000Z-v1.ilmbackup"
+	testCA       = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
 )
 
 // backupConsole models the console's backup API; a backup it starts is copied to both servers' directories.
@@ -131,7 +132,7 @@ func newBackupConsole(t *testing.T) (*backupConsole, options) {
 			t.Fatal(err)
 		}
 	}
-	files := map[string]string{"sftp.password": testSFTPPassword, "s3.secret": testS3Secret}
+	files := map[string]string{"sftp.password": testSFTPPassword, "s3.secret": testS3Secret, filepath.Base(s3CAFile(dir)): testCA}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content+"\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -142,7 +143,8 @@ func newBackupConsole(t *testing.T) (*backupConsole, options) {
 		manifest: backup.Manifest{Format: backup.FormatVersion, Database: "managed", DatabaseIncluded: true, HostName: testHostName},
 	}
 	return b, options{
-		dir: dir, hostName: testHostName, sftpFingerprint: "SHA256:served", sftpGuest: "10.0.2.100:2222", s3Guest: "10.0.2.100:9000",
+		dir: dir, hostName: testHostName, sftpFingerprint: "SHA256:served", guestHost: "targets.test",
+		sftpListen: "127.0.0.1:2222", s3Listen: "127.0.0.1:9000",
 		sftpPasswordFile: filepath.Join(dir, "sftp.password"), s3SecretFile: filepath.Join(dir, "s3.secret"),
 	}
 }
@@ -168,10 +170,10 @@ func TestDriveBackupNeverPrintsSecrets(t *testing.T) {
 	}
 	sftp, _ := b.puts["sftp"]["sftp"].(map[string]any)
 	s3, _ := b.puts["s3"]["s3"].(map[string]any)
-	if sftp["password"] != testSFTPPassword || sftp["port"] != float64(2222) || sftp["path"] != "/" || sftp["hostKey"] != "SHA256:served" {
+	if sftp["host"] != "targets.test" || sftp["password"] != testSFTPPassword || sftp["port"] != float64(2222) || sftp["path"] != "/" || sftp["hostKey"] != "SHA256:served" {
 		t.Errorf("the SFTP target saved = %v", sftp)
 	}
-	if s3["secretKey"] != testS3Secret || s3["endpoint"] != "http://10.0.2.100:9000" || s3["prefix"] != s3Prefix {
+	if s3["secretKey"] != testS3Secret || s3["endpoint"] != "https://targets.test:9000" || s3["ca"] != testCA+"\n" || s3["prefix"] != s3Prefix {
 		t.Errorf("the S3 target saved = %v", s3)
 	}
 	if got := strings.Join(cl.logSecrets, " "); !strings.Contains(got, testSFTPPassword) || !strings.Contains(got, testS3Secret) ||
@@ -219,13 +221,20 @@ func TestValidateRequiresTheBackupFlags(t *testing.T) {
 		t.Error("backup without its flags passed validation")
 	}
 	o = options{kitFile: "k", passphraseFile: "p", dir: "d", sftpFingerprint: "f", sftpPasswordFile: "a", s3SecretFile: "b", user: "u", password: "p", seedFile: "s", hostName: "h"}
+	if err := o.validate("backup"); err == nil {
+		t.Error("backup without --guest-host passed validation")
+	}
+	o.guestHost = "g"
 	if err := o.validate("backup"); err != nil {
 		t.Errorf("backup with its flags = %v", err)
 	}
 	if err := (options{}).validate("serve-targets"); err == nil {
 		t.Error("serve-targets without its flags passed validation")
 	}
-	if err := (options{dir: "d", sftpPasswordFile: "a", s3SecretFile: "b"}).validate("serve-targets"); err != nil {
+	if err := (options{dir: "d", sftpPasswordFile: "a", s3SecretFile: "b"}).validate("serve-targets"); err == nil {
+		t.Error("serve-targets without --guest-host passed validation")
+	}
+	if err := (options{dir: "d", sftpPasswordFile: "a", s3SecretFile: "b", guestHost: "g"}).validate("serve-targets"); err != nil {
 		t.Errorf("serve-targets with its flags = %v", err)
 	}
 }
