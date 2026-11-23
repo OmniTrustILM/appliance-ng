@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../../api/client';
+import { api, slowRequestTimeoutMs, timeoutSignal } from '../../api/client';
 import { Alert } from '../../components/Alert';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -48,7 +48,10 @@ export function TargetRow({ target, onEdit, onRemove }: TargetRowProps) {
   async function test() {
     setTesting(true);
     setResult(undefined);
-    const sent = await attempt(() => api.POST('/backups/targets/{name}/test', { params: { path: { name: target.name } } }));
+    const sent = await attempt(() => api.POST('/backups/targets/{name}/test', {
+      params: { path: { name: target.name } },
+      signal: timeoutSignal(slowRequestTimeoutMs),
+    }));
     setTesting(false);
     if (sent?.data) return setResult(sent.data);
     setResult(sent ? { ok: false } : { unreachable: true });

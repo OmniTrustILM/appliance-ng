@@ -1,7 +1,9 @@
 import { vi } from 'vitest';
 
 type Reply = readonly [number, unknown?, Record<string, string>?];
-type Handler = Reply | ((body: unknown) => Reply);
+/** An answer that never comes: the request ends only when it is aborted. */
+export const hang = 'hang';
+type Handler = Reply | typeof hang | ((body: unknown) => Reply | typeof hang);
 
 async function readBody(request: Request): Promise<unknown> {
   if (request.headers.get('Content-Type')?.startsWith('multipart/form-data')) {
@@ -14,7 +16,7 @@ async function readBody(request: Request): Promise<unknown> {
 /**
  * Stubs fetch with answers keyed by "METHOD /path"; unknown routes answer 404.
  * `sent` collects the bodies of the requests per key: parsed JSON, or the fields of a multipart body.
- * A string payload is answered as PEM text; a third element adds response headers.
+ * A string payload is answered as PEM text; a third element adds response headers. `hang` never answers.
  */
 export function stubApi(routes: Record<string, Handler>) {
   const sent: Record<string, unknown[]> = {};
@@ -24,9 +26,11 @@ export function stubApi(routes: Record<string, Handler>) {
     sent[key] ??= [];
     sent[key].push(body);
     const handler = routes[key];
-    const [status, payload, headers] = typeof handler === 'function'
-      ? handler(body)
-      : (handler ?? [404, { code: 'not_found', message: 'Not found.' }]);
+    const reply = typeof handler === 'function' ? handler(body) : (handler ?? [404, { code: 'not_found', message: 'Not found.' }]);
+    if (reply === hang) {
+      return new Promise<Response>((_, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason)));
+    }
+    const [status, payload, headers] = reply;
     if (typeof payload === 'string') {
       return new Response(payload, { status, headers: { 'Content-Type': 'application/x-pem-file', ...headers } });
     }

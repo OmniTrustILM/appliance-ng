@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api } from '../../api/client';
+import { api, timeoutSignal } from '../../api/client';
 import type { components } from '../../api/schema';
 import { Alert } from '../../components/Alert';
 import { Button } from '../../components/Button';
@@ -178,6 +178,7 @@ export function TargetForm({ editing, onSaved, onCancel }: TargetFormProps) {
     const result = await attempt(() => api.PUT('/backups/targets/{name}', {
       params: { path: { name: values.name.trim() } },
       body: updateOf(values),
+      signal: timeoutSignal(),
     }));
     setBusy(false);
     if (!result) return setError(unreachable);

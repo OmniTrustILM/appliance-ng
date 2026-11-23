@@ -1,7 +1,8 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { stubApi } from '../../setup/test-utils';
+import { requestTimeoutMs, slowRequestTimeoutMs } from '../../api/client';
+import { hang, stubApi } from '../../setup/test-utils';
 import { BackupsPage, runningRefreshMs, startedReads } from './BackupsPage';
 
 afterEach(() => {
@@ -82,13 +83,56 @@ describe('BackupsPage', () => {
     });
     render(<BackupsPage />);
     expect(await screen.findByText('A backup is running')).toBeInTheDocument();
-    for (const read of [2, 3]) {
-      await vi.advanceTimersByTimeAsync(runningRefreshMs);
-      await vi.waitFor(() => expect(reads).toBe(read));
-    }
+    await vi.advanceTimersByTimeAsync(runningRefreshMs);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Try again.');
+    await vi.advanceTimersByTimeAsync(runningRefreshMs);
+    await vi.waitFor(() => expect(reads).toBe(3));
     await vi.waitFor(() => expect(screen.queryByText('A backup is running')).not.toBeInTheDocument());
     await vi.advanceTimersByTimeAsync(3 * runningRefreshMs);
     expect(reads).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it('gives up a read that hangs while a backup runs and reads again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    let reads = 0;
+    stubApi({ [BACKUPS]: () => (++reads === 2 ? hang : [200, backups({ running: reads < 3 })]) });
+    render(<BackupsPage />);
+    expect(await screen.findByText('A backup is running')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(runningRefreshMs);
+    await vi.waitFor(() => expect(reads).toBe(2));
+    await vi.advanceTimersByTimeAsync(requestTimeoutMs);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be reached/i);
+    await vi.advanceTimersByTimeAsync(runningRefreshMs);
+    await vi.waitFor(() => expect(reads).toBe(3));
+    await vi.waitFor(() => expect(screen.queryByText('A backup is running')).not.toBeInTheDocument());
+    vi.useRealTimers();
+  });
+
+  it('gives up a "Back up now" that hangs and enables the button again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    stubApi({ [BACKUPS]: [200, backups()], 'POST /appliance/api/v1/backups': hang });
+    render(<BackupsPage />);
+    const button = await screen.findByRole('button', { name: 'Back up now' });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await vi.advanceTimersByTimeAsync(requestTimeoutMs);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be reached/i);
+    expect(button).toBeEnabled();
+    vi.useRealTimers();
+  });
+
+  it('gives up a target test that hangs only after the longer limit of a test', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    stubApi({ [BACKUPS]: [200, backups()], 'POST /appliance/api/v1/backups/targets/offsite/test': hang });
+    render(<BackupsPage />);
+    const test = await screen.findByRole('button', { name: 'Test offsite' });
+    await userEvent.click(test);
+    await vi.advanceTimersByTimeAsync(requestTimeoutMs);
+    expect(test).toBeDisabled();
+    await vi.advanceTimersByTimeAsync(slowRequestTimeoutMs - requestTimeoutMs);
+    expect(await screen.findByText(/cannot be reached/i)).toBeInTheDocument();
+    expect(test).toBeEnabled();
     vi.useRealTimers();
   });
 

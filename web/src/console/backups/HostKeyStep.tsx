@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../../api/client';
+import { api, slowRequestTimeoutMs, timeoutSignal } from '../../api/client';
 import { Alert } from '../../components/Alert';
 import { Button } from '../../components/Button';
 import { attempt, unreachable } from '../../setup/failure';
@@ -28,7 +28,7 @@ export function HostKeyStep({ host, port, accepted, error, onAccept }: HostKeySt
     setFailure(undefined);
     setRead(undefined);
     const body = { host: host.trim(), port };
-    const result = await attempt(() => api.POST('/backups/targets/hostkey', { body }));
+    const result = await attempt(() => api.POST('/backups/targets/hostkey', { body, signal: timeoutSignal(slowRequestTimeoutMs) }));
     setBusy(false);
     if (!result) return setFailure(unreachable);
     if (result.data) return setRead({ ...body, fingerprint: result.data.fingerprint });

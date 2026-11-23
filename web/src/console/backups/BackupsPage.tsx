@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../../api/client';
+import { api, timeoutSignal } from '../../api/client';
 import { Alert } from '../../components/Alert';
 import { Card } from '../../components/Card';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -17,14 +17,17 @@ export const runningRefreshMs = 5000;
 /** How many reads after "Back up now" look for the accepted backup before the page stops looking. */
 export const startedReads = 6;
 const removeTarget = (target: Target) =>
-  api.DELETE('/backups/targets/{name}', { params: { path: { name: target.name } } });
+  api.DELETE('/backups/targets/{name}', { params: { path: { name: target.name } }, signal: timeoutSignal() });
 
 /** The local backups and the targets that receive copies on a schedule; target secrets are never shown. */
 export function BackupsPage() {
   const background = useRef(false);
   // Marked as a background refresh, a read the page makes on its own does not keep the session from going idle.
   const loadBackups = useCallback(
-    () => api.GET('/backups', background.current ? { params: { header: { 'X-Background-Refresh': '1' } } } : {}),
+    () => api.GET('/backups', {
+      ...(background.current ? { params: { header: { 'X-Background-Refresh': '1' } } } : {}),
+      signal: timeoutSignal(),
+    }),
     [],
   );
   const { data, error, reload: load, settled } = useLoaded(loadBackups);

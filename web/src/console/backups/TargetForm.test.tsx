@@ -1,10 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { stubApi } from '../../setup/test-utils';
+import { requestTimeoutMs, slowRequestTimeoutMs } from '../../api/client';
+import { hang, stubApi } from '../../setup/test-utils';
 import { TargetForm, browserTimeZone, enterAgainHint, type Target } from './TargetForm';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const fingerprint = 'SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG';
 const HOSTKEY = 'POST /appliance/api/v1/backups/targets/hostkey';
@@ -119,6 +123,34 @@ describe('TargetForm', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
     await userEvent.click(screen.getByRole('button', { name: 'Read the host key' }));
     expect(await screen.findByText(/appliance cannot be reached/i)).toBeInTheDocument();
+  });
+
+  it('gives up a host key scan that hangs only after the longer limit of a scan', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    stubApi({ [HOSTKEY]: hang });
+    renderForm();
+    await userEvent.click(screen.getByLabelText(/^SFTP/));
+    await userEvent.type(screen.getByLabelText('Host'), 'sftp.example.test');
+    const scan = screen.getByRole('button', { name: 'Read the host key' });
+    await userEvent.click(scan);
+    await vi.advanceTimersByTimeAsync(requestTimeoutMs);
+    expect(scan).toBeDisabled();
+    await vi.advanceTimersByTimeAsync(slowRequestTimeoutMs - requestTimeoutMs);
+    expect(await screen.findByText(/appliance cannot be reached/i)).toBeInTheDocument();
+    expect(scan).toBeEnabled();
+  });
+
+  it('gives up a save that hangs and enables the button again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    stubApi({ 'PUT /appliance/api/v1/backups/targets/offsite': hang });
+    renderForm();
+    await userEvent.type(screen.getByLabelText('Name'), 'offsite');
+    const save = screen.getByRole('button', { name: 'Add the target' });
+    await userEvent.click(save);
+    expect(save).toBeDisabled();
+    await vi.advanceTimersByTimeAsync(requestTimeoutMs);
+    expect(await screen.findByText(/appliance cannot be reached/i)).toBeInTheDocument();
+    expect(save).toBeEnabled();
   });
 
   it('adds an NFS target with version 4.1 and says which uid writes', async () => {

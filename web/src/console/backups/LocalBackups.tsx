@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../../api/client';
+import { api, timeoutSignal } from '../../api/client';
 import type { components } from '../../api/schema';
 import { Alert } from '../../components/Alert';
 import { Badge } from '../../components/Badge';
@@ -24,7 +24,7 @@ export function LocalBackups({ backups, onStarted }: Readonly<{ backups: Backups
     setBusy(true);
     setNotice(false);
     setError(undefined);
-    const result = await attempt(() => api.POST('/backups'));
+    const result = await attempt(() => api.POST('/backups', { signal: timeoutSignal() }));
     setBusy(false);
     if (!result) return setError(unreachable);
     if (!result.response.ok) return setError(result.error?.message ?? 'The backup could not be started.');
