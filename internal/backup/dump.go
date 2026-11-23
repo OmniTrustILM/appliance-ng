@@ -25,9 +25,10 @@ var ErrDatabaseUnreachable = errors.New("database unreachable")
 var errDumpIncomplete = errors.New("the dump ended before pg_dump's completion trailer")
 
 const (
-	// dumpTrailer is written by pg_dump at the end of a complete plain dump; only the \unrestrict line of its
-	// 63-character key follows it.
-	dumpTrailer = "\n-- PostgreSQL database dump complete\n"
+	// dumpTrailer ends a complete plain dump; pg_dump 18 follows it with the \unrestrict line of its 63-character
+	// key only.
+	dumpTrailer = "\n--\n-- PostgreSQL database dump complete\n--"
+	unrestrict  = `\unrestrict `
 	// tailSize is how much of the end of a dump is kept to find the trailer in.
 	tailSize = 256
 )
@@ -54,10 +55,23 @@ func dumpTo(w io.Writer, run func(io.Writer) error) error {
 	if err := run(t); err != nil {
 		return err
 	}
-	if !bytes.Contains(t.tail, []byte(dumpTrailer)) {
+	if !complete(t.tail) {
 		return errDumpIncomplete
 	}
 	return nil
+}
+
+// complete reports whether tail, the end of a dump, ends with pg_dump's trailer, followed at most by an \unrestrict
+// line whose newline shows its key is whole. The trailer's text alone may be a row of the data.
+func complete(tail []byte) bool {
+	if !bytes.HasSuffix(tail, []byte("\n")) {
+		return false
+	}
+	s := strings.TrimRight(string(tail), "\n")
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 && strings.HasPrefix(s[i+1:], unrestrict) {
+		s = strings.TrimRight(s[:i], "\n")
+	}
+	return strings.HasSuffix(s, dumpTrailer)
 }
 
 // Dumper moves the platform database in and out of a backup. Neither direction touches a disk: the dump streams

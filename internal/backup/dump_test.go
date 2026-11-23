@@ -150,6 +150,9 @@ func TestDumpFailsWithoutTheCompletionTrailer(t *testing.T) {
 		{"complete", bytewise(dumpText), true},
 		{"cut before the trailer", bytewise(dumpText[:cut]), false},
 		{"cut inside the trailer", bytewise(dumpText[:cut+20]), false},
+		{"cut after a row that reads as the trailer", bytewise(dumpText[:cut] + "-- PostgreSQL database dump complete\n--\n42\tcut ro"), false},
+		{"cut inside the unrestrict key", bytewise(dumpText[:len(dumpText)-30]), false},
+		{"complete without an unrestrict line", bytewise(dumpText[:strings.Index(dumpText, "\\unrestrict")]), true},
 		{"empty", func(call, io.Writer) error { return nil }, false},
 	} {
 		dumpers := map[string]Dumper{
