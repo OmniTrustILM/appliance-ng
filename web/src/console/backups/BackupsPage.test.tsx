@@ -228,6 +228,14 @@ describe('BackupsPage', () => {
     expect(screen.queryByText(/the test succeeded/i)).not.toBeInTheDocument();
   });
 
+  it('fills the form with a target named like a new one when it is edited', async () => {
+    stubApi({ [BACKUPS]: [200, backups({ targets: [{ ...s3Target, name: 'new-0', health: { ...s3Target.health, name: 'new-0' } }] })] });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit new-0' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('new-0');
+    expect(screen.getByLabelText('Bucket')).toHaveValue('ilm');
+  });
+
   it('reports a test the appliance did not answer', async () => {
     stubApi({ [BACKUPS]: [200, backups()] });
     render(<BackupsPage />);

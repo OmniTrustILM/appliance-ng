@@ -101,7 +101,7 @@ export function BackupsPage() {
               ? 'Change the settings. Stored secrets cannot be shown; leave them blank to keep them.'
               : 'Each target receives a copy of the backup at its scheduled time and keeps the newest ones.'}
           </p>
-          <TargetForm key={editing?.name ?? `new-${saves}`} editing={editing} onSaved={saved} onCancel={() => setEditing(undefined)} />
+          <TargetForm key={editing ? `edit-${editing.name}` : `add-${saves}`} editing={editing} onSaved={saved} onCancel={() => setEditing(undefined)} />
         </Card>
       </div>
 
