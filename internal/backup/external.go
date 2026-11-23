@@ -70,8 +70,10 @@ func newExternalDumper(db ExternalDatabase, c client.Client, cfg *rest.Config, e
 func (d *externalDumper) Dump(ctx context.Context, w io.Writer) error {
 	return d.inPod(ctx, func(pod string) error {
 		err := d.exec(ctx, d.cfg, kube.Container{Namespace: kube.SystemNamespace, Pod: pod, Name: dumpContainer}, []string{"pg_isready", "-t", "10"}, nil, io.Discard)
+		// pg_isready exits 1 when the server rejects connections and 2 when it does not answer; any other exit is a
+		// check that did not run, which must not pass for a database that is down.
 		var exit *kube.ExitError
-		if errors.As(err, &exit) {
+		if errors.As(err, &exit) && (exit.Code == 1 || exit.Code == 2) {
 			return ErrDatabaseUnreachable
 		}
 		if err != nil {

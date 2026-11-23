@@ -321,6 +321,25 @@ func TestExternalUnreachableMarksNotIncluded(t *testing.T) {
 	}
 }
 
+func TestExternalDumpFailsWhenPgIsReadyCannotCheck(t *testing.T) {
+	quickPods(t)
+	runPods(t)
+	// pg_isready exits 3 on invalid parameters; 126 and 127 mean it did not run at all.
+	for _, code := range []int{3, 126, 127} {
+		f := &fakeExec{handler: func(c call, _ io.Writer) error {
+			if c.cmd[0] == "pg_isready" {
+				return &kube.ExitError{Code: code}
+			}
+			return nil
+		}}
+		err := newExternalDumper(externalDB, testClient, nil, f.exec).Dump(context.Background(), io.Discard)
+		var exit *kube.ExitError
+		if errors.Is(err, ErrDatabaseUnreachable) || !errors.As(err, &exit) || exit.Code != code {
+			t.Errorf("exit %d: error = %v, want the failed check", code, err)
+		}
+	}
+}
+
 func TestExternalDumperDeletesThePodWhenTheContextEnds(t *testing.T) {
 	quickPods(t)
 	runPods(t)
