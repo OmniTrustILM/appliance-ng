@@ -36,11 +36,13 @@ func CacheList(m *Manifest, arch string, built ...string) []string {
 }
 
 // PinnedImage is the reference, with its digest, of the image the manifest pins for name, which may be short, as
-// the implicit images are named.
+// the implicit images are named. A digest in name must be the pinned one.
 func (m *Manifest) PinnedImage(name string) (string, error) {
-	want := normalize(name)
+	nameOnly, digest, hasDigest := strings.Cut(name, "@")
+	want := normalize(nameOnly)
 	for _, img := range m.Images {
-		if normalize(img.Ref) == want {
+		ref, _, _ := strings.Cut(img.Ref, "@")
+		if normalize(ref) == want && (!hasDigest || digest == img.Digest) {
 			return want + "@" + img.Digest, nil
 		}
 	}
