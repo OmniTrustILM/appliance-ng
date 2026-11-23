@@ -76,7 +76,8 @@ func (w *Writer) addChunks(name string, r io.Reader) error {
 	}
 	for i := 0; ; i++ {
 		n, err := io.ReadFull(r, w.buf)
-		last := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+		// Only the end conditions of io.ReadFull itself end the stream; a source error that wraps one is a failure.
+		last := err == io.EOF || err == io.ErrUnexpectedEOF
 		if err != nil && !last {
 			return fmt.Errorf("read %s: %w", name, err)
 		}

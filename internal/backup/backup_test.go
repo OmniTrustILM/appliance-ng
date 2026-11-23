@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -204,6 +205,29 @@ func TestAddStreamReadError(t *testing.T) {
 	w := newWriter(t, io.Discard, id)
 	if err := w.Add("database.sql", -1, failReader{}); err == nil {
 		t.Fatal("read error swallowed")
+	}
+}
+
+// partialReader returns data, then err.
+type partialReader struct {
+	data []byte
+	err  error
+}
+
+func (r *partialReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, r.err
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	return n, nil
+}
+
+func TestAddStreamWrappedUnexpectedEOFFails(t *testing.T) {
+	w := newWriter(t, io.Discard, newIdentity(t))
+	r := &partialReader{data: []byte("INSERT INTO"), err: fmt.Errorf("x: %w", io.ErrUnexpectedEOF)}
+	if err := w.Add("database.sql", -1, r); err == nil {
+		t.Fatal("a source error wrapping io.ErrUnexpectedEOF ended the stream")
 	}
 }
 
