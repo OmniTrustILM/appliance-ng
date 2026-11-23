@@ -760,9 +760,9 @@ func TestRunCopiesToTargets(t *testing.T) {
 	bad := v1alpha1.BackupTarget{Name: "bad", Type: v1alpha1.BackupTypeSFTP, Retention: 14, CredentialsRef: "target-bad",
 		SFTP: &v1alpha1.SFTPTarget{Host: "sftp.example.com", Port: 22, Path: "/b", User: "u", HostKey: "SHA256:x"}}
 	f := newFixture(t, good, bad)
-	secret(t, kube.SystemNamespace, "target-good", map[string][]byte{target.AccessKeyKey: []byte("ak"), target.SecretKeyKey: []byte("sk")})
+	targetSecret(t, good, map[string][]byte{target.AccessKeyKey: []byte("ak"), target.SecretKeyKey: []byte("sk")})
 	secret(t, kube.SystemNamespace, "target-good-ca", map[string][]byte{"bundle.pem": []byte("CA PEM")})
-	secret(t, kube.SystemNamespace, "target-bad", map[string][]byte{target.PasswordKey: []byte("pw")})
+	targetSecret(t, bad, map[string][]byte{target.PasswordKey: []byte("pw")})
 	secret(t, kube.SystemNamespace, "trust", map[string][]byte{"ca.crt": []byte("TRUST PEM")})
 	a := getAppliance(t)
 	a.Spec.Trust = &v1alpha1.SecretKeyRef{Name: "trust", Key: "ca.crt"}
@@ -842,6 +842,51 @@ func TestRunCopiesToTargets(t *testing.T) {
 	noLeak(t, f)
 }
 
+// targetSecret writes the credentials Secret of spec as the API does, for the server of spec.
+func targetSecret(t *testing.T, spec v1alpha1.BackupTarget, data map[string][]byte) *corev1.Secret {
+	t.Helper()
+	s := secret(t, kube.SystemNamespace, spec.CredentialsRef, data)
+	s.Annotations = map[string]string{target.LocationAnnotation: target.Location(spec)}
+	if err := testClient.Update(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestCredentialsGoOnlyToTheirServer(t *testing.T) {
+	ctx := context.Background()
+	remote := v1alpha1.BackupTarget{Name: "remote", Type: v1alpha1.BackupTypeS3, Retention: 2, CredentialsRef: "target-remote",
+		S3: &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "ilm"}}
+	f := newFixture(t, remote)
+	// The target moved to another endpoint with new keys after the run read the Appliance.
+	moved := *remote.DeepCopy()
+	moved.S3.Endpoint = "https://s3.other.example"
+	targetSecret(t, moved, map[string][]byte{target.AccessKeyKey: []byte("ak"), target.SecretKeyKey: []byte("sk")})
+	f.runner.newTarget = func(spec v1alpha1.BackupTarget, c map[string][]byte, _ target.Deps) (target.Target, error) {
+		t.Errorf("credentials %v for %s go to %s", slices.Sorted(maps.Keys(c)), moved.S3.Endpoint, spec.S3.Endpoint)
+		return &memTarget{objects: map[string][]byte{}}, nil
+	}
+	mustRun(t, f, RunSchedule, []string{"remote"})
+	if st := getAppliance(t).Status.Backup.Targets; len(st) != 1 || st[0].LastError != target.ReasonFailed {
+		t.Errorf("targets %+v", st)
+	}
+	if err := f.runner.TestTarget(ctx, "remote"); err == nil {
+		t.Error("tested with credentials of another server")
+	}
+	// A Secret written before its server was recorded is not used either.
+	s := &corev1.Secret{}
+	if err := testClient.Get(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: "target-remote"}, s); err != nil {
+		t.Fatal(err)
+	}
+	s.Annotations = nil
+	if err := testClient.Update(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.TestTarget(ctx, "remote"); err == nil {
+		t.Error("tested with credentials of an unknown server")
+	}
+}
+
 // stallTarget never finishes a Put before its context ends, as a server that stops reading does.
 type stallTarget struct{ memTarget }
 
@@ -908,7 +953,7 @@ func TestRunWithTheLongestHostName(t *testing.T) {
 	remote := v1alpha1.BackupTarget{Name: "remote", Type: v1alpha1.BackupTypeS3, Retention: 2, CredentialsRef: "target-remote",
 		S3: &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "ilm"}}
 	f := newHostFixture(t, host, remote)
-	secret(t, kube.SystemNamespace, "target-remote", map[string][]byte{target.AccessKeyKey: []byte("ak"), target.SecretKeyKey: []byte("sk")})
+	targetSecret(t, remote, map[string][]byte{target.AccessKeyKey: []byte("ak"), target.SecretKeyKey: []byte("sk")})
 	// A backup of an earlier version, whose name has a longer version, is still this appliance's.
 	older := FileName(host, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), testVersion+"-rc.10")
 	other := FileName(host[:len(host)-1]+"c", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), testVersion)

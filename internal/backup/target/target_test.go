@@ -177,6 +177,38 @@ func TestNewRejectsAMissingBlock(t *testing.T) {
 	}
 }
 
+func TestLocation(t *testing.T) {
+	s3 := v1alpha1.BackupTarget{Type: v1alpha1.BackupTypeS3, S3: &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "a"}}
+	sftp := v1alpha1.BackupTarget{Type: v1alpha1.BackupTypeSFTP, SFTP: &v1alpha1.SFTPTarget{Host: "sftp.example.com", Port: 22, User: "u", Path: "/a"}}
+	nfs := v1alpha1.BackupTarget{Type: v1alpha1.BackupTypeNFS, NFS: &v1alpha1.NFSTarget{Server: "nfs.example.com", Export: "/e"}}
+	same := func(edit func(*v1alpha1.BackupTarget), base v1alpha1.BackupTarget) bool {
+		changed := *base.DeepCopy()
+		edit(&changed)
+		return Location(changed) == Location(base)
+	}
+	for name, tc := range map[string]struct {
+		base v1alpha1.BackupTarget
+		edit func(*v1alpha1.BackupTarget)
+		same bool
+	}{
+		"s3 bucket":     {s3, func(t *v1alpha1.BackupTarget) { t.S3.Bucket = "b" }, true},
+		"s3 endpoint":   {s3, func(t *v1alpha1.BackupTarget) { t.S3.Endpoint = "https://s3.other.example" }, false},
+		"s3 to sftp":    {s3, func(t *v1alpha1.BackupTarget) { *t = sftp }, false},
+		"sftp path":     {sftp, func(t *v1alpha1.BackupTarget) { t.SFTP.Path = "/b" }, true},
+		"sftp host":     {sftp, func(t *v1alpha1.BackupTarget) { t.SFTP.Host = "sftp.other.example" }, false},
+		"sftp port":     {sftp, func(t *v1alpha1.BackupTarget) { t.SFTP.Port = 2222 }, false},
+		"sftp user":     {sftp, func(t *v1alpha1.BackupTarget) { t.SFTP.User = "v" }, false},
+		"nfs server":    {nfs, func(t *v1alpha1.BackupTarget) { t.NFS.Server = "nfs.other.example" }, true},
+		"nfs to s3":     {nfs, func(t *v1alpha1.BackupTarget) { *t = s3 }, false},
+		"s3 no block":   {s3, func(t *v1alpha1.BackupTarget) { t.S3 = nil }, false},
+		"sftp no block": {sftp, func(t *v1alpha1.BackupTarget) { t.SFTP = nil }, false},
+	} {
+		if got := same(tc.edit, tc.base); got != tc.same {
+			t.Errorf("%s: same location %v, want %v", name, got, tc.same)
+		}
+	}
+}
+
 func backupNames(objects []Object) []string {
 	var names []string
 	for _, o := range objects {

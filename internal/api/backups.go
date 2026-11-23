@@ -369,6 +369,8 @@ func (s *Server) PutBackupTarget(ctx context.Context, req PutBackupTargetRequest
 		return PutBackupTarget400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
 	recordDetails(ctx, map[string]string{"name": spec.Name, "type": spec.Type})
+	s.targetMu.Lock()
+	defer s.targetMu.Unlock()
 	a, err := s.appliance(ctx)
 	if apierrors.IsNotFound(err) {
 		return PutBackupTarget409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
@@ -391,8 +393,9 @@ func (s *Server) PutBackupTarget(ctx context.Context, req PutBackupTargetRequest
 }
 
 // saveBackupTarget stores the secrets of spec, keeping the stored ones secrets leaves out, references them from spec
-// and puts spec in the Appliance a. Secrets of another type are dropped. A target the Appliance cannot take is
-// refused before any secret is written, and the Secret is put back as it was when the Appliance is not updated.
+// and puts spec in the Appliance a, read under targetMu. Secrets of another type are dropped. A target the Appliance
+// cannot take is refused before any secret is written, and the Secret is put back as it was when the Appliance is not
+// updated.
 func (s *Server) saveBackupTarget(ctx context.Context, a *v1alpha1.Appliance, spec v1alpha1.BackupTarget, secrets targetSecrets) (*fieldError, error) {
 	if list := backupTargets(a); targetIndex(list, spec.Name) < 0 && len(list) >= maxBackupTargets {
 		return nil, errTooManyTargets
@@ -406,7 +409,7 @@ func (s *Server) saveBackupTarget(ctx context.Context, a *v1alpha1.Appliance, sp
 	if ferr := missingSecret(spec.Type, data); ferr != nil {
 		return ferr, nil
 	}
-	written, err := s.writeTargetSecret(ctx, name, stored, data)
+	written, err := s.writeTargetSecret(ctx, name, stored, data, target.Location(spec))
 	if err != nil {
 		return nil, err
 	}
@@ -452,32 +455,31 @@ func mergeTargetSecrets(typ string, stored *corev1.Secret, secrets targetSecrets
 // type, S3 endpoint, or SFTP host, port or user. A new target is not relocated.
 func relocated(list []v1alpha1.BackupTarget, spec v1alpha1.BackupTarget) bool {
 	i := targetIndex(list, spec.Name)
-	if i < 0 {
-		return false
-	}
-	previous := list[i]
-	switch {
-	case previous.Type != spec.Type:
-		return true
-	case previous.S3 != nil && spec.S3 != nil:
-		return previous.S3.Endpoint != spec.S3.Endpoint
-	case previous.SFTP != nil && spec.SFTP != nil:
-		return previous.SFTP.Host != spec.SFTP.Host || previous.SFTP.Port != spec.SFTP.Port || previous.SFTP.User != spec.SFTP.User
-	}
-	return false
+	return i >= 0 && target.Location(list[i]) != target.Location(spec)
 }
 
-// writeTargetSecret writes data to the Secret name unless data is empty or stored holds it already; it tells whether
-// it wrote.
-func (s *Server) writeTargetSecret(ctx context.Context, name string, stored *corev1.Secret, data map[string][]byte) (bool, error) {
-	if len(data) == 0 || stored != nil && maps.EqualFunc(stored.Data, data, func(a, b []byte) bool { return string(a) == string(b) }) {
+// writeTargetSecret writes data for the server location to the Secret name unless data is empty or stored holds it
+// already; it tells whether it wrote.
+func (s *Server) writeTargetSecret(ctx context.Context, name string, stored *corev1.Secret, data map[string][]byte, location string) (bool, error) {
+	if len(data) == 0 || stored != nil && stored.Annotations[target.LocationAnnotation] == location &&
+		maps.EqualFunc(stored.Data, data, func(a, b []byte) bool { return string(a) == string(b) }) {
 		return false, nil
 	}
-	// putSystemSecret changes the Secret it is given; stored stays as read, for restoreTargetSecret.
-	if err := s.putSystemSecret(ctx, stored.DeepCopy(), name, corev1.SecretTypeOpaque, data); err != nil {
+	// putTargetSecret changes the Secret it is given; stored stays as read, for restoreTargetSecret.
+	if err := s.putTargetSecret(ctx, stored.DeepCopy(), name, data, location); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// putTargetSecret is putSystemSecret for the target Secret name, recording the server location its data was entered
+// for.
+func (s *Server) putTargetSecret(ctx context.Context, secret *corev1.Secret, name string, data map[string][]byte, location string) error {
+	if secret == nil {
+		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: name}, Type: corev1.SecretTypeOpaque}
+	}
+	metav1.SetMetaDataAnnotation(&secret.ObjectMeta, target.LocationAnnotation, location)
+	return s.putSystemSecret(ctx, secret, name, corev1.SecretTypeOpaque, data)
 }
 
 // putBackupTarget replaces the target of spec's name in the Appliance, or adds it.
@@ -502,7 +504,10 @@ func (s *Server) restoreTargetSecret(ctx context.Context, name string, stored *c
 	if stored == nil {
 		err = s.deleteSystemSecret(ctx, name)
 	} else {
-		err = s.writeSystemSecret(ctx, name, stored.Type, stored.Data)
+		var current *corev1.Secret
+		if current, err = s.systemSecret(ctx, name); err == nil {
+			err = s.putTargetSecret(ctx, current, name, stored.Data, stored.Annotations[target.LocationAnnotation])
+		}
 	}
 	if err != nil {
 		s.deps.Log.Error("could not restore the secrets of a backup target that was not saved", "secret", name, "failure", apierrors.ReasonForError(err))
@@ -525,6 +530,8 @@ func missingSecret(typ string, data map[string][]byte) *fieldError {
 // DeleteBackupTarget removes a target, its secrets and its state; the copies on the target stay.
 func (s *Server) DeleteBackupTarget(ctx context.Context, req DeleteBackupTargetRequestObject) (DeleteBackupTargetResponseObject, error) {
 	recordDetails(ctx, map[string]string{"name": req.Name})
+	s.targetMu.Lock()
+	defer s.targetMu.Unlock()
 	err := s.editBackupTargets(ctx, func(list []v1alpha1.BackupTarget) ([]v1alpha1.BackupTarget, error) {
 		i := targetIndex(list, req.Name)
 		if i < 0 {

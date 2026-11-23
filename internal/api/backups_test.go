@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -287,9 +288,22 @@ func TestStoredSecretsStayWithTheirServer(t *testing.T) {
 		string(data[target.SecretKeyKey]) != "other-secret" || !bytes.Equal(data[target.CAKey], ca.pem) {
 		t.Errorf("secret %v", data)
 	}
+	location := func() string {
+		return systemSecret(t, backupTargetSecretName(backupTargetName)).Annotations[target.LocationAnnotation]
+	}
+	if spec := targetSpec(t, backupTargetName); location() != target.Location(*spec) {
+		t.Errorf("secret for %q, target at %q", location(), target.Location(*spec))
+	}
+	// The same keys entered for yet another endpoint are now for that one.
+	again := s3Update(ptr("other-access"), ptr("other-secret"))
+	again.S3.Endpoint = "https://s3.third.example"
+	wantStatus(t, put(again), http.StatusAccepted)
+	if spec := targetSpec(t, backupTargetName); location() != target.Location(*spec) {
+		t.Errorf("secret for %q, target at %q", location(), target.Location(*spec))
+	}
 	// The same endpoint keeps them, whatever else changes.
 	same := s3Update(nil, nil)
-	same.S3.Endpoint, same.S3.Bucket = "https://s3.other.example", "other-bucket"
+	same.S3.Endpoint, same.S3.Bucket = "https://s3.third.example", "other-bucket"
 	wantStatus(t, put(same), http.StatusAccepted)
 
 	// Another type needs its own secrets.
@@ -806,8 +820,12 @@ func TestFailedTargetUpdateRestoresTheSecret(t *testing.T) {
 	if string(data[target.AccessKeyKey]) != s3AccessKey || string(data[target.SecretKeyKey]) != s3SecretKey || len(data[target.PasswordKey]) != 0 {
 		t.Errorf("secret after the failed update has keys %v", slices.Sorted(maps.Keys(data)))
 	}
-	if spec := targetSpec(t, backupTargetName); spec == nil || spec.Type != v1alpha1.BackupTypeS3 {
-		t.Errorf("spec after the failed update %+v", spec)
+	spec := targetSpec(t, backupTargetName)
+	if spec == nil || spec.Type != v1alpha1.BackupTypeS3 {
+		t.Fatalf("spec after the failed update %+v", spec)
+	}
+	if got := systemSecret(t, backupTargetSecretName(backupTargetName)).Annotations[target.LocationAnnotation]; got != target.Location(*spec) {
+		t.Errorf("secret after the failed update is for %q", got)
 	}
 
 	// A new target: its Secret goes again.
@@ -817,6 +835,50 @@ func TestFailedTargetUpdateRestoresTheSecret(t *testing.T) {
 	}
 	if strings.Contains(h.logs.String(), sftpPassword) {
 		t.Error("the log holds the password")
+	}
+}
+
+func TestConcurrentTargetChangesKeepCredentialsWithTheirServer(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupComplete)
+	path := pathTargets + "/" + backupTargetName
+	for round := range 5 {
+		var wg sync.WaitGroup
+		answers := make([]*httptest.ResponseRecorder, 8)
+		for i := range answers {
+			wg.Go(func() {
+				if i%4 == 3 {
+					answers[i] = h.request(http.MethodDelete, path, nil, s)
+					return
+				}
+				u := s3Update(ptr(fmt.Sprintf("access-%d", i)), ptr(fmt.Sprintf("secret-%d", i)))
+				u.S3.Endpoint = fmt.Sprintf("https://s3-%d.example.com", i)
+				answers[i] = h.request(http.MethodPut, path, u, s)
+			})
+		}
+		wg.Wait()
+		for _, rec := range answers {
+			if rec.Code != http.StatusAccepted && rec.Code != http.StatusNotFound {
+				t.Errorf("round %d: status %d: %s", round, rec.Code, rec.Body)
+			}
+		}
+		spec := targetSpec(t, backupTargetName)
+		if spec == nil {
+			if !secretGone(t, backupTargetSecretName(backupTargetName)) {
+				t.Errorf("round %d: the Secret of a removed target stays", round)
+			}
+			continue
+		}
+		var i int
+		if _, err := fmt.Sscanf(spec.S3.Endpoint, "https://s3-%d.example.com", &i); err != nil {
+			t.Fatal(err)
+		}
+		secret := systemSecret(t, backupTargetSecretName(backupTargetName))
+		if got := string(secret.Data[target.AccessKeyKey]); got != fmt.Sprintf("access-%d", i) ||
+			secret.Annotations[target.LocationAnnotation] != target.Location(*spec) {
+			t.Errorf("round %d: endpoint %s has the keys %s entered for %q", round, spec.S3.Endpoint, got, secret.Annotations[target.LocationAnnotation])
+		}
 	}
 }
 

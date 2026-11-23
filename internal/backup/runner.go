@@ -705,12 +705,16 @@ func (r *Runner) copyAndPrune(ctx context.Context, spec v1alpha1.BackupTarget, d
 }
 
 // credentials are the keys of the target's Secret and, for an S3 CA reference, the referenced bundle under CAKey.
+// Keys entered for another server than spec's, as when the target changed after spec was read, are refused.
 func (r *Runner) credentials(ctx context.Context, spec v1alpha1.BackupTarget) (map[string][]byte, error) {
 	creds := map[string][]byte{}
 	if spec.CredentialsRef != "" {
 		s, err := r.systemSecret(ctx, spec.CredentialsRef)
 		if err != nil {
 			return nil, err
+		}
+		if s.Annotations[target.LocationAnnotation] != target.Location(spec) {
+			return nil, fmt.Errorf("the credentials of backup target %s were entered for another server", spec.Name)
 		}
 		maps.Copy(creds, s.Data)
 	}

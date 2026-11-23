@@ -95,6 +95,8 @@ type Server struct {
 	sendMail sendFunc
 	// kitMu keeps recovery kit changes one at a time.
 	kitMu sync.Mutex
+	// targetMu keeps backup target changes one at a time, so that a target's settings and its Secret change together.
+	targetMu sync.Mutex
 }
 
 // NewServer returns the API server on deps.

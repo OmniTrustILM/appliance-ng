@@ -15,7 +15,6 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
-	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 )
 
 func TestRunInTheSameSecondTakesTheNextSecond(t *testing.T) {
@@ -157,7 +156,7 @@ func TestTestTarget(t *testing.T) {
 		SFTP: &v1alpha1.SFTPTarget{Host: "sftp.example.com", Port: 22, Path: "/b", User: "u", HostKey: "SHA256:x"}}
 	f := newFixture(t, sftp)
 	ctx := context.Background()
-	secret(t, kube.SystemNamespace, "target-sftp", map[string][]byte{target.PasswordKey: []byte("pw")})
+	targetSecret(t, sftp, map[string][]byte{target.PasswordKey: []byte("pw")})
 	store := &readableTarget{memTarget{objects: map[string][]byte{}}}
 	f.runner.newTarget = func(_ v1alpha1.BackupTarget, c map[string][]byte, deps target.Deps) (target.Target, error) {
 		if string(c[target.PasswordKey]) != "pw" || deps.Proxy == nil {

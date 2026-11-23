@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"time"
 
 	"golang.org/x/net/http/httpproxy"
@@ -32,6 +34,9 @@ const (
 	// CAKey holds the PEM CA bundle of an S3 target's CA reference.
 	CAKey = "ca.crt"
 )
+
+// LocationAnnotation on a target's credentials Secret holds the Location of the target they were entered for.
+const LocationAnnotation = "appliance.otilm.com/backup-target-location"
 
 const (
 	testPrefix  = ".appliance-test-"
@@ -97,6 +102,18 @@ func New(spec v1alpha1.BackupTarget, creds map[string][]byte, deps Deps) (Target
 		return newNFS(*spec.NFS, deps, kube.Exec)
 	default:
 		return nil, fmt.Errorf("backup target %s of type %q has no matching settings", spec.Name, spec.Type)
+	}
+}
+
+// Location names where spec sends its credentials: its type with the S3 endpoint, or the SFTP user, host and port.
+func Location(spec v1alpha1.BackupTarget) string {
+	switch {
+	case spec.Type == v1alpha1.BackupTypeS3 && spec.S3 != nil:
+		return spec.Type + " " + spec.S3.Endpoint
+	case spec.Type == v1alpha1.BackupTypeSFTP && spec.SFTP != nil:
+		return spec.Type + " " + spec.SFTP.User + "@" + net.JoinHostPort(spec.SFTP.Host, strconv.Itoa(int(spec.SFTP.Port)))
+	default:
+		return spec.Type
 	}
 }
 
