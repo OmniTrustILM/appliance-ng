@@ -765,15 +765,29 @@ func prune(ctx context.Context, t target.Target, keep int, hostName, written str
 	return nil
 }
 
-// ownBackup tells whether name is a backup file of the appliance hostName: the host name, then the time. A host
-// name that merely starts with hostName and a dash, as appliance-2 does for appliance, is another appliance.
+// ownBackup tells whether name is a backup file of the appliance hostName: the host name, or the start of it and
+// its hostTag, then the time. A host name that merely starts with hostName and a dash, as appliance-2 does for
+// appliance, is another appliance.
 func ownBackup(name, hostName string) bool {
 	rest, ok := strings.CutPrefix(name, hostName+"-")
+	if !ok {
+		rest, ok = cutShortHost(name, hostName)
+	}
 	if !ok || len(rest) <= len(timeLayout) || rest[len(timeLayout)] != '-' {
 		return false
 	}
 	_, err := time.Parse(timeLayout, rest[:len(timeLayout)])
 	return err == nil
+}
+
+// cutShortHost returns what follows the host name cut short and its hostTag in name.
+func cutShortHost(name, hostName string) (string, bool) {
+	tag := "-" + hostTag(hostName) + "-"
+	i := strings.Index(name, tag)
+	if i < 0 || !strings.HasPrefix(hostName, name[:i]) {
+		return "", false
+	}
+	return name[i+len(tag):], true
 }
 
 // localReason is the fixed reason of a local failure: noSpace when the volume is full, failed otherwise.

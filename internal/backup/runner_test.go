@@ -118,12 +118,18 @@ func resetRunnerCluster(t *testing.T) {
 
 func newFixture(t *testing.T, targets ...v1alpha1.BackupTarget) *fixture {
 	t.Helper()
+	return newHostFixture(t, testHost, targets...)
+}
+
+// newHostFixture is newFixture for the appliance hostName.
+func newHostFixture(t *testing.T, hostName string, targets ...v1alpha1.BackupTarget) *fixture {
+	t.Helper()
 	resetRunnerCluster(t)
 	ctx := context.Background()
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
 		Spec: v1alpha1.ApplianceSpec{
-			Node:     v1alpha1.NodeSpec{HostName: testHost},
+			Node:     v1alpha1.NodeSpec{HostName: hostName},
 			Proxy:    &v1alpha1.ProxySpec{HTTPS: "http://proxy.example.com:3128"},
 			Platform: &v1alpha1.PlatformSpec{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}},
 		},
@@ -883,6 +889,37 @@ func TestPruneDeletesOnlyThisAppliancesBackups(t *testing.T) {
 	want := slices.Sorted(slices.Values(slices.Concat([]string{written, own[2]}, others)))
 	if got := slices.Sorted(maps.Keys(store.objects)); !slices.Equal(got, want) {
 		t.Errorf("target holds %v, want %v", got, want)
+	}
+}
+
+func TestRunWithTheLongestHostName(t *testing.T) {
+	label := strings.Repeat("a", 63)
+	host := label + "." + label + "." + label + "." + strings.Repeat("b", 61)
+	remote := v1alpha1.BackupTarget{Name: "remote", Type: v1alpha1.BackupTypeS3, Retention: 2, CredentialsRef: "target-remote",
+		S3: &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "ilm"}}
+	f := newHostFixture(t, host, remote)
+	secret(t, kube.SystemNamespace, "target-remote", map[string][]byte{target.AccessKeyKey: []byte("ak"), target.SecretKeyKey: []byte("sk")})
+	// A backup of an earlier version, whose name has a longer version, is still this appliance's.
+	older := FileName(host, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), testVersion+"-rc.10")
+	other := FileName(host[:len(host)-1]+"c", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), testVersion)
+	store := &memTarget{objects: map[string][]byte{older: nil, other: nil}}
+	f.runner.newTarget = func(v1alpha1.BackupTarget, map[string][]byte, target.Deps) (target.Target, error) {
+		return store, nil
+	}
+
+	var names []string
+	for range 4 {
+		names = append(names, mustRun(t, f, RunSchedule, []string{"remote"}).Name)
+	}
+	if got := localNames(t, f.dir); !slices.Equal(got, []string{names[3], names[2], names[1]}) {
+		t.Fatalf("local backups %v, want the newest three of %v", got, names)
+	}
+	want := slices.Sorted(slices.Values([]string{names[3], names[2], other}))
+	if got := slices.Sorted(maps.Keys(store.objects)); !slices.Equal(got, want) {
+		t.Errorf("target holds %v, want %v", got, want)
+	}
+	if c := backupCondition(t); c.Status != metav1.ConditionTrue {
+		t.Errorf("condition %+v", c)
 	}
 }
 

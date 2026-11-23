@@ -2,6 +2,8 @@ package backup
 
 import (
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -24,13 +26,28 @@ const (
 
 	partSuffix = ".part"
 	timeLayout = "20060102T150405Z"
+	// maxNameBytes is the longest file name the file systems allow.
+	maxNameBytes = 255
 )
 
 var nameTime = regexp.MustCompile(`-(\d{8}T\d{6}Z)-`)
 
-// FileName is the name of the backup of the appliance hostName at version, taken at t.
+// FileName is the name of the backup of the appliance hostName at version, taken at t. When the name with its
+// partial suffix would be too long for a file name, the host name is cut short and followed by its hostTag.
 func FileName(hostName string, t time.Time, version string) string {
-	return hostName + "-" + t.UTC().Format(timeLayout) + "-" + version + FileSuffix
+	rest := "-" + t.UTC().Format(timeLayout) + "-" + version + FileSuffix
+	if len(hostName)+len(rest)+len(partSuffix) <= maxNameBytes {
+		return hostName + rest
+	}
+	tag := "-" + hostTag(hostName)
+	keep := max(maxNameBytes-len(rest)-len(partSuffix)-len(tag), 0)
+	return hostName[:min(keep, len(hostName))] + tag + rest
+}
+
+// hostTag identifies a host name whose backup file names carry it cut short.
+func hostTag(hostName string) string {
+	sum := sha256.Sum256([]byte(hostName))
+	return hex.EncodeToString(sum[:8])
 }
 
 // fileTime is the time a backup file name carries, or fallback when it carries none.
