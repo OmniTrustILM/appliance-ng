@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
@@ -248,6 +249,8 @@ func noLeak(t *testing.T, f *fixture) {
 
 func TestRunWritesAndPrunesLocal(t *testing.T) {
 	f := newFixture(t)
+	f.runner.deps.KeyedConnectors = []string{"removed-provider"}
+	keys := secret(t, "ilm", "removed-provider-keys", map[string][]byte{"ENCRYPTION_KEY": {0x00, 0xff, 0x80, '\n', 0x7f}})
 	var names []string
 	for range 4 {
 		names = append(names, mustRun(t, f, RunSchedule, nil).Name)
@@ -302,6 +305,13 @@ func TestRunWritesAndPrunesLocal(t *testing.T) {
 	}
 	if s := content["secrets/appliance-system/"+recovery.RecipientSecret+".yaml"]; !strings.Contains(s, "kind: Secret") {
 		t.Errorf("recipient Secret:\n%s", s)
+	}
+	var restored corev1.Secret
+	if err := yaml.UnmarshalStrict([]byte(content["secrets/ilm/removed-provider-keys.yaml"]), &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Type != corev1.SecretTypeOpaque || !maps.EqualFunc(restored.Data, keys.Data, bytes.Equal) {
+		t.Errorf("key Secret of a removed connector: type %q, data %v, want %v", restored.Type, restored.Data, keys.Data)
 	}
 
 	st := getAppliance(t).Status.Backup

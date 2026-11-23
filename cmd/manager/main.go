@@ -224,19 +224,31 @@ func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.C
 	}
 	cfg := mgr.GetConfig()
 	runner := backup.NewRunner(backup.RunnerDeps{
-		Client:  mgr.GetClient(),
-		Reader:  mgr.GetAPIReader(),
-		Dumper:  backup.NewManagedDumper(mgr.GetAPIReader(), cfg),
-		Audit:   auditLog,
-		Dir:     dir,
-		Version: version,
-		Targets: target.Deps{Client: direct, Config: cfg, Image: busybox, Namespace: kube.SystemNamespace},
-		Log:     log,
+		Client:          mgr.GetClient(),
+		Reader:          mgr.GetAPIReader(),
+		Dumper:          backup.NewManagedDumper(mgr.GetAPIReader(), cfg),
+		Audit:           auditLog,
+		Dir:             dir,
+		Version:         version,
+		KeyedConnectors: keyedConnectors(rel),
+		Targets:         target.Deps{Client: direct, Config: cfg, Image: busybox, Namespace: kube.SystemNamespace},
+		Log:             log,
 	})
 	if err := runner.ResetRunning(ctx); err != nil {
 		log.Warn("could not clear the backup a restart cut off from the status", "failure", backup.Describe(err))
 	}
 	return runner, nil
+}
+
+// keyedConnectors names the catalogue's connectors that keep a key Secret.
+func keyedConnectors(rel *release.Manifest) []string {
+	var names []string
+	for _, c := range rel.Connectors {
+		if len(c.Keys) > 0 {
+			names = append(names, c.Name)
+		}
+	}
+	return names
 }
 
 // addRunnables adds the console certificate refresh, the console server and the failed pod sweep to mgr.

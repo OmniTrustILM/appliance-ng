@@ -29,8 +29,9 @@ type secretRef struct {
 // CollectSecrets returns the Secrets a restore needs, without the metadata of the cluster they came from, sorted by
 // namespace and name: every Secret the Appliance references (a missing one is an error), the appliance's own
 // account, key and recipient Secrets, the CA Secrets, and in the platform namespace the CA key pairs and the key
-// Secret of every Connector. Other Secrets that do not exist are skipped.
-func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance) ([]corev1.Secret, error) {
+// Secret of every Connector and of every connector named in keyed. A removed connector's key Secret stays, and so
+// does what the connector stored with it in the database. Other Secrets that do not exist are skipped.
+func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance, keyed []string) ([]corev1.Secret, error) {
 	refs := referenced(a)
 	for _, name := range []string{auth.UsersSecret, auth.UsersKeySecret, recovery.RecipientSecret} {
 		refs = append(refs, secretRef{namespace: kube.SystemNamespace, name: name})
@@ -43,8 +44,12 @@ func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance)
 	if err := c.List(ctx, connectors, client.InNamespace(platform.Namespace)); err != nil {
 		return nil, fmt.Errorf("list connectors: %w", err)
 	}
+	withKeys := slices.Clone(keyed)
 	for _, connector := range connectors.Items {
-		refs = append(refs, secretRef{namespace: platform.Namespace, name: connector.Name + "-keys"})
+		withKeys = append(withKeys, connector.Name)
+	}
+	for _, name := range withKeys {
+		refs = append(refs, secretRef{namespace: platform.Namespace, name: name + "-keys"})
 	}
 
 	slices.SortFunc(refs, func(x, y secretRef) int {

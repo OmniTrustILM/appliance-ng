@@ -125,6 +125,8 @@ type RunnerDeps struct {
 	Dir string
 	// Version is the appliance version, written into the file name and the manifest.
 	Version string
+	// KeyedConnectors names the catalogue's connectors that have a key Secret, whether they run or not.
+	KeyedConnectors []string
 	// Targets serves the NFS targets: client, configuration, busybox image and namespace. The proxy and the trust
 	// bundle are read from the Appliance at each run.
 	Targets target.Deps
@@ -553,7 +555,7 @@ func (r *Runner) writeArchive(ctx context.Context, w io.Writer, a *v1alpha1.Appl
 	if err := aw.Add(memberAppliance, int64(len(spec)), strings.NewReader(string(spec))); err != nil {
 		return memberAppliance, err
 	}
-	secrets, err := CollectSecrets(ctx, r.deps.Reader, a)
+	secrets, err := CollectSecrets(ctx, r.deps.Reader, a, r.deps.KeyedConnectors)
 	if err != nil {
 		return "secrets", err
 	}

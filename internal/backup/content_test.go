@@ -70,7 +70,7 @@ func TestCollectSecretsList(t *testing.T) {
 	connector(t, "without-keys")
 	secret(t, "ilm", "software-cryptography-provider-keys", map[string][]byte{"ENCRYPTION_KEY": []byte("v")})
 
-	got, err := CollectSecrets(context.Background(), testClient, fullAppliance())
+	got, err := CollectSecrets(context.Background(), testClient, fullAppliance(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +86,19 @@ func TestCollectSecretsList(t *testing.T) {
 	}
 }
 
+func TestCollectSecretsKeepsTheKeysOfARemovedConnector(t *testing.T) {
+	secret(t, "ilm", "removed-provider-keys", map[string][]byte{"ENCRYPTION_KEY": []byte("v")})
+	got, err := CollectSecrets(context.Background(), testClient, &v1alpha1.Appliance{}, []string{"removed-provider", "never-enabled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ilm/removed-provider-keys"}; !slices.Equal(names(got), want) {
+		t.Errorf("collected %v, want %v", names(got), want)
+	}
+}
+
 func TestCollectSecretsSkipsMissingOptionalSecrets(t *testing.T) {
-	got, err := CollectSecrets(context.Background(), testClient, &v1alpha1.Appliance{})
+	got, err := CollectSecrets(context.Background(), testClient, &v1alpha1.Appliance{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +110,7 @@ func TestCollectSecretsSkipsMissingOptionalSecrets(t *testing.T) {
 func TestCollectSecretsFailsOnAMissingReferencedSecret(t *testing.T) {
 	a := &v1alpha1.Appliance{}
 	a.Spec.Mail = &v1alpha1.MailSpec{CredentialsRef: "gone"}
-	_, err := CollectSecrets(context.Background(), testClient, a)
+	_, err := CollectSecrets(context.Background(), testClient, a, nil)
 	if err == nil || !strings.Contains(err.Error(), "appliance-system/gone") {
 		t.Fatalf("error = %v, want the missing Secret named", err)
 	}
@@ -138,7 +149,7 @@ func TestCollectSecretsStripsMetadata(t *testing.T) {
 		t.Fatalf("the stored Secret lacks the metadata the test strips: %v", err)
 	}
 
-	got, err := CollectSecrets(ctx, testClient, &v1alpha1.Appliance{})
+	got, err := CollectSecrets(ctx, testClient, &v1alpha1.Appliance{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +175,7 @@ func TestCollectSecretsStripsMetadata(t *testing.T) {
 func TestCollectSecretsKeepsAReferenceRequiredThatAlsoIsOptional(t *testing.T) {
 	a := &v1alpha1.Appliance{}
 	a.Spec.Mail = &v1alpha1.MailSpec{CredentialsRef: "appliance-users"}
-	if _, err := CollectSecrets(context.Background(), testClient, a); err == nil {
+	if _, err := CollectSecrets(context.Background(), testClient, a, nil); err == nil {
 		t.Fatal("a missing referenced Secret that is also collected as optional was skipped")
 	}
 }
