@@ -191,6 +191,23 @@ func TestWizardClosedAfterComplete(t *testing.T) {
 	}
 }
 
+func TestWizardClosedDuringRestore(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupRestore)
+
+	rec := h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, s)
+	wantStatus(t, rec, http.StatusConflict)
+	var e Error
+	decode(t, rec, &e)
+	if e.Code != codeRestorePending {
+		t.Errorf("code %q, want %s", e.Code, codeRestorePending)
+	}
+	if got := getAppliance(t).Spec.Platform; got != nil {
+		t.Errorf("platform written during a restore: %+v", got)
+	}
+}
+
 func TestWizardBeforeTheAppliance(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()

@@ -353,6 +353,63 @@ func TestImportKeepsExistingAppliance(t *testing.T) {
 	}
 }
 
+// The Appliance is in setup state restore also when the appliance reconciler started part 2 between the creation and
+// the import, and the administrator is created.
+func TestHandoverModeRestore(t *testing.T) {
+	cleanupHandover(t)
+	answers := handoverAnswers()
+	answers.Mode = wizard.ModeRestore
+	data, err := json.Marshal(answers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createHandoverSecret(t, data)
+	ctx := context.Background()
+	node := &fakeTalos{mounted: true}
+	r := newHandoverReconciler(testClient, node)
+	node.failWith = errCrash
+
+	if _, err := reconcileHandover(ctx, r); !errors.Is(err, errCrash) {
+		t.Fatalf("first import: %v, want the crash", err)
+	}
+	a := getAppliance(t)
+	a.Status.Setup = v1alpha1.SetupPart2
+	if err := testClient.Status().Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconcileHandover(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+
+	a = getAppliance(t)
+	if a.Status.Setup != v1alpha1.SetupRestore {
+		t.Errorf("setup %q, want restore", a.Status.Setup)
+	}
+	if c := condition(t, a, v1alpha1.ConditionHandoverComplete); c.Status != metav1.ConditionTrue {
+		t.Errorf("HandoverComplete %s, want True", c.Status)
+	}
+	if _, err := r.Users.Get(ctx, adminName); err != nil {
+		t.Errorf("administrator not created: %v", err)
+	}
+}
+
+// A hand-over file without a mode leaves setup to the appliance reconciler, which starts part 2.
+func TestHandoverWithoutModeIsNew(t *testing.T) {
+	cleanupHandover(t)
+	data := handoverJSON(t)
+	if bytes.Contains(data, []byte(`"mode"`)) {
+		t.Fatalf("the hand-over file of a new appliance carries a mode: %s", data)
+	}
+	createHandoverSecret(t, data)
+
+	if _, err := reconcileHandover(context.Background(), newHandoverReconciler(testClient, &fakeTalos{mounted: true})); err != nil {
+		t.Fatal(err)
+	}
+	if got := getAppliance(t).Status.Setup; got != "" {
+		t.Errorf("setup %q after the import, want it unset for part 2", got)
+	}
+}
+
 // unusedUsers fails every call: the import must not touch the user store.
 type unusedUsers struct{ calls *int }
 
@@ -497,6 +554,7 @@ func TestImportIgnoresAnInvalidSecret(t *testing.T) {
 		"wrong version":    []byte(`{"version":99}`),
 		"no password hash": without(func(f *wizard.HandoverFile) { f.Admin.PasswordHash = "" }),
 		"no TOTP seed":     without(func(f *wizard.HandoverFile) { f.Admin.TOTPSeed = "" }),
+		"unknown mode":     without(func(f *wizard.HandoverFile) { f.Mode = "upgrade" }),
 	} {
 		t.Run(name, func(t *testing.T) {
 			cleanupHandover(t)

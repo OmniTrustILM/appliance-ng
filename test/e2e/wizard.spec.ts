@@ -14,6 +14,10 @@ base.describe('first-boot service', () => {
     await fillSecret(page.getByLabel('Setup code'), input('E2E_CODE'), 'the setup code');
     await continueButton.click();
 
+    await expect(page.getByRole('heading', { name: 'What do you want to set up?' })).toBeVisible();
+    await page.getByRole('radio', { name: /New appliance/ }).check();
+    await continueButton.click();
+
     await expect(page.getByRole('heading', { name: 'Administrator' })).toBeVisible();
     await page.getByLabel('User name').fill(input('E2E_USER'));
     await fillSecret(page.getByLabel('Password', { exact: true }), input('E2E_PASSWORD'), 'the password');

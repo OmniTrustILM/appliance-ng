@@ -56,6 +56,49 @@ describe('BackupsPage', () => {
     expect(screen.getByText(/external database must be backed up by its owner/i)).toBeInTheDocument();
   });
 
+  it('restores a local backup in place after a confirmation naming its time, with the kit and passphrase', async () => {
+    const name = 'appliance-20261120T020000Z-1.0.0.ilmbackup';
+    const { sent } = stubApi({
+      [BACKUPS]: [200, backups()],
+      'POST /appliance/api/v1/restore/inspect': [200, { backup: name, inPlace: true }],
+      'POST /appliance/api/v1/restore/start': [202],
+    });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: `Restore ${name}` }));
+    const dialog = screen.getByRole('dialog', { name: 'Restore this backup?' });
+    expect(dialog).toHaveTextContent(new Date('2026-11-20T02:00:00Z').toLocaleString());
+    expect(dialog).toHaveTextContent(/everything changed since then is lost/i);
+    expect(dialog).toHaveTextContent(/accounts created since then are removed; yours is kept/i);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Restore' }));
+    const form = screen.getByRole('form', { name: `Restore ${name}` });
+    await userEvent.upload(within(form).getByLabelText(/recovery kit/i), new File(['kit'], 'kit.tar.age'));
+    await userEvent.type(within(form).getByLabelText('Passphrase'), 'the kit passphrase');
+    await userEvent.click(within(form).getByRole('button', { name: 'Restore the backup' }));
+    expect(await screen.findByRole('link', { name: 'Follow the restore' })).toHaveAttribute('href', '/appliance/restore');
+    const [inspect] = sent['POST /appliance/api/v1/restore/inspect'] as Record<string, unknown>[];
+    expect(inspect).toMatchObject({ source: 'local', name, passphrase: 'the kit passphrase' });
+    expect(sent['POST /appliance/api/v1/restore/start']).toEqual([{ inPlace: true, confirm: true }]);
+  });
+
+  it('shows why a restore in place was refused and starts nothing', async () => {
+    const name = 'appliance-20261119T020000Z-1.0.0.ilmbackup';
+    const { sent } = stubApi({
+      [BACKUPS]: [200, backups()],
+      'POST /appliance/api/v1/restore/inspect': [409, { code: 'version_unavailable', message: 'The backup holds ILM 2.19.0.' }],
+    });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: `Restore ${name}` }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restore' }));
+    const form = screen.getByRole('form', { name: `Restore ${name}` });
+    await userEvent.upload(within(form).getByLabelText(/recovery kit/i), new File(['kit'], 'kit.tar.age'));
+    await userEvent.type(within(form).getByLabelText('Passphrase'), 'the kit passphrase');
+    await userEvent.click(within(form).getByRole('button', { name: 'Restore the backup' }));
+    expect(await screen.findByText('The backup holds ILM 2.19.0.')).toBeInTheDocument();
+    expect(sent['POST /appliance/api/v1/restore/start']).toBeUndefined();
+    await userEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('form', { name: `Restore ${name}` })).not.toBeInTheDocument();
+  });
+
   it('reads the backups again until the running one has ended', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
     let reads = 0;

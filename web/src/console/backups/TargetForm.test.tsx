@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { requestTimeoutMs, slowRequestTimeoutMs } from '../../api/client';
 import { hang, stubApi } from '../../setup/test-utils';
-import { TargetForm, browserTimeZone, enterAgainHint, type Target } from './TargetForm';
+import { TargetForm, type Target } from './TargetForm';
+import { enterAgainHint } from './TargetFields';
+import { browserTimeZone } from './targetValues';
 
 afterEach(() => {
   vi.useRealTimers();

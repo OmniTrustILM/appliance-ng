@@ -8,14 +8,16 @@ import { AdminPage } from './AdminPage';
 import { ApplyingPage } from './ApplyingPage';
 import { CodePage } from './CodePage';
 import { attempt, unreachable } from './failure';
+import { ModePage } from './ModePage';
 import { NodePage } from './NodePage';
 import { ReviewPage, type Answers } from './ReviewPage';
 import { TotpPage } from './TotpPage';
 
-type Step = 'code' | 'admin' | 'totp' | 'node' | 'apply' | 'applying';
+type Step = 'code' | 'mode' | 'admin' | 'totp' | 'node' | 'apply' | 'applying';
 
 const steps: { step: Step; label: string }[] = [
   { step: 'code', label: 'Code' },
+  { step: 'mode', label: 'Choice' },
   { step: 'admin', label: 'Administrator' },
   { step: 'totp', label: 'Authenticator' },
   { step: 'node', label: 'Node' },
@@ -55,7 +57,8 @@ export function SetupFlow() {
   return (
     <PageWidth>
       <StepIndicator steps={steps.map(({ label }) => label)} current={steps.findIndex((s) => s.step === step)} />
-      {step === 'code' && <CodePage onDone={() => setStep('admin')} />}
+      {step === 'code' && <CodePage onDone={() => setStep('mode')} />}
+      {step === 'mode' && <ModePage onDone={() => setStep('admin')} onExpired={expired} />}
       {step === 'admin' && <AdminPage onDone={(name) => { setUser(name); setStep('totp'); }} onExpired={expired} />}
       {step === 'totp' && <TotpPage onDone={() => setStep('node')} onExpired={expired} />}
       {step === 'node' && (

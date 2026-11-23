@@ -100,6 +100,16 @@ func loadCommand(database string) []string {
 	return []string{"psql", "-v", "ON_ERROR_STOP=1", "-d", database}
 }
 
+// recreateSQL ends the other sessions of the database, drops it and creates it empty for its owner. psql quotes the
+// names it is given as variables; the CREATE is skipped when CloudNativePG created the database again in between.
+const recreateSQL = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db' AND pid <> pg_backend_pid();\n" +
+	"DROP DATABASE IF EXISTS :\"db\" WITH (FORCE);\n" +
+	"SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db')\\gexec\n"
+
+func recreateCommand(database, owner string) []string {
+	return []string{"psql", "-v", "ON_ERROR_STOP=1", "-v", "db=" + database, "-v", "owner=" + owner, "-d", "postgres"}
+}
+
 type managedDumper struct {
 	reader client.Reader
 	cfg    *rest.Config
@@ -141,6 +151,19 @@ func (d *managedDumper) Load(ctx context.Context, r io.Reader) error {
 	stdin := io.MultiReader(strings.NewReader(role), r)
 	if err := d.exec(ctx, d.cfg, kube.Container{Namespace: platform.Namespace, Pod: pod, Name: managedContainer}, loadCommand(database), stdin, io.Discard); err != nil {
 		return fmt.Errorf("load the managed database: %w", err)
+	}
+	return nil
+}
+
+// Recreate replaces the database with an empty one of the same owner, so that a load starts from nothing.
+func (d *managedDumper) Recreate(ctx context.Context) error {
+	pod, database, owner, err := d.target(ctx)
+	if err != nil {
+		return err
+	}
+	c := kube.Container{Namespace: platform.Namespace, Pod: pod, Name: managedContainer}
+	if err := d.exec(ctx, d.cfg, c, recreateCommand(database, owner), strings.NewReader(recreateSQL), io.Discard); err != nil {
+		return fmt.Errorf("recreate the managed database: %w", err)
 	}
 	return nil
 }

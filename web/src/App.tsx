@@ -13,6 +13,7 @@ import { RegistriesPage } from './console/registries/RegistriesPage';
 import { DashboardPage } from './console/dashboard/DashboardPage';
 import { SystemPage } from './console/system/SystemPage';
 import { TrustPage } from './console/trust/TrustPage';
+import { RestorePage } from './restore/RestorePage';
 import { RequireSession, SessionProvider } from './session';
 import { SetupFlow } from './setup/SetupFlow';
 import { SignInPage } from './signin/SignInPage';
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/access" element={<ConsolePage><AccessPage /></ConsolePage>} />
         <Route path="/recovery-kit" element={<ConsolePage><RecoveryKitPage /></ConsolePage>} />
         <Route path="/backups" element={<ConsolePage><BackupsPage /></ConsolePage>} />
+        <Route path="/restore" element={<ConsolePage><RestorePage /></ConsolePage>} />
         <Route path="/system" element={<ConsolePage><SystemPage /></ConsolePage>} />
         <Route path="/audit" element={<ConsolePage><AuditPage /></ConsolePage>} />
         <Route path="/" element={<ConsolePage><DashboardPage /></ConsolePage>} />

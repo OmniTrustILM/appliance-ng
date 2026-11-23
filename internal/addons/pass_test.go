@@ -54,7 +54,7 @@ var (
 
 func TestPassStopsAtFirstUnready(t *testing.T) {
 	c := &fakeCluster{unready: map[string]string{"cm": "0/1 available"}}
-	p, err := Pass(context.Background(), c, steps, fsys)
+	p, err := Pass(context.Background(), c, steps, fsys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestPassStopsAtFirstUnready(t *testing.T) {
 func TestPassReappliesEarlierSteps(t *testing.T) {
 	c := &fakeCluster{unready: map[string]string{"cm": "x"}}
 	for range 2 {
-		if _, err := Pass(context.Background(), c, steps, fsys); err != nil {
+		if _, err := Pass(context.Background(), c, steps, fsys, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -80,7 +80,7 @@ func TestPassReappliesEarlierSteps(t *testing.T) {
 }
 
 func TestPassDone(t *testing.T) {
-	p, err := Pass(context.Background(), &fakeCluster{}, steps, fsys)
+	p, err := Pass(context.Background(), &fakeCluster{}, steps, fsys, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestPassDone(t *testing.T) {
 }
 
 func TestPassNoSteps(t *testing.T) {
-	p, err := Pass(context.Background(), &fakeCluster{}, nil, fsys)
+	p, err := Pass(context.Background(), &fakeCluster{}, nil, fsys, nil)
 	if err != nil || !p.Done {
 		t.Errorf("progress = %+v, err = %v, want done", p, err)
 	}
@@ -99,7 +99,7 @@ func TestPassNoSteps(t *testing.T) {
 func TestPassCreateOnlyCreates(t *testing.T) {
 	c := &fakeCluster{}
 	only := []kube.Step{{Name: "p", Files: []string{"a.yaml"}, CreateOnly: true}}
-	if _, err := Pass(context.Background(), c, only, fsys); err != nil {
+	if _, err := Pass(context.Background(), c, only, fsys, nil); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"create a"}; !slices.Equal(c.calls, want) {
@@ -118,7 +118,7 @@ func TestPassErrors(t *testing.T) {
 		"apply":   {&fakeCluster{applyErr: boom}, steps, "step cilium: apply a.yaml: boom"},
 		"missing": {&fakeCluster{}, []kube.Step{{Name: "x", Files: []string{"nope.yaml"}}}, "step x: read nope.yaml"},
 	} {
-		_, err := Pass(context.Background(), tc.c, tc.steps, fsys)
+		_, err := Pass(context.Background(), tc.c, tc.steps, fsys, nil)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
 		}
@@ -171,5 +171,72 @@ func TestObjectName(t *testing.T) {
 		if got := objectName(w); got != want {
 			t.Errorf("objectName(%+v) = %q, want %q", w, got, want)
 		}
+	}
+}
+
+const operatorDocs = `apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm-operator-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ilm-operator-controller-manager
+  namespace: ilm-operator-system
+spec:
+  replicas: 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: other
+  namespace: ilm-operator-system
+spec:
+  replicas: 1
+`
+
+func TestPassAppliesHolds(t *testing.T) {
+	const other = "kind: Namespace\nmetadata:\n  name: x\n"
+	files := fstest.MapFS{"op.yaml": {Data: []byte(operatorDocs)}, "a.yaml": {Data: []byte(other)}}
+	only := []kube.Step{{Name: "ilm-operator", Files: []string{"op.yaml", "a.yaml"}}}
+	c := &fakeCluster{}
+	holds := Holds{"ilm-operator-system/ilm-operator-controller-manager": 0}
+	if _, err := Pass(context.Background(), c, only, files, holds); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) != 2 || c.calls[1] != "apply "+other {
+		t.Fatalf("calls = %v, want the held file and a.yaml unchanged", c.calls)
+	}
+	docs := strings.Split(strings.TrimPrefix(c.calls[0], "apply "), "\n---\n")
+	if len(docs) != 3 {
+		t.Fatalf("applied %d documents, want 3: %s", len(docs), c.calls[0])
+	}
+	if !strings.Contains(docs[1], "name: ilm-operator-controller-manager") || !strings.Contains(docs[1], "replicas: 0") {
+		t.Errorf("held Deployment applied as\n%s", docs[1])
+	}
+	if !strings.Contains(docs[2], "name: other") || !strings.Contains(docs[2], "replicas: 1") {
+		t.Errorf("other Deployment applied as\n%s", docs[2])
+	}
+}
+
+func TestPassWithoutHoldsKeepsTheFile(t *testing.T) {
+	files := fstest.MapFS{"op.yaml": {Data: []byte(operatorDocs)}}
+	only := []kube.Step{{Name: "ilm-operator", Files: []string{"op.yaml"}}}
+	c := &fakeCluster{}
+	if _, err := Pass(context.Background(), c, only, files, Holds{"ilm/elsewhere": 0}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"apply " + operatorDocs}; !slices.Equal(c.calls, want) {
+		t.Errorf("calls = %v, want the file unchanged", c.calls)
+	}
+}
+
+func TestPassHoldOnBrokenYAML(t *testing.T) {
+	files := fstest.MapFS{"bad.yaml": {Data: []byte("kind: [")}}
+	only := []kube.Step{{Name: "x", Files: []string{"bad.yaml"}}}
+	_, err := Pass(context.Background(), &fakeCluster{}, only, files, Holds{"a/b": 0})
+	if err == nil || !strings.Contains(err.Error(), "bad.yaml") {
+		t.Errorf("err = %v, want the file named", err)
 	}
 }

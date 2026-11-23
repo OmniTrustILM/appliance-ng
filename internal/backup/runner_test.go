@@ -1027,3 +1027,60 @@ func TestRunWithoutAnUnreachableDatabase(t *testing.T) {
 		t.Errorf("local %+v", local)
 	}
 }
+
+func TestRunRefusesDuringRestore(t *testing.T) {
+	f := newFixture(t)
+	a := getAppliance(t)
+	a.Status.Restore = &v1alpha1.RestoreStatus{Backup: "b.ilmbackup", Step: v1alpha1.RestoreStepWaitingForKit, PausedStep: v1alpha1.RestoreStepDatabase, StartedAt: metav1.Now()}
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Run(context.Background(), RunSchedule, nil); !errors.Is(err, ErrRestoreInProgress) {
+		t.Fatalf("run: %v, want ErrRestoreInProgress", err)
+	}
+	wantRefusal(t, f, "RestoreInProgress")
+	if got := Describe(ErrRestoreInProgress); got != ErrRestoreInProgress.Error() {
+		t.Errorf("Describe = %q", got)
+	}
+
+	// A failed restore has left the database half-restored until it is resumed.
+	a = getAppliance(t)
+	a.Status.Restore.Step, a.Status.Restore.PausedStep, a.Status.Restore.Message = v1alpha1.RestoreStepDatabase, "", v1alpha1.RestoreFailed
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Run(context.Background(), RunSchedule, nil); !errors.Is(err, ErrRestoreInProgress) {
+		t.Fatalf("run after a failed restore: %v, want ErrRestoreInProgress", err)
+	}
+
+	a = getAppliance(t)
+	a.Status.Restore.Step, a.Status.Restore.Message = v1alpha1.RestoreStepDone, ""
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, f, RunSchedule, nil)
+}
+
+func TestRunnerBusy(t *testing.T) {
+	f := newFixture(t)
+	if f.runner.Busy() {
+		t.Fatal("busy before any run")
+	}
+	f.dumper.started, f.dumper.block = make(chan struct{}, 1), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.runner.Run(context.Background(), RunSchedule, nil)
+		done <- err
+	}()
+	<-f.dumper.started
+	if !f.runner.Busy() {
+		t.Error("not busy while a backup runs")
+	}
+	close(f.dumper.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if f.runner.Busy() {
+		t.Error("busy after the backup ended")
+	}
+}

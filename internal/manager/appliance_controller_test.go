@@ -721,17 +721,20 @@ func TestSetupWithManagerReconcilesTheAppliance(t *testing.T) {
 	}
 }
 
-// failingReader fails every read.
+// failingReader fails every read but that of the Appliance.
 type failingReader struct{ client.Reader }
 
-func (failingReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+func (r failingReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*v1alpha1.Appliance); ok {
+		return r.Reader.Get(ctx, key, obj, opts...)
+	}
 	return errors.New("connection refused")
 }
 
 func TestReconcileChecksKeySecretBeforeCreating(t *testing.T) {
 	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec("software-cryptography-provider")})
 	r, _ := newReconciler(testClient, &fakeCluster{})
-	r.APIReader = failingReader{}
+	r.APIReader = failingReader{Reader: testClient}
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: v1alpha1.ApplianceName}})
 	if err == nil || !strings.Contains(err.Error(), "read secret ilm/software-cryptography-provider-keys") {

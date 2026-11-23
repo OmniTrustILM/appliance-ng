@@ -353,6 +353,13 @@ func TestProtectedOperationsNeedASession(t *testing.T) {
 		{http.MethodPost, pathKubeconfig},
 		{http.MethodDelete, pathKubeconfig + "/kc-any"},
 		{http.MethodPost, pathTalosconfig},
+		{http.MethodGet, pathRestore},
+		{http.MethodPut, pathRestoreUpload},
+		{http.MethodPost, pathRestoreList},
+		{http.MethodPost, pathRestoreFetch},
+		{http.MethodPost, pathRestoreInspect},
+		{http.MethodPost, pathRestoreStart},
+		{http.MethodPost, pathRestoreResume},
 	} {
 		if rec := h.request(tc.method, tc.path, nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s without a session: status %d, want 401", tc.method, tc.path, rec.Code)

@@ -20,6 +20,7 @@ function renderPage() {
         <Route path="/" element={<p>console page</p>} />
         <Route path="/wizard/" element={<p>wizard page</p>} />
         <Route path="/recovery-kit" element={<p>recovery kit page</p>} />
+        <Route path="/restore" element={<p>restore page</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -72,6 +73,18 @@ describe('SignInPage', () => {
       expect(await screen.findByText('recovery kit page')).toBeInTheDocument();
       page.unmount();
     }
+  });
+
+  it('opens the restore page while the appliance waits for a backup, not the recovery kit prompt', async () => {
+    const { sent } = stubApi({
+      'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+      'GET /appliance/api/v1/status': [200, { setup: 'restore', conditions: [], versions: {}, rebootRequired: false }],
+      'GET /appliance/api/v1/recovery-kit': [200, { issued: false, confirmed: false }],
+    });
+    renderPage();
+    await fill();
+    expect(await screen.findByText('restore page')).toBeInTheDocument();
+    expect(sent['GET /appliance/api/v1/recovery-kit']).toBeUndefined();
   });
 
   it('opens the status page when the recovery kit is confirmed', async () => {

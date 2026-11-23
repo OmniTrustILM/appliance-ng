@@ -157,9 +157,16 @@ func (b *browser) step() string {
 	return step
 }
 
-// enrol sets the administrator and confirms a TOTP authenticator; it returns the seed.
+// chooseMode saves the choice between a new appliance and a restore.
+func (b *browser) chooseMode(mode string) {
+	b.t.Helper()
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/mode", map[string]string{"mode": mode}, http.StatusNoContent)
+}
+
+// enrol chooses a new appliance, sets the administrator and confirms a TOTP authenticator; it returns the seed.
 func (b *browser) enrol() string {
 	b.t.Helper()
+	b.chooseMode("new")
 	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
 	seed, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
 	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(seed)}, http.StatusNoContent)
@@ -231,8 +238,8 @@ func TestSetupTakeoverAfterTheSessionExpired(t *testing.T) {
 	s.clock.advance(auth.IdleTimeout + time.Minute)
 	second := s.browser(t)
 	second.enterCode(s.display)
-	if step := second.step(); step != "admin" {
-		t.Errorf("step after a takeover %q, want admin: the answers start over", step)
+	if step := second.step(); step != "mode" {
+		t.Errorf("step after a takeover %q, want mode: the answers start over", step)
 	}
 	if rec := first.do(http.MethodGet, "/appliance/api/v1/setup/dhcp", nil); rec.Code != http.StatusUnauthorized {
 		t.Errorf("expired session: %d, want 401", rec.Code)
@@ -246,6 +253,12 @@ func TestSetupStepsInOrder(t *testing.T) {
 
 	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusConflict)
 	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusConflict)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusConflict)
+	if step := b.step(); step != "mode" {
+		t.Fatalf("step %q after the code, want mode", step)
+	}
+	b.chooseMode("new")
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/mode", map[string]string{"mode": "new"}, http.StatusConflict)
 	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
 	if step := b.step(); step != "totp" {
 		t.Fatalf("step %q, want totp", step)
@@ -328,6 +341,55 @@ func TestSetupApplyHandsOverTheAnswers(t *testing.T) {
 	wantJSON, _ := json.Marshal(want)
 	if !bytes.Equal(got, wantJSON) {
 		t.Errorf("node answers %s, want %s", got, wantJSON)
+	}
+}
+
+func TestHandoverModeRestore(t *testing.T) {
+	s := newTestServer(t)
+	b := s.browser(t)
+	b.enterCode(s.display)
+	b.chooseMode("restore")
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
+	seed, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/totp/confirm", map[string]string{"code": b.totp(seed)}, http.StatusNoContent)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
+
+	var file HandoverFile
+	if err := json.Unmarshal((<-s.applied).Handover, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Mode != ModeRestore || file.Admin.User != testUser || file.Node.HostName != "ilm.example.com" {
+		t.Errorf("hand-over file mode %q admin %q host %q, want restore with the answers", file.Mode, file.Admin.User, file.Node.HostName)
+	}
+}
+
+func TestSetupHandsOverNewMode(t *testing.T) {
+	s := newTestServer(t)
+	b := s.browser(t)
+	b.enterCode(s.display)
+	b.enrol()
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
+
+	var file HandoverFile
+	if err := json.Unmarshal((<-s.applied).Handover, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Mode != ModeNew {
+		t.Errorf("hand-over file mode %q, want new", file.Mode)
+	}
+}
+
+func TestSetupRefusesAnUnknownMode(t *testing.T) {
+	s := newTestServer(t)
+	b := s.browser(t)
+	b.enterCode(s.display)
+	for _, mode := range []string{"", "upgrade"} {
+		b.expect(http.MethodPut, "/appliance/api/v1/setup/mode", map[string]string{"mode": mode}, http.StatusBadRequest)
+	}
+	if step := b.step(); step != "mode" {
+		t.Errorf("step %q after refused modes, want mode", step)
 	}
 }
 
@@ -419,6 +481,7 @@ func TestSetupBoundsConcurrentPasswordHashes(t *testing.T) {
 	}
 	b := s.browser(t)
 	b.enterCode(s.display)
+	b.chooseMode("new")
 	var wg sync.WaitGroup
 	for range 6 {
 		wg.Go(func() {
@@ -439,6 +502,7 @@ func TestSetupValidatesTheAdmin(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
 	b.enterCode(s.display)
+	b.chooseMode("new")
 	for name, body := range map[string]map[string]any{
 		"no password":     {"user": testUser},
 		"short password":  {"user": testUser, "password": "short"},
@@ -473,6 +537,7 @@ func TestSetupTOTPRefusalShowsServerTime(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
 	b.enterCode(s.display)
+	b.chooseMode("new")
 	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
 	seed, _ := b.expect(http.MethodPost, "/appliance/api/v1/setup/totp", nil, http.StatusOK)["seed"].(string)
 	stale, err := totp.GenerateCode(seed, s.clock.now().Add(-5*time.Minute))
@@ -491,6 +556,7 @@ func TestSetupRequiresCSRF(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
 	b.enterCode(s.display)
+	b.chooseMode("new")
 	csrf := b.csrf
 	b.csrf = ""
 	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusForbidden)

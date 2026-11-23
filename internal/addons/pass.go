@@ -2,14 +2,24 @@
 package addons
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"slices"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
+	"sigs.k8s.io/yaml"
+
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 )
+
+// Holds maps Deployments, as namespace/name, to the replicas a pass applies them with instead of their manifest's.
+type Holds map[string]int32
 
 // Progress says how far a pass got: Step is the first step that is not ready, or the last step when Done.
 type Progress struct {
@@ -19,10 +29,11 @@ type Progress struct {
 }
 
 // Pass applies each step in order and returns at the first step whose waits do not pass, so a controller can
-// requeue instead of blocking. Steps that were passed before are applied again, which corrects drift.
-func Pass(ctx context.Context, c kube.Cluster, steps []kube.Step, fsys fs.FS) (Progress, error) {
+// requeue instead of blocking. Steps that were passed before are applied again, which corrects drift. The Deployments
+// in holds are applied with the replicas held.
+func Pass(ctx context.Context, c kube.Cluster, steps []kube.Step, fsys fs.FS, holds Holds) (Progress, error) {
 	for _, step := range steps {
-		if err := apply(ctx, c, step, fsys); err != nil {
+		if err := apply(ctx, c, step, fsys, holds); err != nil {
 			return Progress{}, fmt.Errorf("step %s: %w", step.Name, err)
 		}
 		if p, err := wait(ctx, c, step); err != nil || !p.Done {
@@ -64,7 +75,7 @@ func done(steps []kube.Step) Progress {
 	return Progress{Step: steps[len(steps)-1].Name, Done: true}
 }
 
-func apply(ctx context.Context, c kube.Cluster, step kube.Step, fsys fs.FS) error {
+func apply(ctx context.Context, c kube.Cluster, step kube.Step, fsys fs.FS, holds Holds) error {
 	for _, ns := range slices.Sorted(maps.Keys(step.NamespaceLabels)) {
 		if err := c.LabelNamespace(ctx, ns, step.NamespaceLabels[ns]); err != nil {
 			return err
@@ -75,6 +86,9 @@ func apply(ctx context.Context, c kube.Cluster, step kube.Step, fsys fs.FS) erro
 		if err != nil {
 			return fmt.Errorf("read %s: %w", file, err)
 		}
+		if docs, err = hold(docs, holds); err != nil {
+			return fmt.Errorf("hold %s: %w", file, err)
+		}
 		write := c.Apply
 		if step.CreateOnly {
 			write = c.Create
@@ -84,6 +98,53 @@ func apply(ctx context.Context, c kube.Cluster, step kube.Step, fsys fs.FS) erro
 		}
 	}
 	return nil
+}
+
+// hold returns docs with the replicas of the held Deployments replaced, or docs unchanged when none of them is held.
+func hold(docs []byte, holds Holds) ([]byte, error) {
+	if len(holds) == 0 {
+		return docs, nil
+	}
+	var out [][]byte
+	held := false
+	decoder := k8syaml.NewYAMLOrJSONDecoder(bytes.NewReader(docs), 4096)
+	for {
+		obj := map[string]any{}
+		err := decoder.Decode(&obj)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decode manifest: %w", err)
+		}
+		if len(obj) == 0 {
+			continue
+		}
+		doc, changed, err := holdObject(obj, holds)
+		if err != nil {
+			return nil, err
+		}
+		held = held || changed
+		out = append(out, doc)
+	}
+	if !held {
+		return docs, nil
+	}
+	return bytes.Join(out, []byte("---\n")), nil
+}
+
+// holdObject encodes obj, with the replicas held when it is a held Deployment.
+func holdObject(obj map[string]any, holds Holds) ([]byte, bool, error) {
+	u := &unstructured.Unstructured{Object: obj}
+	replicas, held := holds[u.GetNamespace()+"/"+u.GetName()]
+	held = held && u.GetKind() == "Deployment"
+	if held {
+		if err := unstructured.SetNestedField(obj, int64(replicas), "spec", "replicas"); err != nil {
+			return nil, false, err
+		}
+	}
+	doc, err := yaml.Marshal(obj)
+	return doc, held, err
 }
 
 func objectName(w kube.WaitFor) string {

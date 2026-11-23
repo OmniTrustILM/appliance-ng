@@ -56,6 +56,20 @@ const (
 	AdminCASecret = "admin-ca-keypair"
 )
 
+// Other Secrets operator v1.1.0 writes for the Platform that a restore carries: the generated administrator
+// certificate, the ILM client of the managed Keycloak and that Keycloak's administrator.
+const (
+	AdminCertificateSecret = "admin-certificate-secret"
+	OIDCClientSecret       = Name + "-oidc-client"
+	KeycloakAdminSecret    = Name + "-keycloak-initial-admin"
+)
+
+// The Deployment of the ILM operator.
+const (
+	OperatorNamespace  = "ilm-operator-system"
+	OperatorDeployment = "ilm-operator-controller-manager"
+)
+
 // SecretNames names the Secrets already written in the ilm namespace; empty means not present.
 type SecretNames struct {
 	TLS, Trust, PullSecret, Mail string

@@ -67,6 +67,8 @@ var (
 	refusedBackupNoKit   = ConflictJSONResponse{Code: "no_recovery_kit",
 		Message: "Issue the recovery kit and confirm that it is stored safely first: backups are encrypted to its key."}
 	refusedBackupUpgrade = ConflictJSONResponse{Code: "upgrade_in_progress", Message: "The platform is being upgraded; back up once the upgrade has finished."}
+	refusedBackupRestore = ConflictJSONResponse{Code: "restore_in_progress",
+		Message: "A restore is in progress or failed before it was done; back up once it has finished or been resumed."}
 	refusedBackupNoSpace = ConflictJSONResponse{Code: "no_space",
 		Message: "The data volume has too little free space for a backup: it needs twice the size of the last one."}
 	backupsUnavailable = BackupsUnavailableJSONResponse{Code: "backups_unavailable", Message: "Backups are not available in this manager."}
@@ -271,6 +273,8 @@ func (s *Server) PostBackups(ctx context.Context, _ PostBackupsRequestObject) (P
 		return PostBackups409JSONResponse{ConflictJSONResponse: refusedBackupNoKit}, nil
 	case errors.Is(err, backup.ErrUpgradeInProgress):
 		return PostBackups409JSONResponse{ConflictJSONResponse: refusedBackupUpgrade}, nil
+	case errors.Is(err, backup.ErrRestoreInProgress):
+		return PostBackups409JSONResponse{ConflictJSONResponse: refusedBackupRestore}, nil
 	case errors.Is(err, backup.ErrNoSpace):
 		return PostBackups409JSONResponse{ConflictJSONResponse: refusedBackupNoSpace}, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -194,4 +195,32 @@ func encrypt(t *testing.T, plain []byte) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+// TestOpenAndBuildLeaveNoScryptMemory checks that the 256 MiB scrypt takes is collected when Open and Build return:
+// reissuing a kit opens one and builds another in a 512 MiB container.
+func TestOpenAndBuildLeaveNoScryptMemory(t *testing.T) {
+	key, err := GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const passphrase = "correct horse battery staple 1"
+	heap := func() uint64 {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		return m.HeapAlloc
+	}
+	data, err := Build(Kit{BackupKey: key, Kubeconfig: []byte("k"), Talosconfig: []byte("t")}, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := heap(); h > 64<<20 {
+		t.Errorf("heap after Build = %d MiB, want the scrypt memory collected", h>>20)
+	}
+	if _, err := Open(data, passphrase); err != nil {
+		t.Fatal(err)
+	}
+	if h := heap(); h > 64<<20 {
+		t.Errorf("heap after Open = %d MiB, want the scrypt memory collected", h>>20)
+	}
 }

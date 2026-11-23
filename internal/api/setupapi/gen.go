@@ -16,12 +16,31 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for SetupModeMode.
+const (
+	New     SetupModeMode = "new"
+	Restore SetupModeMode = "restore"
+)
+
+// Valid indicates whether the value is a known member of the SetupModeMode enum.
+func (e SetupModeMode) Valid() bool {
+	switch e {
+	case New:
+		return true
+	case Restore:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SetupStep.
 const (
 	Admin    SetupStep = "admin"
 	Apply    SetupStep = "apply"
 	Applying SetupStep = "applying"
 	Code     SetupStep = "code"
+	Mode     SetupStep = "mode"
 	Node     SetupStep = "node"
 	Totp     SetupStep = "totp"
 )
@@ -36,6 +55,8 @@ func (e SetupStep) Valid() bool {
 	case Applying:
 		return true
 	case Code:
+		return true
+	case Mode:
 		return true
 	case Node:
 		return true
@@ -133,6 +154,15 @@ type SetupCode struct {
 	Code string `json:"code"`
 }
 
+// SetupMode defines model for SetupMode.
+type SetupMode struct {
+	// Mode `new` sets up an appliance with wizard part 2; `restore` hands over to the restore of a backup, which keeps wizard part 2 closed.
+	Mode SetupModeMode `json:"mode"`
+}
+
+// SetupModeMode `new` sets up an appliance with wizard part 2; `restore` hands over to the restore of a backup, which keeps wizard part 2 closed.
+type SetupModeMode string
+
 // SetupState defines model for SetupState.
 type SetupState struct {
 	// CsrfToken Present with a valid setup session.
@@ -178,6 +208,9 @@ type PutSetupAdminJSONRequestBody = AdminAccount
 // PostSetupCodeJSONRequestBody defines body for PostSetupCode for application/json ContentType.
 type PostSetupCodeJSONRequestBody = SetupCode
 
+// PutSetupModeJSONRequestBody defines body for PutSetupMode for application/json ContentType.
+type PutSetupModeJSONRequestBody = SetupMode
+
 // PutSetupNodeJSONRequestBody defines body for PutSetupNode for application/json ContentType.
 type PutSetupNodeJSONRequestBody = NodeSettings
 
@@ -198,6 +231,9 @@ type ServerInterface interface {
 	// GetSetupDhcp The values DHCP delivered, to prefill the network settings
 	// (GET /setup/dhcp)
 	GetSetupDhcp(w http.ResponseWriter, r *http.Request)
+	// PutSetupMode Choose a new appliance or the restore of a backup
+	// (PUT /setup/mode)
+	PutSetupMode(w http.ResponseWriter, r *http.Request)
 	// PutSetupNode Set the network settings of the node
 	// (PUT /setup/node)
 	PutSetupNode(w http.ResponseWriter, r *http.Request)
@@ -268,6 +304,20 @@ func (siw *ServerInterfaceWrapper) GetSetupDhcp(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetSetupDhcp(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSetupMode operation middleware
+func (siw *ServerInterfaceWrapper) PutSetupMode(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSetupMode(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -455,6 +505,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/code", wrapper.PostSetupCode)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/setup/state", wrapper.GetSetupState)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/setup/mode", wrapper.PutSetupMode)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/setup/admin", wrapper.PutSetupAdmin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/totp", wrapper.PostSetupTotp)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/setup/totp/confirm", wrapper.PostSetupTotpConfirm)
@@ -715,6 +766,78 @@ func (response GetSetupDhcp401JSONResponse) VisitGetSetupDhcpResponse(w http.Res
 	return err
 }
 
+type PutSetupModeRequestObject struct {
+	Body *PutSetupModeJSONRequestBody
+}
+
+type PutSetupModeResponseObject interface {
+	VisitPutSetupModeResponse(w http.ResponseWriter) error
+}
+
+type PutSetupMode204Response struct {
+}
+
+func (response PutSetupMode204Response) VisitPutSetupModeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutSetupMode400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutSetupMode400JSONResponse) VisitPutSetupModeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSetupMode401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutSetupMode401JSONResponse) VisitPutSetupModeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSetupMode403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutSetupMode403JSONResponse) VisitPutSetupModeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutSetupMode409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutSetupMode409JSONResponse) VisitPutSetupModeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutSetupNodeRequestObject struct {
 	Body *PutSetupNodeJSONRequestBody
 }
@@ -959,6 +1082,9 @@ type StrictServerInterface interface {
 	// GetSetupDhcp The values DHCP delivered, to prefill the network settings
 	// (GET /setup/dhcp)
 	GetSetupDhcp(ctx context.Context, request GetSetupDhcpRequestObject) (GetSetupDhcpResponseObject, error)
+	// PutSetupMode Choose a new appliance or the restore of a backup
+	// (PUT /setup/mode)
+	PutSetupMode(ctx context.Context, request PutSetupModeRequestObject) (PutSetupModeResponseObject, error)
 	// PutSetupNode Set the network settings of the node
 	// (PUT /setup/node)
 	PutSetupNode(ctx context.Context, request PutSetupNodeRequestObject) (PutSetupNodeResponseObject, error)
@@ -1115,6 +1241,37 @@ func (sh *strictHandler) GetSetupDhcp(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetSetupDhcpResponseObject); ok {
 		if err := validResponse.VisitGetSetupDhcpResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutSetupMode operation middleware
+func (sh *strictHandler) PutSetupMode(w http.ResponseWriter, r *http.Request) {
+	var request PutSetupModeRequestObject
+
+	var body PutSetupModeJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutSetupMode(ctx, request.(PutSetupModeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutSetupMode")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutSetupModeResponseObject); ok {
+		if err := validResponse.VisitPutSetupModeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

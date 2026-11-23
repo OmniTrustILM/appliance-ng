@@ -17,14 +17,22 @@
 //	            --sftp-password-file <file> --s3-secret-file <file> [--sftp <addr>] [--s3 <addr>]
 //	drive api METHOD PATH --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--body <json>]
+//	drive restore --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --backup <file> --kit <file> --passphrase-file <file> --ilm-host <fqdn> --out <file>
+//	            [--kube-addr <host:port>] [--apid <host:port>]
+//	drive ilm-marker --create|--check --url <console> --host-name <fqdn> --credential <p12>
+//	            --credential-password-file <file> --ui-url <url> --ui-addr <host:port>
+//	            [--kit <file> --passphrase-file <file> --kube-addr <host:port> --client-secret-out <file>]
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
-// gateway and DNS servers of the flags or else of DHCP, then applies. part2 signs in to the Appliance Manager and
-// answers wizard part 2 with the host name and the component, if any.
+// gateway and DNS servers of the flags or else of DHCP, then applies; --mode restore sets the appliance up to restore
+// a backup instead of running wizard part 2. part2 signs in to the Appliance Manager and answers wizard part 2 with
+// the host name and the component, if any.
 // check signs in and checks that the setup is complete, the built-in certificate is served and the audit log holds
 // the sign-in and the wizard. With --connector it downloads the ILM administrator's credential and checks, through
-// the ILM Core API at --ui-url reached at --ui-addr, that the connector registered.
+// the ILM Core API at --ui-url reached at --ui-addr, that the connector registered. With --credential it keeps the
+// credential there, mode 0600, encrypted with the password in --credential-password-file.
 // kit signs in and issues the recovery kit, unless one is issued already (a browser test did), and confirms it. The
 // kit goes to --out, mode 0600. It opens the kit with the passphrase in --passphrase-file, checks that its backup key
 // is the appliance's, that its kubeconfig and talosconfig reach the cluster and the node at --kube-addr and --apid,
@@ -43,6 +51,15 @@
 // api signs in to the Appliance Manager like part2, sends one request with the JSON body, if any, and prints the
 // JSON answer as it is. The caller chooses a path whose answer holds no secret: not the ILM administrator's
 // credential or a TOTP enrolment.
+// restore signs in to an appliance set up to restore, uploads the backup in --backup, checks it with the kit in --kit
+// and starts a restore that sets the ILM host name --ilm-host, resuming it with the kit when it waits for it. Once it
+// is done it checks that the status records the restore test, issues the kit again from --kit with the same
+// passphrase into --out, mode 0600, confirms it and checks it like kit does.
+// ilm-marker reaches the ILM at --ui-url through --ui-addr with the administrator credential in --credential, which
+// the console's built-in CA must accept. --create creates the ILM group restore-marker. --check waits until the group
+// is there, reads the ILM client's secret with the kubeconfig of the kit in --kit, checks that the Keycloak token
+// endpoint of the ILM accepts it and refuses another one, and that no manager log holds it or the credential's
+// password; with --client-secret-out it keeps the secret there, mode 0600, for the boot test's leak check.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 and check wait until the console serves a
@@ -53,6 +70,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -77,10 +95,21 @@ import (
 	"software.sslmate.com/src/go-pkcs12"
 )
 
+// Commands and setup modes named more than once.
+const (
+	cmdPart1    = "part1"
+	cmdBackup   = "backup"
+	cmdRestore  = "restore"
+	modeNew     = "new"
+	modeRestore = "restore"
+)
+
+// pollInterval is how often a wait asks again.
+var pollInterval = 5 * time.Second
+
 const (
 	totpPeriod     = 30
 	signInAttempts = 6
-	pollInterval   = 5 * time.Second
 	waitTimeout    = 3 * time.Minute
 	// registerTimeout bounds the wait for the connector to start and register with Core after the setup.
 	registerTimeout = 15 * time.Minute
@@ -127,6 +156,14 @@ func main() {
 	fs.StringVar(&o.s3SecretFile, "s3-secret-file", "", "file holding the S3 secret key, generated when missing (serve-targets, backup)")
 	fs.StringVar(&o.sftpFingerprint, "sftp-fingerprint", "", "host key fingerprint serve-targets printed (backup)")
 	fs.StringVar(&o.guestHost, "guest-host", "", "address the appliance reaches the servers' ports at (serve-targets, backup)")
+	fs.StringVar(&o.mode, "mode", modeNew, "new or restore (part1)")
+	fs.StringVar(&o.backupFile, cmdBackup, "", "backup file to restore (restore)")
+	fs.StringVar(&o.ilmHost, "ilm-host", "", "ILM host name the restore sets (restore)")
+	fs.StringVar(&o.credential, "credential", "", "PKCS#12 file of the ILM administrator (check, ilm-marker)")
+	fs.StringVar(&o.credentialPasswordFile, "credential-password-file", "", "file holding the password of --credential (check, ilm-marker)")
+	fs.StringVar(&o.clientSecretOut, "client-secret-out", "", "file the ILM client's secret is written to (ilm-marker --check)")
+	fs.BoolVar(&o.create, "create", false, "create the marker group (ilm-marker)")
+	fs.BoolVar(&o.check, "check", false, "check the marker group and Keycloak after a restore (ilm-marker)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {
@@ -137,8 +174,8 @@ func main() {
 	_ = fs.Parse(args)
 
 	run, ok := map[string]func(context.Context, options) error{
-		"part1": part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
-		"backup": backupNow, "serve-targets": serveTargets,
+		cmdPart1: part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
+		cmdBackup: backupNow, "serve-targets": serveTargets, cmdRestore: restoreBackup, "ilm-marker": ilmMarker,
 	}[cmd]
 	if !ok {
 		usage()
@@ -147,7 +184,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "drive %s: %v\n", cmd, err)
 		os.Exit(2)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	timeout := 30 * time.Minute
+	if cmd == cmdRestore {
+		timeout = certificateTimeout + restoreTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	if err := run(ctx, o); err != nil {
 		fmt.Printf("drive %s: FAIL %v\n", cmd, err)
@@ -157,7 +198,8 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "       drive ilm-marker --create|--check --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
 	os.Exit(2)
@@ -170,33 +212,63 @@ type options struct {
 	out, passphraseFile, kubeAddr, apid                         string
 	kitFile, dir, sftpListen, s3Listen                          string
 	sftpPasswordFile, s3SecretFile, sftpFingerprint             string
-	guestHost                                                   string
+	guestHost, mode, backupFile, ilmHost                        string
+	credential, credentialPasswordFile, clientSecretOut         string
+	create, check                                               bool
 }
 
 func (o options) validate(cmd string) error {
-	if cmd == "serve-targets" {
+	switch cmd {
+	case "serve-targets":
 		if o.dir == "" || o.guestHost == "" || o.sftpPasswordFile == "" || o.s3SecretFile == "" {
 			return errors.New("--dir, --guest-host, --sftp-password-file and --s3-secret-file are required")
 		}
 		return nil
+	case "ilm-marker":
+		return o.validateMarker()
 	}
-	missing := o.user == "" || o.password == "" || o.seedFile == ""
 	switch {
-	case missing:
+	case o.user == "" || o.password == "" || o.seedFile == "":
 		return errors.New("--user, --password and --seed-file are required")
-	case cmd == "part1" && (o.code == "" || o.caFile == ""):
-		return errors.New("--code and --ca-file are required")
 	case o.hostName == "":
 		return errors.New("--host-name is required")
-	case cmd == "kit" && (o.out == "" || o.passphraseFile == ""):
-		return errors.New("--out and --passphrase-file are required")
-	case cmd == "backup" && (o.kitFile == "" || o.passphraseFile == "" || o.dir == "" || o.guestHost == "" ||
-		o.sftpFingerprint == "" || o.sftpPasswordFile == "" || o.s3SecretFile == ""):
-		return errors.New("--kit, --passphrase-file, --dir, --guest-host, --sftp-fingerprint, --sftp-password-file and --s3-secret-file are required")
 	case o.connector != "" && (o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--connector needs --ui-url and --ui-addr")
+	case o.credential != "" && o.credentialPasswordFile == "":
+		return errors.New("--credential needs --credential-password-file")
 	case o.body != "" && !json.Valid([]byte(o.body)):
 		return errors.New("--body is not valid JSON")
+	}
+	return o.validateCommand(cmd)
+}
+
+// validateCommand checks the flags a command that signs in needs besides those of the sign-in.
+func (o options) validateCommand(cmd string) error {
+	switch {
+	case cmd == cmdPart1 && (o.code == "" || o.caFile == ""):
+		return errors.New("--code and --ca-file are required")
+	case cmd == cmdPart1 && !slices.Contains([]string{"", modeNew, modeRestore}, o.mode):
+		return errors.New("--mode is new or restore")
+	case cmd == "kit" && (o.out == "" || o.passphraseFile == ""):
+		return errors.New("--out and --passphrase-file are required")
+	case cmd == cmdBackup && (o.kitFile == "" || o.passphraseFile == "" || o.dir == "" || o.guestHost == "" ||
+		o.sftpFingerprint == "" || o.sftpPasswordFile == "" || o.s3SecretFile == ""):
+		return errors.New("--kit, --passphrase-file, --dir, --guest-host, --sftp-fingerprint, --sftp-password-file and --s3-secret-file are required")
+	case cmd == cmdRestore && (o.backupFile == "" || o.kitFile == "" || o.passphraseFile == "" || o.ilmHost == "" || o.out == ""):
+		return errors.New("--backup, --kit, --passphrase-file, --ilm-host and --out are required")
+	}
+	return nil
+}
+
+// validateMarker checks the flags of ilm-marker, which does not sign in.
+func (o options) validateMarker() error {
+	switch {
+	case o.hostName == "" || o.credential == "" || o.credentialPasswordFile == "" || o.uiURL == "" || o.uiAddr == "":
+		return errors.New("--host-name, --credential, --credential-password-file, --ui-url and --ui-addr are required")
+	case o.create == o.check:
+		return errors.New("one of --create and --check is required")
+	case o.check && (o.kitFile == "" || o.passphraseFile == ""):
+		return errors.New("--check needs --kit and --passphrase-file")
 	}
 	return nil
 }
@@ -220,6 +292,11 @@ func part1(ctx context.Context, o options) error {
 		return err
 	}
 	c.csrf = tok.CsrfToken
+	mode := cmp.Or(o.mode, modeNew)
+	step(mode + " appliance")
+	if err := c.call(ctx, http.MethodPut, "/appliance/api/v1/setup/mode", map[string]string{"mode": mode}, nil); err != nil {
+		return err
+	}
 	step("administrator")
 	admin := map[string]string{"user": o.user, "password": o.password}
 	if err := c.call(ctx, http.MethodPut, "/appliance/api/v1/setup/admin", admin, nil); err != nil {
@@ -340,7 +417,7 @@ func check(ctx context.Context, o options) error {
 		return nil
 	}
 	step("administrator credential")
-	cert, err := c.adminCredential(ctx)
+	cert, err := c.keptCredential(ctx, o)
 	if err != nil {
 		return err
 	}
@@ -376,10 +453,27 @@ func apiCall(ctx context.Context, o options) error {
 	return nil
 }
 
-// adminCredential downloads the ILM administrator's certificate and key under a random password, waiting until the
-// platform issued them, and returns them as a TLS client certificate. The manager hands each certificate out once.
-func (c *client) adminCredential(ctx context.Context) (tls.Certificate, error) {
+// keptCredential downloads the ILM administrator's credential, under the password in o.credentialPasswordFile or a
+// random one, and keeps it in o.credential when that is set.
+func (c *client) keptCredential(ctx context.Context, o options) (tls.Certificate, error) {
 	password := rand.Text()
+	if o.credentialPasswordFile != "" {
+		var err error
+		if password, err = readSecret(o.credentialPasswordFile); err != nil {
+			return tls.Certificate{}, err
+		}
+	}
+	cert, pfx, err := c.adminCredential(ctx, password)
+	if err != nil || o.credential == "" {
+		return cert, err
+	}
+	return cert, writeSecret(o.credential, pfx)
+}
+
+// adminCredential downloads the ILM administrator's certificate and key under password, waiting until the platform
+// issued them, and returns them as a TLS client certificate and as the PKCS#12 file. The manager hands each
+// certificate out once.
+func (c *client) adminCredential(ctx context.Context, password string) (tls.Certificate, []byte, error) {
 	var pfx []byte
 	var final error
 	err := waitFor(ctx, func() error {
@@ -393,8 +487,14 @@ func (c *client) adminCredential(ctx context.Context) (tls.Certificate, error) {
 		return nil
 	})
 	if err = errors.Join(err, final); err != nil {
-		return tls.Certificate{}, err
+		return tls.Certificate{}, nil, err
 	}
+	cert, err := credentialCertificate(pfx, password)
+	return cert, pfx, err
+}
+
+// credentialCertificate decodes the administrator credential pfx with password into a TLS client certificate.
+func credentialCertificate(pfx []byte, password string) (tls.Certificate, error) {
 	key, leaf, chain, err := pkcs12.DecodeChain(pfx, password)
 	if err != nil {
 		return tls.Certificate{}, errors.New("the administrator credential does not decode")
@@ -798,6 +898,12 @@ func (c *client) call(ctx context.Context, method, path string, body, out any) e
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	return c.do(req, path, out)
+}
+
+// do sends req, a request of path, with the CSRF token and handles the answer like call.
+func (c *client) do(req *http.Request, path string, out any) error {
+	method := req.Method
 	if c.csrf != "" && method != http.MethodGet {
 		req.Header.Set("X-CSRF-Token", c.csrf)
 	}

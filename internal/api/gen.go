@@ -83,6 +83,12 @@ const (
 	AuditEntryActionRecoveryKitReplace AuditEntryAction = "recovery-kit-replace"
 	AuditEntryActionRegistryRemove     AuditEntryAction = "registry-remove"
 	AuditEntryActionRegistrySet        AuditEntryAction = "registry-set"
+	AuditEntryActionRestore            AuditEntryAction = "restore"
+	AuditEntryActionRestoreFetch       AuditEntryAction = "restore-fetch"
+	AuditEntryActionRestoreInspect     AuditEntryAction = "restore-inspect"
+	AuditEntryActionRestoreResume      AuditEntryAction = "restore-resume"
+	AuditEntryActionRestoreStart       AuditEntryAction = "restore-start"
+	AuditEntryActionRestoreUpload      AuditEntryAction = "restore-upload"
 	AuditEntryActionShutdown           AuditEntryAction = "shutdown"
 	AuditEntryActionSignIn             AuditEntryAction = "sign-in"
 	AuditEntryActionSignOut            AuditEntryAction = "sign-out"
@@ -144,6 +150,18 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionRegistryRemove:
 		return true
 	case AuditEntryActionRegistrySet:
+		return true
+	case AuditEntryActionRestore:
+		return true
+	case AuditEntryActionRestoreFetch:
+		return true
+	case AuditEntryActionRestoreInspect:
+		return true
+	case AuditEntryActionRestoreResume:
+		return true
+	case AuditEntryActionRestoreStart:
+		return true
+	case AuditEntryActionRestoreUpload:
 		return true
 	case AuditEntryActionShutdown:
 		return true
@@ -401,21 +419,120 @@ func (e NFSSettingsVersion) Valid() bool {
 	}
 }
 
+// Defines values for RestoreInspectSource.
+const (
+	SourceLocal  RestoreInspectSource = "local"
+	SourceUpload RestoreInspectSource = "upload"
+)
+
+// Valid indicates whether the value is a known member of the RestoreInspectSource enum.
+func (e RestoreInspectSource) Valid() bool {
+	switch e {
+	case SourceLocal:
+		return true
+	case SourceUpload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RestoreProgressMessage.
+const (
+	RestoreProgressMessageFailed  RestoreProgressMessage = "failed"
+	RestoreProgressMessageTimeout RestoreProgressMessage = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the RestoreProgressMessage enum.
+func (e RestoreProgressMessage) Valid() bool {
+	switch e {
+	case RestoreProgressMessageFailed:
+		return true
+	case RestoreProgressMessageTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RestoreProgressStep.
+const (
+	StepAppliance     RestoreProgressStep = "appliance"
+	StepCertificate   RestoreProgressStep = "certificate"
+	StepDatabase      RestoreProgressStep = "database"
+	StepDone          RestoreProgressStep = "done"
+	StepILMSecrets    RestoreProgressStep = "ilmSecrets"
+	StepPlatform      RestoreProgressStep = "platform"
+	StepSecrets       RestoreProgressStep = "secrets"
+	StepStart         RestoreProgressStep = "start"
+	StepStop          RestoreProgressStep = "stop"
+	StepWaitingForKit RestoreProgressStep = "waitingForKit"
+)
+
+// Valid indicates whether the value is a known member of the RestoreProgressStep enum.
+func (e RestoreProgressStep) Valid() bool {
+	switch e {
+	case StepAppliance:
+		return true
+	case StepCertificate:
+		return true
+	case StepDatabase:
+		return true
+	case StepDone:
+		return true
+	case StepILMSecrets:
+		return true
+	case StepPlatform:
+		return true
+	case StepSecrets:
+		return true
+	case StepStart:
+		return true
+	case StepStop:
+		return true
+	case StepWaitingForKit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RestoreSummaryDatabase.
+const (
+	DatabaseExternal RestoreSummaryDatabase = "external"
+	DatabaseManaged  RestoreSummaryDatabase = "managed"
+)
+
+// Valid indicates whether the value is a known member of the RestoreSummaryDatabase enum.
+func (e RestoreSummaryDatabase) Valid() bool {
+	switch e {
+	case DatabaseExternal:
+		return true
+	case DatabaseManaged:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StatusSetup.
 const (
-	Complete StatusSetup = "complete"
-	Part1    StatusSetup = "part1"
-	Part2    StatusSetup = "part2"
+	StatusSetupComplete StatusSetup = "complete"
+	StatusSetupPart1    StatusSetup = "part1"
+	StatusSetupPart2    StatusSetup = "part2"
+	StatusSetupRestore  StatusSetup = "restore"
 )
 
 // Valid indicates whether the value is a known member of the StatusSetup enum.
 func (e StatusSetup) Valid() bool {
 	switch e {
-	case Complete:
+	case StatusSetupComplete:
 		return true
-	case Part1:
+	case StatusSetupPart1:
 		return true
-	case Part2:
+	case StatusSetupPart2:
+		return true
+	case StatusSetupRestore:
 		return true
 	default:
 		return false
@@ -449,6 +566,21 @@ const (
 func (e GetBackupsParamsXBackgroundRefresh) Valid() bool {
 	switch e {
 	case GetBackupsParamsXBackgroundRefreshN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetRestoreParamsXBackgroundRefresh.
+const (
+	GetRestoreParamsXBackgroundRefreshN1 GetRestoreParamsXBackgroundRefresh = "1"
+)
+
+// Valid indicates whether the value is a known member of the GetRestoreParamsXBackgroundRefresh enum.
+func (e GetRestoreParamsXBackgroundRefresh) Valid() bool {
+	switch e {
+	case GetRestoreParamsXBackgroundRefreshN1:
 		return true
 	default:
 		return false
@@ -1023,6 +1155,135 @@ type RegistryList struct {
 	Items []RegistryCredentials `json:"items"`
 }
 
+// RestoreFetch defines model for RestoreFetch.
+type RestoreFetch struct {
+	// Name The backup's file name in the target's listing, ending in `.ilmbackup`; it is stored as an upload is.
+	Name   string             `json:"name"`
+	Target BackupTargetUpdate `json:"target"`
+}
+
+// RestoreFile defines model for RestoreFile.
+type RestoreFile struct {
+	Modified  time.Time `json:"modified"`
+	Name      string    `json:"name"`
+	SizeBytes int64     `json:"sizeBytes"`
+}
+
+// RestoreFiles defines model for RestoreFiles.
+type RestoreFiles struct {
+	Files []RestoreFile `json:"files"`
+}
+
+// RestoreInspect defines model for RestoreInspect.
+type RestoreInspect struct {
+	// Kit The recovery kit whose backup key the backup is encrypted to.
+	Kit openapi_types.File `json:"kit"`
+
+	// Name The backup's file name.
+	Name       string  `json:"name"`
+	Passphrase *string `json:"passphrase,omitempty"`
+
+	// Source The uploaded or fetched backup, or a local backup for a restore in place.
+	Source RestoreInspectSource `json:"source"`
+}
+
+// RestoreInspectSource The uploaded or fetched backup, or a local backup for a restore in place.
+type RestoreInspectSource string
+
+// RestoreProgress defines model for RestoreProgress.
+type RestoreProgress struct {
+	// Backup The file name of the backup.
+	Backup string `json:"backup"`
+
+	// IlmHostName The ILM host name the restore sets; absent when it keeps the backup's.
+	IlmHostName *string `json:"ilmHostName,omitempty"`
+	InPlace     bool    `json:"inPlace"`
+
+	// Message The fixed reason a restore failed at its step; absent unless it failed.
+	Message *RestoreProgressMessage `json:"message,omitempty"`
+
+	// PausedStep The step a restore waiting for its kit resumes at.
+	PausedStep *string    `json:"pausedStep,omitempty"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+
+	// Step The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+	Step RestoreProgressStep `json:"step"`
+
+	// Warning What a completed restore left for the administrator.
+	Warning *string `json:"warning,omitempty"`
+}
+
+// RestoreProgressMessage The fixed reason a restore failed at its step; absent unless it failed.
+type RestoreProgressMessage string
+
+// RestoreProgressStep The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+type RestoreProgressStep string
+
+// RestoreResume defines model for RestoreResume.
+type RestoreResume struct {
+	Kit        openapi_types.File `json:"kit"`
+	Passphrase *string            `json:"passphrase,omitempty"`
+}
+
+// RestoreStart defines model for RestoreStart.
+type RestoreStart struct {
+	// Confirm Must be true; what the appliance holds now is replaced by the backup.
+	Confirm bool `json:"confirm"`
+
+	// IlmHostName The ILM host name to set; left out, the backup's is kept.
+	IlmHostName *string `json:"ilmHostName,omitempty"`
+
+	// InPlace Restore a local backup onto this appliance instead of onto a fresh one.
+	InPlace bool `json:"inPlace"`
+}
+
+// RestoreState defines model for RestoreState.
+type RestoreState struct {
+	Restore *RestoreProgress `json:"restore,omitempty"`
+
+	// Setup The setup phase, as in the status; `restore` while the appliance waits for a backup to restore.
+	Setup string `json:"setup"`
+}
+
+// RestoreSummary defines model for RestoreSummary.
+type RestoreSummary struct {
+	// Accounts The console accounts in the backup, which the restore adds.
+	Accounts  []string `json:"accounts"`
+	Appliance string   `json:"appliance"`
+
+	// Backup The backup's file name.
+	Backup string `json:"backup"`
+
+	// Clashes The accounts that exist here too; the backup's account replaces this appliance's.
+	Clashes          []string               `json:"clashes"`
+	Components       []string               `json:"components"`
+	Database         RestoreSummaryDatabase `json:"database"`
+	DatabaseIncluded bool                   `json:"databaseIncluded"`
+
+	// HostName The node host name the backup's manifest names; the manifest is not proof of where the backup comes from.
+	HostName string `json:"hostName"`
+	Ilm      string `json:"ilm"`
+
+	// IlmHostName The backup's ILM host name, which the restore keeps unless another is given.
+	IlmHostName string `json:"ilmHostName"`
+	InPlace     bool   `json:"inPlace"`
+
+	// NodeHostName This node's host name, which the restore keeps.
+	NodeHostName string `json:"nodeHostName"`
+	Operator     string `json:"operator"`
+
+	// Time When the backup was taken.
+	Time time.Time `json:"time"`
+}
+
+// RestoreSummaryDatabase defines model for RestoreSummary.Database.
+type RestoreSummaryDatabase string
+
+// RestoreTargetRequest defines model for RestoreTargetRequest.
+type RestoreTargetRequest struct {
+	Target BackupTargetUpdate `json:"target"`
+}
+
 // S3Settings defines model for S3Settings.
 type S3Settings struct {
 	Bucket string `json:"bucket"`
@@ -1191,6 +1452,9 @@ type SignInFailed = SignInError
 // SignInLocked defines model for SignInLocked.
 type SignInLocked = LockedError
 
+// TargetFailed defines model for TargetFailed.
+type TargetFailed = Error
+
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
@@ -1208,6 +1472,22 @@ type GetBackupsParams struct {
 
 // GetBackupsParamsXBackgroundRefresh defines parameters for GetBackups.
 type GetBackupsParamsXBackgroundRefresh string
+
+// GetRestoreParams defines parameters for GetRestore.
+type GetRestoreParams struct {
+	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
+	XBackgroundRefresh *GetRestoreParamsXBackgroundRefresh `json:"X-Background-Refresh,omitempty"`
+}
+
+// GetRestoreParamsXBackgroundRefresh defines parameters for GetRestore.
+type GetRestoreParamsXBackgroundRefresh string
+
+// PutRestoreUploadParams defines parameters for PutRestoreUpload.
+type PutRestoreUploadParams struct {
+	// Name The backup's file name, ending in `.ilmbackup`. It is stored with every character other than a letter, a
+	// digit, `.`, `_` and `-` replaced by `_`; an inspection finds it by the same name.
+	Name string `form:"name" json:"name"`
+}
 
 // GetStatusParams defines parameters for GetStatus.
 type GetStatusParams struct {
@@ -1265,6 +1545,21 @@ type PostRecoveryKitReplaceJSONRequestBody = RecoveryKitReplace
 
 // PutRegistryJSONRequestBody defines body for PutRegistry for application/json ContentType.
 type PutRegistryJSONRequestBody = RegistryCredentialsUpdate
+
+// PostRestoreFetchJSONRequestBody defines body for PostRestoreFetch for application/json ContentType.
+type PostRestoreFetchJSONRequestBody = RestoreFetch
+
+// PostRestoreInspectMultipartRequestBody defines body for PostRestoreInspect for multipart/form-data ContentType.
+type PostRestoreInspectMultipartRequestBody = RestoreInspect
+
+// PostRestoreListJSONRequestBody defines body for PostRestoreList for application/json ContentType.
+type PostRestoreListJSONRequestBody = RestoreTargetRequest
+
+// PostRestoreResumeMultipartRequestBody defines body for PostRestoreResume for multipart/form-data ContentType.
+type PostRestoreResumeMultipartRequestBody = RestoreResume
+
+// PostRestoreStartJSONRequestBody defines body for PostRestoreStart for application/json ContentType.
+type PostRestoreStartJSONRequestBody = RestoreStart
 
 // PostSessionJSONRequestBody defines body for PostSession for application/json ContentType.
 type PostSessionJSONRequestBody = SignIn
@@ -1400,6 +1695,27 @@ type ServerInterface interface {
 	// PutRegistry Add a registry or change its credentials
 	// (PUT /registries/{host})
 	PutRegistry(w http.ResponseWriter, r *http.Request, host string)
+	// GetRestore The state of the restore
+	// (GET /restore)
+	GetRestore(w http.ResponseWriter, r *http.Request, params GetRestoreParams)
+	// PostRestoreFetch Fetch a backup to restore from a target entered for the restore
+	// (POST /restore/fetch)
+	PostRestoreFetch(w http.ResponseWriter, r *http.Request)
+	// PostRestoreInspect Check a backup with the recovery kit
+	// (POST /restore/inspect)
+	PostRestoreInspect(w http.ResponseWriter, r *http.Request)
+	// PostRestoreList List the backups on a target entered for the restore
+	// (POST /restore/list)
+	PostRestoreList(w http.ResponseWriter, r *http.Request)
+	// PostRestoreResume Resume a restore with the recovery kit
+	// (POST /restore/resume)
+	PostRestoreResume(w http.ResponseWriter, r *http.Request)
+	// PostRestoreStart Restore the backup checked in this session
+	// (POST /restore/start)
+	PostRestoreStart(w http.ResponseWriter, r *http.Request)
+	// PutRestoreUpload Upload a backup to restore
+	// (PUT /restore/upload)
+	PutRestoreUpload(w http.ResponseWriter, r *http.Request, params PutRestoreUploadParams)
 	// DeleteSession Sign out
 	// (DELETE /session)
 	DeleteSession(w http.ResponseWriter, r *http.Request)
@@ -2130,6 +2446,150 @@ func (siw *ServerInterfaceWrapper) PutRegistry(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// GetRestore operation middleware
+func (siw *ServerInterfaceWrapper) GetRestore(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRestoreParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Background-Refresh" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Background-Refresh")]; found {
+		var XBackgroundRefresh GetRestoreParamsXBackgroundRefresh
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Background-Refresh", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Background-Refresh", valueList[0], &XBackgroundRefresh, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Background-Refresh", Err: err})
+			return
+		}
+
+		params.XBackgroundRefresh = &XBackgroundRefresh
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRestore(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRestoreFetch operation middleware
+func (siw *ServerInterfaceWrapper) PostRestoreFetch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRestoreFetch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRestoreInspect operation middleware
+func (siw *ServerInterfaceWrapper) PostRestoreInspect(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRestoreInspect(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRestoreList operation middleware
+func (siw *ServerInterfaceWrapper) PostRestoreList(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRestoreList(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRestoreResume operation middleware
+func (siw *ServerInterfaceWrapper) PostRestoreResume(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRestoreResume(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRestoreStart operation middleware
+func (siw *ServerInterfaceWrapper) PostRestoreStart(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRestoreStart(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutRestoreUpload operation middleware
+func (siw *ServerInterfaceWrapper) PutRestoreUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutRestoreUploadParams
+
+	// ------------- Required query parameter "name" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "name", r.URL.Query(), &params.Name, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "name"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutRestoreUpload(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteSession operation middleware
 func (siw *ServerInterfaceWrapper) DeleteSession(w http.ResponseWriter, r *http.Request) {
 
@@ -2492,6 +2952,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/backups/targets/{name}", wrapper.GetBackupTarget)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/backups/targets/{name}", wrapper.PutBackupTarget)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/backups/targets/{name}/test", wrapper.PostBackupTargetTest)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/restore", wrapper.GetRestore)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/restore/upload", wrapper.PutRestoreUpload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/list", wrapper.PostRestoreList)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/fetch", wrapper.PostRestoreFetch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/inspect", wrapper.PostRestoreInspect)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/start", wrapper.PostRestoreStart)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/resume", wrapper.PostRestoreResume)
 
 	return m
 }
@@ -2524,6 +2991,8 @@ type ServiceUnavailableJSONResponse Error
 type SignInFailedJSONResponse SignInError
 
 type SignInLockedJSONResponse LockedError
+
+type TargetFailedJSONResponse Error
 
 type UnauthorizedJSONResponse Error
 
@@ -5157,6 +5626,585 @@ func (response PutRegistry409JSONResponse) VisitPutRegistryResponse(w http.Respo
 	return err
 }
 
+type GetRestoreRequestObject struct {
+	Params GetRestoreParams
+}
+
+type GetRestoreResponseObject interface {
+	VisitGetRestoreResponse(w http.ResponseWriter) error
+}
+
+type GetRestore200JSONResponse RestoreState
+
+func (response GetRestore200JSONResponse) VisitGetRestoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestore401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetRestore401JSONResponse) VisitGetRestoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRestore409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetRestore409JSONResponse) VisitGetRestoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetchRequestObject struct {
+	Body *PostRestoreFetchJSONRequestBody
+}
+
+type PostRestoreFetchResponseObject interface {
+	VisitPostRestoreFetchResponse(w http.ResponseWriter) error
+}
+
+type PostRestoreFetch204Response struct {
+}
+
+func (response PostRestoreFetch204Response) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostRestoreFetch400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRestoreFetch400JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetch401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRestoreFetch401JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetch403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRestoreFetch403JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetch404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PostRestoreFetch404JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetch409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRestoreFetch409JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetch502JSONResponse struct{ TargetFailedJSONResponse }
+
+func (response PostRestoreFetch502JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreFetch503JSONResponse struct{ BackupsUnavailableJSONResponse }
+
+func (response PostRestoreFetch503JSONResponse) VisitPostRestoreFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreInspectRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PostRestoreInspectResponseObject interface {
+	VisitPostRestoreInspectResponse(w http.ResponseWriter) error
+}
+
+type PostRestoreInspect200JSONResponse RestoreSummary
+
+func (response PostRestoreInspect200JSONResponse) VisitPostRestoreInspectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreInspect400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRestoreInspect400JSONResponse) VisitPostRestoreInspectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreInspect401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRestoreInspect401JSONResponse) VisitPostRestoreInspectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreInspect403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRestoreInspect403JSONResponse) VisitPostRestoreInspectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreInspect404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PostRestoreInspect404JSONResponse) VisitPostRestoreInspectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreInspect409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRestoreInspect409JSONResponse) VisitPostRestoreInspectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreListRequestObject struct {
+	Body *PostRestoreListJSONRequestBody
+}
+
+type PostRestoreListResponseObject interface {
+	VisitPostRestoreListResponse(w http.ResponseWriter) error
+}
+
+type PostRestoreList200JSONResponse RestoreFiles
+
+func (response PostRestoreList200JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreList400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRestoreList400JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreList401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRestoreList401JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreList403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRestoreList403JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreList409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRestoreList409JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreList502JSONResponse struct{ TargetFailedJSONResponse }
+
+func (response PostRestoreList502JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreList503JSONResponse struct{ BackupsUnavailableJSONResponse }
+
+func (response PostRestoreList503JSONResponse) VisitPostRestoreListResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreResumeRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PostRestoreResumeResponseObject interface {
+	VisitPostRestoreResumeResponse(w http.ResponseWriter) error
+}
+
+type PostRestoreResume202Response struct {
+}
+
+func (response PostRestoreResume202Response) VisitPostRestoreResumeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostRestoreResume400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRestoreResume400JSONResponse) VisitPostRestoreResumeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreResume401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRestoreResume401JSONResponse) VisitPostRestoreResumeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreResume403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRestoreResume403JSONResponse) VisitPostRestoreResumeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreResume409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRestoreResume409JSONResponse) VisitPostRestoreResumeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreStartRequestObject struct {
+	Body *PostRestoreStartJSONRequestBody
+}
+
+type PostRestoreStartResponseObject interface {
+	VisitPostRestoreStartResponse(w http.ResponseWriter) error
+}
+
+type PostRestoreStart202Response struct {
+}
+
+func (response PostRestoreStart202Response) VisitPostRestoreStartResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostRestoreStart400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRestoreStart400JSONResponse) VisitPostRestoreStartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreStart401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRestoreStart401JSONResponse) VisitPostRestoreStartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreStart403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRestoreStart403JSONResponse) VisitPostRestoreStartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreStart409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRestoreStart409JSONResponse) VisitPostRestoreStartResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRestoreUploadRequestObject struct {
+	Params PutRestoreUploadParams
+	Body   io.Reader
+}
+
+type PutRestoreUploadResponseObject interface {
+	VisitPutRestoreUploadResponse(w http.ResponseWriter) error
+}
+
+type PutRestoreUpload204Response struct {
+}
+
+func (response PutRestoreUpload204Response) VisitPutRestoreUploadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutRestoreUpload400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutRestoreUpload400JSONResponse) VisitPutRestoreUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRestoreUpload401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutRestoreUpload401JSONResponse) VisitPutRestoreUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRestoreUpload403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutRestoreUpload403JSONResponse) VisitPutRestoreUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRestoreUpload409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutRestoreUpload409JSONResponse) VisitPutRestoreUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteSessionRequestObject struct {
 }
 
@@ -5942,6 +6990,27 @@ type StrictServerInterface interface {
 	// PutRegistry Add a registry or change its credentials
 	// (PUT /registries/{host})
 	PutRegistry(ctx context.Context, request PutRegistryRequestObject) (PutRegistryResponseObject, error)
+	// GetRestore The state of the restore
+	// (GET /restore)
+	GetRestore(ctx context.Context, request GetRestoreRequestObject) (GetRestoreResponseObject, error)
+	// PostRestoreFetch Fetch a backup to restore from a target entered for the restore
+	// (POST /restore/fetch)
+	PostRestoreFetch(ctx context.Context, request PostRestoreFetchRequestObject) (PostRestoreFetchResponseObject, error)
+	// PostRestoreInspect Check a backup with the recovery kit
+	// (POST /restore/inspect)
+	PostRestoreInspect(ctx context.Context, request PostRestoreInspectRequestObject) (PostRestoreInspectResponseObject, error)
+	// PostRestoreList List the backups on a target entered for the restore
+	// (POST /restore/list)
+	PostRestoreList(ctx context.Context, request PostRestoreListRequestObject) (PostRestoreListResponseObject, error)
+	// PostRestoreResume Resume a restore with the recovery kit
+	// (POST /restore/resume)
+	PostRestoreResume(ctx context.Context, request PostRestoreResumeRequestObject) (PostRestoreResumeResponseObject, error)
+	// PostRestoreStart Restore the backup checked in this session
+	// (POST /restore/start)
+	PostRestoreStart(ctx context.Context, request PostRestoreStartRequestObject) (PostRestoreStartResponseObject, error)
+	// PutRestoreUpload Upload a backup to restore
+	// (PUT /restore/upload)
+	PutRestoreUpload(ctx context.Context, request PutRestoreUploadRequestObject) (PutRestoreUploadResponseObject, error)
 	// DeleteSession Sign out
 	// (DELETE /session)
 	DeleteSession(ctx context.Context, request DeleteSessionRequestObject) (DeleteSessionResponseObject, error)
@@ -7055,6 +8124,215 @@ func (sh *strictHandler) PutRegistry(w http.ResponseWriter, r *http.Request, hos
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutRegistryResponseObject); ok {
 		if err := validResponse.VisitPutRegistryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetRestore operation middleware
+func (sh *strictHandler) GetRestore(w http.ResponseWriter, r *http.Request, params GetRestoreParams) {
+	var request GetRestoreRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetRestore(ctx, request.(GetRestoreRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetRestore")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetRestoreResponseObject); ok {
+		if err := validResponse.VisitGetRestoreResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRestoreFetch operation middleware
+func (sh *strictHandler) PostRestoreFetch(w http.ResponseWriter, r *http.Request) {
+	var request PostRestoreFetchRequestObject
+
+	var body PostRestoreFetchJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRestoreFetch(ctx, request.(PostRestoreFetchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRestoreFetch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRestoreFetchResponseObject); ok {
+		if err := validResponse.VisitPostRestoreFetchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRestoreInspect operation middleware
+func (sh *strictHandler) PostRestoreInspect(w http.ResponseWriter, r *http.Request) {
+	var request PostRestoreInspectRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRestoreInspect(ctx, request.(PostRestoreInspectRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRestoreInspect")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRestoreInspectResponseObject); ok {
+		if err := validResponse.VisitPostRestoreInspectResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRestoreList operation middleware
+func (sh *strictHandler) PostRestoreList(w http.ResponseWriter, r *http.Request) {
+	var request PostRestoreListRequestObject
+
+	var body PostRestoreListJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRestoreList(ctx, request.(PostRestoreListRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRestoreList")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRestoreListResponseObject); ok {
+		if err := validResponse.VisitPostRestoreListResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRestoreResume operation middleware
+func (sh *strictHandler) PostRestoreResume(w http.ResponseWriter, r *http.Request) {
+	var request PostRestoreResumeRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRestoreResume(ctx, request.(PostRestoreResumeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRestoreResume")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRestoreResumeResponseObject); ok {
+		if err := validResponse.VisitPostRestoreResumeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRestoreStart operation middleware
+func (sh *strictHandler) PostRestoreStart(w http.ResponseWriter, r *http.Request) {
+	var request PostRestoreStartRequestObject
+
+	var body PostRestoreStartJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRestoreStart(ctx, request.(PostRestoreStartRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRestoreStart")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRestoreStartResponseObject); ok {
+		if err := validResponse.VisitPostRestoreStartResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutRestoreUpload operation middleware
+func (sh *strictHandler) PutRestoreUpload(w http.ResponseWriter, r *http.Request, params PutRestoreUploadParams) {
+	var request PutRestoreUploadRequestObject
+
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutRestoreUpload(ctx, request.(PutRestoreUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutRestoreUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutRestoreUploadResponseObject); ok {
+		if err := validResponse.VisitPutRestoreUploadResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -49,6 +49,7 @@ type wizard struct {
 
 	mu           sync.Mutex
 	step         setupapi.SetupStep
+	mode         string
 	user         string
 	passwordHash string
 	seed         string

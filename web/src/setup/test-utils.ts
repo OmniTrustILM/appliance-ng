@@ -9,13 +9,15 @@ async function readBody(request: Request): Promise<unknown> {
   if (request.headers.get('Content-Type')?.startsWith('multipart/form-data')) {
     return Object.fromEntries((await request.formData()).entries());
   }
+  if (request.headers.get('Content-Type') === 'application/octet-stream') return request.text();
   const text = await request.text();
   return text ? JSON.parse(text) : undefined;
 }
 
 /**
  * Stubs fetch with answers keyed by "METHOD /path"; unknown routes answer 404.
- * `sent` collects the bodies of the requests per key: parsed JSON, or the fields of a multipart body.
+ * `sent` collects the bodies of the requests per key: parsed JSON, the fields of a multipart body, or the text of
+ * an octet stream.
  * A string payload is answered as PEM text; a third element adds response headers. `hang` never answers.
  */
 export function stubApi(routes: Record<string, Handler>) {

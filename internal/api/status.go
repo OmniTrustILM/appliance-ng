@@ -41,7 +41,7 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 	}
 	if out.Setup == "" {
 		// The manager has not reconciled the new Appliance yet; part 2 is next.
-		out.Setup = Part2
+		out.Setup = StatusSetupPart2
 	}
 	for i, c := range st.Conditions {
 		out.Conditions[i] = condition(c)

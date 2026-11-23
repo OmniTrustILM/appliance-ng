@@ -8,17 +8,21 @@ import { apiBase } from '../../base';
 import { attempt, unreachable } from '../../setup/failure';
 import { formatBytes } from '../shared/format';
 import { ItemRow } from '../shared/ItemRow';
+import { InPlaceRestore, RestoreConfirmation } from './InPlaceRestore';
 
 type Backups = components['schemas']['Backups'];
+type Backup = components['schemas']['BackupRecord'];
 
 const started = 'The backup started. It is listed here once it is written; the targets get their copies after that.';
 const noDatabase = 'The database did not answer, so this backup holds no database. An external database must be backed up by its owner.';
 
-/** The backups on the data volume, newest first, with their downloads and "Back up now". */
+/** The backups on the data volume, newest first, with their downloads, their restore in place and "Back up now". */
 export function LocalBackups({ backups, onStarted }: Readonly<{ backups: Backups; onStarted: () => void }>) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(false);
   const [error, setError] = useState<string>();
+  const [asking, setAsking] = useState<Backup>();
+  const [restoring, setRestoring] = useState<Backup>();
 
   async function backUp() {
     setBusy(true);
@@ -49,9 +53,12 @@ export function LocalBackups({ backups, onStarted }: Readonly<{ backups: Backups
           <ItemRow
             key={b.name}
             actions={(
-              <a className={buttonClass('secondary')} href={`${apiBase}/backups/${encodeURIComponent(b.name)}`} download aria-label={`Download ${b.name}`}>
-                Download
-              </a>
+              <>
+                <a className={buttonClass('secondary')} href={`${apiBase}/backups/${encodeURIComponent(b.name)}`} download aria-label={`Download ${b.name}`}>
+                  Download
+                </a>
+                <Button variant="secondary" aria-label={`Restore ${b.name}`} onClick={() => setAsking(b)}>Restore</Button>
+              </>
             )}
           >
             <p className="m-0 font-mono text-[13px]">{b.name}</p>
@@ -62,6 +69,13 @@ export function LocalBackups({ backups, onStarted }: Readonly<{ backups: Backups
           </ItemRow>
         ))}
       </ul>
+      {restoring && <InPlaceRestore key={restoring.name} backup={restoring} onCancel={() => setRestoring(undefined)} />}
+      {asking && (
+        <RestoreConfirmation backup={asking} onCancel={() => setAsking(undefined)} onConfirm={() => {
+          setRestoring(asking);
+          setAsking(undefined);
+        }} />
+      )}
     </>
   );
 }

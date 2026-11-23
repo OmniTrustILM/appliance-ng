@@ -53,6 +53,9 @@ tags:
       identity, in one file encrypted with a passphrase.
   - name: backups
     description: The encrypted backups, kept on the data volume and copied to S3, SFTP and NFS targets on a schedule.
+  - name: restore
+    description: >-
+      The restore of a backup: onto a fresh appliance from an upload or a target, or in place from a local backup.
 paths:
   /setup/code:
     post:
@@ -96,6 +99,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SetupState'
+  /setup/mode:
+    put:
+      tags: [setup]
+      operationId: putSetupMode
+      summary: Choose a new appliance or the restore of a backup
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupMode'
+      responses:
+        '204':
+          description: The choice is saved.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /setup/admin:
     put:
       tags: [setup]
@@ -1301,7 +1328,8 @@ paths:
       description: |
         Starts a backup copied to every target and answers before it ends; the status and the audit log record how
         it ends. A backup that may not start is answered with 409: `backup_running`, `no_recovery_kit`,
-        `upgrade_in_progress` or `no_space`.
+        `upgrade_in_progress`, `restore_in_progress` (a restore runs, waits for its kit or failed before it was done)
+        or `no_space`.
       security:
         - session: []
       responses:
@@ -1495,6 +1523,237 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/BackupsUnavailable'
+  /restore:
+    get:
+      tags: [restore]
+      operationId: getRestore
+      summary: The state of the restore
+      description: The setup phase and the latest restore, with its step, its fixed failure reason and its warning.
+      security:
+        - session: []
+      parameters:
+        - name: X-Background-Refresh
+          in: header
+          required: false
+          description: 1 marks a read the console makes on its own, which does not keep the session from going idle.
+          schema:
+            type: string
+            enum: ['1']
+      responses:
+        '200':
+          description: The state of the restore.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /restore/upload:
+    put:
+      tags: [restore]
+      operationId: putRestoreUpload
+      summary: Upload a backup to restore
+      description: |
+        Streams the body to the data volume as the backup to restore onto this fresh appliance; it replaces the one
+        uploaded or fetched before. The request needs `Content-Length`: a backup that does not fit twice into the
+        free space is refused with 409 `no_space` before it is read. Only while setup is `restore`.
+      security:
+        - session: []
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: |
+            The backup's file name, ending in `.ilmbackup`. It is stored with every character other than a letter, a
+            digit, `.`, `_` and `-` replaced by `_`; an inspection finds it by the same name.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '204':
+          description: The backup is stored.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /restore/list:
+    post:
+      tags: [restore]
+      operationId: postRestoreList
+      summary: List the backups on a target entered for the restore
+      description: |
+        Lists the backup files on the target in the request, which is not saved; its secrets are used for this
+        request only. A target failure is answered with 502 and a fixed reason as its code. Only while setup is
+        `restore`.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreTargetRequest'
+      responses:
+        '200':
+          description: The backup files on the target, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreFiles'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/TargetFailed'
+        '503':
+          $ref: '#/components/responses/BackupsUnavailable'
+  /restore/fetch:
+    post:
+      tags: [restore]
+      operationId: postRestoreFetch
+      summary: Fetch a backup to restore from a target entered for the restore
+      description: |
+        Copies the named backup from the target in the request, which is not saved, to the data volume as the backup
+        to restore; it replaces the one uploaded or fetched before. A backup that does not fit twice into the free
+        space is refused with 409 `no_space`. A target failure is answered with 502 and a fixed reason as its code.
+        Only while setup is `restore`.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreFetch'
+      responses:
+        '204':
+          description: The backup is stored.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/TargetFailed'
+        '503':
+          $ref: '#/components/responses/BackupsUnavailable'
+  /restore/inspect:
+    post:
+      tags: [restore]
+      operationId: postRestoreInspect
+      summary: Check a backup with the recovery kit
+      description: |
+        Opens the kit with its passphrase, verifies the whole backup and describes what a restore would change. The
+        backup is the uploaded or fetched one (`upload`, while setup is `restore`) or a local backup (`local`, for a
+        restore in place once setup is `complete`). Refusals: `wrong_passphrase` and `invalid_kit` with 400;
+        `foreign_kit`, `tampered`, `truncated`, `format_too_new` and `version_unavailable` with 409. The backup key
+        stays in the manager's memory for this session until the restore starts or another backup is checked. The
+        request body is limited to 1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RestoreInspect'
+      responses:
+        '200':
+          description: What the restore would change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /restore/start:
+    post:
+      tags: [restore]
+      operationId: postRestoreStart
+      summary: Restore the backup checked in this session
+      description: |
+        Starts the restore of the backup this session checked last and answers before it ends; `GET /restore`
+        reports its progress. Needs `confirm` set to true. A restore in place takes a local backup of the running ILM
+        version; a fresh restore an uploaded or fetched one. The whole backup is verified again before anything
+        changes. Refusals with 409: `not_inspected`, `not_local`, `version_unavailable`, `busy`, `setup`,
+        `upgrade_in_progress`, `backup_running`, and `tampered` or `truncated` for a backup changed since its check.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreStart'
+      responses:
+        '202':
+          description: The restore started.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /restore/resume:
+    post:
+      tags: [restore]
+      operationId: postRestoreResume
+      summary: Resume a restore with the recovery kit
+      description: |
+        Continues a restore that waits for its kit after a manager restart, or one that stopped on a failure, at
+        its step. The kit's backup key is checked against the whole backup first. Refusals as for inspect, and
+        `not_waiting` and `busy` with 409. The request body is limited to 1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RestoreResume'
+      responses:
+        '202':
+          description: The restore continues.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 components:
   securitySchemes:
     session:
@@ -1591,6 +1850,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    TargetFailed:
+      description: The target failed; the code is a fixed reason, never the target's error text.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
     Error:
       type: object
@@ -1656,7 +1921,7 @@ components:
           type: string
     SetupStep:
       type: string
-      enum: [code, admin, totp, node, apply, applying]
+      enum: [code, mode, admin, totp, node, apply, applying]
     SetupState:
       type: object
       required: [step]
@@ -1666,6 +1931,16 @@ components:
         csrfToken:
           type: string
           description: Present with a valid setup session.
+    SetupMode:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [new, restore]
+          description: >-
+            `new` sets up an appliance with wizard part 2; `restore` hands over to the restore of a backup, which
+            keeps wizard part 2 closed.
     AdminAccount:
       type: object
       required: [user, password]
@@ -1797,7 +2072,7 @@ components:
       properties:
         setup:
           type: string
-          enum: [part1, part2, complete]
+          enum: [part1, part2, complete, restore]
         addonStep:
           type: string
           description: The add-on being installed while AddonsReady is not true yet.
@@ -1989,7 +2264,8 @@ components:
             registry-remove, platform-settings, mail-settings, mail-remove, mail-test, kubeconfig-issue,
             kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
             recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
-            backup-target-test, backup-host-key-scan]
+            backup-target-test, backup-host-key-scan, restore-upload, restore-fetch, restore-inspect, restore-start,
+            restore-resume, restore]
         result:
           type: string
           enum: [success, failure, denied]
@@ -2634,3 +2910,173 @@ components:
         fingerprint:
           type: string
           description: The SHA256 fingerprint of the host key, as ssh-keygen -l prints it.
+    RestoreState:
+      type: object
+      required: [setup]
+      properties:
+        setup:
+          type: string
+          description: The setup phase, as in the status; `restore` while the appliance waits for a backup to restore.
+        restore:
+          $ref: '#/components/schemas/RestoreProgress'
+    RestoreProgress:
+      type: object
+      required: [backup, inPlace, step]
+      properties:
+        backup:
+          type: string
+          description: The file name of the backup.
+        inPlace:
+          type: boolean
+        step:
+          type: string
+          enum: [secrets, appliance, platform, stop, ilmSecrets, database, start, certificate, done, waitingForKit]
+          x-enum-varnames: [StepSecrets, StepAppliance, StepPlatform, StepStop, StepILMSecrets, StepDatabase, StepStart,
+            StepCertificate, StepDone, StepWaitingForKit]
+          description: The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+        pausedStep:
+          type: string
+          description: The step a restore waiting for its kit resumes at.
+        message:
+          type: string
+          enum: [failed, timeout]
+          description: The fixed reason a restore failed at its step; absent unless it failed.
+        warning:
+          type: string
+          description: What a completed restore left for the administrator.
+        ilmHostName:
+          type: string
+          description: The ILM host name the restore sets; absent when it keeps the backup's.
+        startedAt:
+          type: string
+          format: date-time
+    RestoreTargetRequest:
+      type: object
+      required: [target]
+      properties:
+        target:
+          $ref: '#/components/schemas/BackupTargetUpdate'
+    RestoreFetch:
+      type: object
+      required: [target, name]
+      properties:
+        target:
+          $ref: '#/components/schemas/BackupTargetUpdate'
+        name:
+          type: string
+          description: |
+            The backup's file name in the target's listing, ending in `.ilmbackup`; it is stored as an upload is.
+    RestoreFile:
+      type: object
+      required: [name, sizeBytes, modified]
+      properties:
+        name:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+        modified:
+          type: string
+          format: date-time
+    RestoreFiles:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/RestoreFile'
+    RestoreInspect:
+      type: object
+      required: [source, name, kit, passphrase]
+      properties:
+        source:
+          type: string
+          enum: [upload, local]
+          x-enum-varnames: [SourceUpload, SourceLocal]
+          description: The uploaded or fetched backup, or a local backup for a restore in place.
+        name:
+          type: string
+          description: The backup's file name.
+        kit:
+          type: string
+          format: binary
+          description: The recovery kit whose backup key the backup is encrypted to.
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+    RestoreResume:
+      type: object
+      required: [kit, passphrase]
+      properties:
+        kit:
+          type: string
+          format: binary
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+    RestoreSummary:
+      type: object
+      required: [backup, inPlace, time, hostName, ilmHostName, nodeHostName, ilm, operator, appliance, database,
+        databaseIncluded, accounts, clashes, components]
+      properties:
+        backup:
+          type: string
+          description: The backup's file name.
+        inPlace:
+          type: boolean
+        time:
+          type: string
+          format: date-time
+          description: When the backup was taken.
+        hostName:
+          type: string
+          description: >-
+            The node host name the backup's manifest names; the manifest is not proof of where the backup comes from.
+        ilmHostName:
+          type: string
+          description: The backup's ILM host name, which the restore keeps unless another is given.
+        nodeHostName:
+          type: string
+          description: This node's host name, which the restore keeps.
+        ilm:
+          type: string
+        operator:
+          type: string
+        appliance:
+          type: string
+        database:
+          type: string
+          enum: [managed, external]
+          x-enum-varnames: [DatabaseManaged, DatabaseExternal]
+        databaseIncluded:
+          type: boolean
+        accounts:
+          type: array
+          description: The console accounts in the backup, which the restore adds.
+          items:
+            type: string
+        clashes:
+          type: array
+          description: The accounts that exist here too; the backup's account replaces this appliance's.
+          items:
+            type: string
+        components:
+          type: array
+          items:
+            type: string
+    RestoreStart:
+      type: object
+      required: [inPlace, confirm]
+      properties:
+        inPlace:
+          type: boolean
+          description: Restore a local backup onto this appliance instead of onto a fresh one.
+        ilmHostName:
+          type: string
+          description: The ILM host name to set; left out, the backup's is kept.
+        confirm:
+          type: boolean
+          description: Must be true; what the appliance holds now is replaced by the backup.

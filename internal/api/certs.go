@@ -268,7 +268,7 @@ func readUpload(r *multipart.Reader, required ...string) (map[string][]byte, *re
 			return nil, &refusal{code: codeInvalid, message: messageUnreadable}
 		}
 		name := p.FormName()
-		if !slices.Contains([]string{partCertificate, partKey, partChain, partKit, partPassphrase, partNewPassphrase}, name) {
+		if !slices.Contains([]string{partCertificate, partKey, partChain, partKit, partPassphrase, partNewPassphrase, partSource, partName}, name) {
 			continue
 		}
 		data, err := io.ReadAll(p)

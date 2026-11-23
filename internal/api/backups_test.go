@@ -538,8 +538,9 @@ func TestPostBackups(t *testing.T) {
 	}
 
 	for err, code := range map[error]string{
-		backup.ErrNoKit:             "no_recovery_kit",
-		backup.ErrUpgradeInProgress: "upgrade_in_progress",
+		backup.ErrNoKit:                                     "no_recovery_kit",
+		backup.ErrUpgradeInProgress:                         "upgrade_in_progress",
+		backup.ErrRestoreInProgress:                         "restore_in_progress",
 		fmt.Errorf("%w: %s", backup.ErrNoSpace, targetLeak): "no_space",
 	} {
 		f.startErr = err

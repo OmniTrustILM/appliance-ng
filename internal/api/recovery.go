@@ -48,6 +48,8 @@ var (
 		message: "The latest kit was not handed out; replace it."}
 	refusedKitSuperseded = &refusal{conflict: true, code: "kit_superseded",
 		message: "A newer kit was issued since this one; download the latest kit and confirm that one."}
+	refusedRestorePending = &refusal{conflict: true, code: codeRestorePending,
+		message: "The appliance is waiting for a backup to restore, which brings its own backup key; issue a kit after the restore."}
 	refusedNoIssuance = &refusal{code: codeInvalid, message: "Name the issuance of the kit to confirm."}
 )
 
@@ -158,7 +160,14 @@ func (s *Server) newKit(ctx context.Context, passphrase string, replace bool) (i
 	if ref := checkPassphrase(partPassphrase, passphrase); ref != nil {
 		return issuedKit{}, ref, nil
 	}
-	_, err := recovery.StoredRecipient(ctx, s.deps.Reader)
+	restoring, err := s.restorePending(ctx)
+	if err != nil {
+		return issuedKit{}, nil, err
+	}
+	if restoring {
+		return issuedKit{}, refusedRestorePending, nil
+	}
+	_, err = recovery.StoredRecipient(ctx, s.deps.Reader)
 	switch {
 	case err == nil && !replace:
 		return issuedKit{}, refusedKitIssued, nil
@@ -172,6 +181,18 @@ func (s *Server) newKit(ctx context.Context, passphrase string, replace bool) (i
 		return issuedKit{}, nil, err
 	}
 	return s.issueKit(ctx, key, passphrase, true)
+}
+
+// restorePending says whether the appliance waits for a backup to restore.
+func (s *Server) restorePending(ctx context.Context) (bool, error) {
+	a, err := s.appliance(ctx)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return a.Status.Setup == v1alpha1.SetupRestore, nil
 }
 
 // PostRecoveryKitReissue issues the kit again from the uploaded one: the same backup key, a new passphrase and new
