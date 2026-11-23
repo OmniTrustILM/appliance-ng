@@ -852,6 +852,137 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The local backups and the backup targets
+         * @description The local backups, newest first, the last backup, whether one runs, the targets with their health, the
+         *     BackupHealthy condition and when a restore test last succeeded. Target secrets are reported only as set or
+         *     not set.
+         */
+        get: operations["getBackups"];
+        put?: never;
+        /**
+         * Back up now
+         * @description Starts a backup copied to every target and answers before it ends; the status and the audit log record how
+         *     it ends. A backup that may not start is answered with 409: `backup_running`, `no_recovery_kit`,
+         *     `upgrade_in_progress` or `no_space`.
+         */
+        post: operations["postBackups"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The file name of a local backup. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Download a local backup
+         * @description The encrypted backup file, streamed; only names of the local list are served. Every download is audited.
+         */
+        get: operations["getBackup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/targets/hostkey": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read the host key of an SSH server
+         * @description Connects to the SSH server through the appliance's proxy and returns the SHA256 fingerprint of its host key
+         *     without signing in, for the administrator to compare and accept. A failure is answered with 502 and a fixed
+         *     reason as its code. Every scan is audited with the host and port.
+         */
+        post: operations["postBackupHostKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/targets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The target's name, a DNS label. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A backup target
+         * @description The target, its health and which secrets are set; never a secret.
+         */
+        get: operations["getBackupTarget"];
+        /**
+         * Add a backup target or replace its settings
+         * @description Sets the target. The schedule is a five-field cron expression, `0 2 * * *` by default, in `timeZone`, an
+         *     IANA zone name; the retention is 14 by default and the NFS version 4.1. Secrets are write-only and stored in
+         *     a Secret: an S3 target needs `accessKey` and `secretKey`, an SFTP target `password` or `privateKey`; left
+         *     out or empty, the stored ones are kept, unless the type, the S3 endpoint or the SFTP host, port or user
+         *     changes: then they must be given again. Setting one of `password` and `privateKey` drops the other;
+         *     `removeCa` drops the stored S3 CA bundle.
+         */
+        put: operations["putBackupTarget"];
+        post?: never;
+        /**
+         * Remove a backup target and its secrets
+         * @description The copies already on the target stay there.
+         */
+        delete: operations["deleteBackupTarget"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/targets/{name}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a saved backup target
+         * @description Writes a 1 KiB file to the target, reads it back and deletes it. A failure is reported with a fixed reason.
+         */
+        post: operations["postBackupTargetTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -976,6 +1107,7 @@ export interface components {
             certificate?: components["schemas"]["StatusCertificate"];
             dataVolume?: components["schemas"]["DataVolume"];
             recoveryKit?: components["schemas"]["RecoveryKit"];
+            backup?: components["schemas"]["StatusBackup"];
         };
         /** @description The size and free space of the data volume; absent while the manager cannot read it. */
         DataVolume: {
@@ -1056,10 +1188,10 @@ export interface components {
         AuditEntry: {
             /** Format: date-time */
             time: string;
-            /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for an expired kubeconfig the manager revoked; empty otherwise. */
+            /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -1301,6 +1433,146 @@ export interface components {
              */
             stage: "connect" | "tls" | "auth" | "send";
         };
+        BackupRecord: {
+            name: string;
+            /** Format: date-time */
+            time: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            /**
+             * @description `notIncluded` when the database did not answer, as an external database may not; its owner must back it up.
+             * @enum {string}
+             */
+            database: "included" | "notIncluded";
+        };
+        /**
+         * @description A fixed reason; the error text of the target is never passed on.
+         * @enum {string}
+         */
+        BackupTargetReason: "unreachable" | "authFailed" | "hostKeyMismatch" | "notFound" | "noSpace" | "timeout" | "failed";
+        BackupTargetHealth: {
+            name: string;
+            /** Format: date-time */
+            lastSuccess?: string;
+            /** Format: date-time */
+            lastAttempt?: string;
+            lastError?: components["schemas"]["BackupTargetReason"];
+            /** @description Twice the target's interval passed since its last successful copy, or no copy succeeded although one was attempted; judged at each read. */
+            warning: boolean;
+        };
+        S3Settings: {
+            /** @description The https or http URL of the S3 service, without a path; without a scheme it is https. */
+            endpoint: string;
+            bucket: string;
+            prefix?: string;
+            region?: string;
+        };
+        SFTPSettings: {
+            host: string;
+            /** @description 22 when left out. */
+            port?: number;
+            path: string;
+            user: string;
+            /** @description The SHA256 fingerprint of the accepted host key, as the host key scan returns it. */
+            hostKey: string;
+        };
+        NFSSettings: {
+            server: string;
+            export: string;
+            path?: string;
+            /**
+             * @description 4.1 when left out.
+             * @enum {string}
+             */
+            version?: "3" | "4.1" | "4.2";
+        };
+        /** @description Which secrets of the target are stored; never their values. */
+        BackupSecretsSet: {
+            accessKey: boolean;
+            secretKey: boolean;
+            ca: boolean;
+            password: boolean;
+            privateKey: boolean;
+        };
+        BackupTarget: {
+            name: string;
+            /** @enum {string} */
+            type: "s3" | "sftp" | "nfs";
+            schedule: string;
+            timeZone: string;
+            retention: number;
+            s3?: components["schemas"]["S3Settings"];
+            sftp?: components["schemas"]["SFTPSettings"];
+            nfs?: components["schemas"]["NFSSettings"];
+            secretsSet: components["schemas"]["BackupSecretsSet"];
+            health: components["schemas"]["BackupTargetHealth"];
+        };
+        BackupTargetUpdate: {
+            /** @enum {string} */
+            type: "s3" | "sftp" | "nfs";
+            /** @description A five-field cron expression; `0 2 * * *` when left out. */
+            schedule?: string;
+            /** @description The IANA time zone of the schedule, such as Europe/Prague. */
+            timeZone: string;
+            /** @description The backups kept on the target; 14 when left out. */
+            retention?: number;
+            s3?: components["schemas"]["S3Settings"] & {
+                /** Format: password */
+                accessKey?: string;
+                /** Format: password */
+                secretKey?: string;
+                /** @description The PEM CA bundle that signs the endpoint's certificate, when it is not publicly trusted. */
+                ca?: string;
+                /** @description Removes the stored CA bundle; the endpoint must then be publicly trusted. */
+                removeCa?: boolean;
+            };
+            sftp?: components["schemas"]["SFTPSettings"] & {
+                /** Format: password */
+                password?: string;
+                /**
+                 * Format: password
+                 * @description An OpenSSH or PEM private key without a passphrase.
+                 */
+                privateKey?: string;
+            };
+            nfs?: components["schemas"]["NFSSettings"];
+        };
+        Backups: {
+            running: boolean;
+            last?: components["schemas"]["BackupRecord"];
+            /** @description The backups on the data volume, newest first. */
+            local: components["schemas"]["BackupRecord"][];
+            targets: components["schemas"]["BackupTarget"][];
+            healthy?: components["schemas"]["Condition"];
+            /**
+             * Format: date-time
+             * @description When a restore test last succeeded.
+             */
+            lastRestoreTest?: string;
+        };
+        StatusBackup: {
+            running: boolean;
+            last?: components["schemas"]["BackupRecord"];
+            targets: components["schemas"]["BackupTargetHealth"][];
+            /**
+             * Format: date-time
+             * @description When a restore test last succeeded; absent when none did.
+             */
+            lastRestoreTest?: string;
+        };
+        BackupTargetTest: {
+            ok: boolean;
+            reason?: components["schemas"]["BackupTargetReason"];
+        };
+        HostKeyRequest: {
+            host: string;
+            /** @description 22 when left out. */
+            port?: number;
+        };
+        HostKey: {
+            /** @description The SHA256 fingerprint of the host key, as ssh-keygen -l prints it. */
+            fingerprint: string;
+        };
     };
     responses: {
         /** @description The request is invalid. */
@@ -1407,6 +1679,15 @@ export interface components {
         };
         /** @description The node's Talos API cannot be reached at the moment. */
         ServiceUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The manager runs without backups. */
+        BackupsUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -2618,6 +2899,222 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getBackups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backups. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Backups"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postBackups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["BackupsUnavailable"];
+        };
+    };
+    getBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The file name of a local backup. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backup file, encrypted to the backup key of the recovery kit. */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["BackupsUnavailable"];
+        };
+    };
+    postBackupHostKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description The host key's fingerprint. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostKey"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /** @description The server could not be reached or sent no host key; the code is a fixed reason. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["BackupsUnavailable"];
+        };
+    };
+    getBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The target's name, a DNS label. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The target. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupTarget"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The target's name, a DNS label. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupTargetUpdate"];
+            };
+        };
+        responses: {
+            /** @description The target is saved; the schedule follows shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteBackupTarget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The target's name, a DNS label. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The target is removed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postBackupTargetTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The result of the test. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupTargetTest"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["BackupsUnavailable"];
         };
     };
 }

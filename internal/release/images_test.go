@@ -59,3 +59,22 @@ func TestConnectorRegistryHost(t *testing.T) {
 		}
 	}
 }
+
+func TestPinnedImage(t *testing.T) {
+	m := &Manifest{Images: []Image{
+		{Ref: "docker.io/library/busybox:latest", Digest: "sha256:1"},
+		{Ref: "ghcr.io/example/tool:2", Digest: "sha256:2"},
+	}}
+	for name, want := range map[string]string{
+		"busybox":                "docker.io/library/busybox:latest@sha256:1",
+		"library/busybox:latest": "docker.io/library/busybox:latest@sha256:1",
+		"ghcr.io/example/tool:2": "ghcr.io/example/tool:2@sha256:2",
+	} {
+		if got, err := m.PinnedImage(name); err != nil || got != want {
+			t.Errorf("%s: got %q, %v, want %q", name, got, err, want)
+		}
+	}
+	if _, err := m.PinnedImage("postgresql:18"); err == nil {
+		t.Error("an image the release does not pin was found")
+	}
+}

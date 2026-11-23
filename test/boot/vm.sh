@@ -13,7 +13,8 @@
 # Hosts: macOS on Apple silicon (arm64, HVF, edk2 from Homebrew's qemu); Linux with KVM (amd64 with OVMF from the
 # ovmf package, arm64 with AAVMF from qemu-efi-aarch64). The guest has no route out (restrict=on) and a
 # virtio-rng device. Host forwards, bound to 127.0.0.1: 18443->8443 (console), 18444->8444 (status), 10443->443 (UI),
-# 15000->50000 (apid), 16443->6443 (the cluster's API server).
+# 15000->50000 (apid), 16443->6443 (the cluster's API server). The guest reaches 127.0.0.1 ports 2222 (SFTP) and 9000
+# (S3) of the host at 10.0.2.2, through guest forwards that run nc; nothing else of the host is reachable.
 # CPUS, MEM and DISK override 4 / 12G / 50G (DISK applies when the disk is created). SMBIOS_OEM, when set, is passed
 # to the guest as an SMBIOS type 11 OEM string (no commas). Serial log: <dir>/serial.log.
 # EXTRA_DISK=<size> adds a second blank disk with serial ilm-data (created with the VM). It sits at a fixed PCI
@@ -80,6 +81,7 @@ start() {
   mkdir -p "$dir"
   dir="$(cd "$dir" && pwd)"
   running "$dir" && die "a VM is already running in $dir"
+  command -v nc >/dev/null || die "nc is required for the guest forwards to the host"
 
   local drives=(-drive "if=none,id=hd0,file=$dir/disk.qcow2,format=qcow2,discard=unmap"
                 -device "virtio-blk-pci,drive=hd0,bootindex=0,serial=ilm-system")
@@ -109,6 +111,7 @@ start() {
   local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:18444-:8444"
   fwd+=",hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
   fwd+=",hostfwd=tcp:127.0.0.1:16443-:6443"
+  fwd+=",guestfwd=tcp:10.0.2.2:2222-cmd:nc 127.0.0.1 2222,guestfwd=tcp:10.0.2.2:9000-cmd:nc 127.0.0.1 9000"
   local smbios=()
   if [[ -n "${SMBIOS_OEM:-}" ]]; then smbios=(-smbios "type=11,value=$SMBIOS_OEM"); fi
   : >"$dir/serial.log"

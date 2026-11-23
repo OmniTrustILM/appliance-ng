@@ -1,6 +1,7 @@
 package release
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 )
@@ -32,6 +33,18 @@ func CacheList(m *Manifest, arch string, built ...string) []string {
 	}
 	slices.Sort(refs)
 	return slices.Compact(refs)
+}
+
+// PinnedImage is the reference, with its digest, of the image the manifest pins for name, which may be short, as
+// the implicit images are named.
+func (m *Manifest) PinnedImage(name string) (string, error) {
+	want := normalize(name)
+	for _, img := range m.Images {
+		if normalize(img.Ref) == want {
+			return want + "@" + img.Digest, nil
+		}
+	}
+	return "", fmt.Errorf("the release pins no image %s", name)
 }
 
 // normalize expands short image names the way a container runtime does:

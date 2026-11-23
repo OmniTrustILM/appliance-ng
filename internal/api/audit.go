@@ -27,6 +27,9 @@ func (s *Server) audited(action AuditEntryAction, next http.Handler) http.Handle
 		next.ServeHTTP(held, r)
 
 		res := result(held.status())
+		if req.result != "" {
+			res = req.result
+		}
 		switch {
 		case req.unaudited:
 			s.deps.Log.Debug("request refused without an audit entry", "action", action)

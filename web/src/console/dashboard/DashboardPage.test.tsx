@@ -287,4 +287,76 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('heading', { name: 'Certificate', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('3 of 4 ready')).toBeInTheDocument();
   });
+
+  describe('backups', () => {
+    const day = 24 * 60 * 60 * 1000;
+    const ago = (days: number) => new Date(Date.now() - days * day).toISOString();
+    const backup = (over: object = {}) => ({
+      running: false,
+      last: { name: 'a.ilmbackup', time: ago(1), sizeBytes: 10, database: 'included' },
+      targets: [
+        { name: 'offsite', warning: false, lastSuccess: ago(1) },
+        { name: 'nas', warning: true, lastError: 'unreachable' },
+      ],
+      lastRestoreTest: ago(10),
+      ...over,
+    });
+
+    it('shows the last backup and each target\'s last success and error', async () => {
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, backup: backup({ running: true }) }] });
+      renderPage();
+      expect(await screen.findByText(/Last backup/)).toBeInTheDocument();
+      expect(screen.getByText(/A backup is running/)).toBeInTheDocument();
+      expect(screen.getByText(/last success never/)).toBeInTheDocument();
+      expect(screen.getByText('The target cannot be reached from the appliance or through its proxy.')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Manage the backups' })).toHaveAttribute('href', '/backups');
+      expect(screen.getByText(/backup target nas has had no successful copy for more than twice its interval/i)).toBeInTheDocument();
+      expect(screen.queryByText(/restore test/i)).not.toBeInTheDocument();
+    });
+
+    it('marks a last backup without the database and says who backs it up', async () => {
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, backup: backup({ last: { name: 'a', time: ago(1), sizeBytes: 1, database: 'notIncluded' } }) }] });
+      renderPage();
+      expect(await screen.findByText(/external database's owner must back it up/)).toBeInTheDocument();
+    });
+
+    it('says when no backup was taken yet', async () => {
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, backup: backup({ last: undefined, targets: [] }) }] });
+      renderPage();
+      expect(await screen.findByText('No backup was taken yet.')).toBeInTheDocument();
+    });
+
+    it('reminds of a restore test when none is recorded or the last one is older than 90 days', async () => {
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, backup: backup({ lastRestoreTest: undefined }) }] });
+      const first = renderPage();
+      expect(await screen.findByText(/no restore test is recorded/i)).toBeInTheDocument();
+      first.unmount();
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, backup: backup({ lastRestoreTest: ago(91) }) }] });
+      const second = renderPage();
+      expect(await screen.findByText(/last restore test is more than 90 days old/i)).toBeInTheDocument();
+      second.unmount();
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, setup: 'part2', backup: backup({ lastRestoreTest: undefined }) }] });
+      renderPage();
+      expect(await screen.findByText(/setup is not complete/i)).toBeInTheDocument();
+      expect(screen.queryByText(/restore test/i)).not.toBeInTheDocument();
+    });
+
+    it('judges the restore test again on each refresh', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, backup: backup({ lastRestoreTest: new Date(Date.now() - 90 * day + 10_000).toISOString() }) }] });
+      renderPage();
+      expect(await screen.findByText(/Last backup/)).toBeInTheDocument();
+      expect(screen.queryByText(/restore test/i)).not.toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(15_000));
+      expect(screen.getByText(/last restore test is more than 90 days old/i)).toBeInTheDocument();
+    });
+
+    it('warns when backups are not healthy and groups the condition under backups', async () => {
+      const conditions = [{ type: 'BackupHealthy', status: 'False', reason: 'NoKit', message: 'no backup until the recovery kit is confirmed' }];
+      stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, conditions, backup: backup() }] });
+      renderPage();
+      expect(await screen.findByText(/backups are not healthy: no backup until the recovery kit is confirmed/i)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Backups', level: 3 })).toBeInTheDocument();
+    });
+  });
 });

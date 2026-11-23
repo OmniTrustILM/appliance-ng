@@ -30,6 +30,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
+	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
@@ -76,7 +77,7 @@ func run(m *testing.M) int {
 		println("client:", err.Error())
 		return 1
 	}
-	for _, ns := range []string{SystemNamespace, platform.Namespace, access.Namespace} {
+	for _, ns := range []string{SystemNamespace, platform.Namespace, access.Namespace, certs.ClusterResourceNamespace} {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
 			println("namespace:", err.Error())
 			return 1

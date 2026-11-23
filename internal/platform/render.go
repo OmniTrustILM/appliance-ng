@@ -52,8 +52,8 @@ const TLSOptionName = "ilm-mtls"
 // The Secrets holding the CA operator v1.1.0 issues the generated administrator certificate from: the edge's
 // internal CA when the edge provisions it, a dedicated administrator CA otherwise.
 const (
-	edgeCASecret  = "ca-keypair"
-	adminCASecret = "admin-ca-keypair"
+	EdgeCASecret  = "ca-keypair"
+	AdminCASecret = "admin-ca-keypair"
 )
 
 // SecretNames names the Secrets already written in the ilm namespace; empty means not present.
@@ -155,9 +155,9 @@ func TLSOption(p *otilm.Platform) *unstructured.Unstructured {
 // the default.
 func adminCA(edge *otilm.EdgeSpec) string {
 	if edge != nil && edge.Enabled && (edge.TLS == nil || edge.TLS.Source == "" || edge.TLS.Source == "internal") {
-		return edgeCASecret
+		return EdgeCASecret
 	}
-	return adminCASecret
+	return AdminCASecret
 }
 
 // edgeTLS serves the TLS Secret once one exists and the edge's internal certificate before.

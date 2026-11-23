@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 )
 
@@ -73,4 +74,17 @@ func StoredKit(ctx context.Context, r client.Reader) (Stored, error) {
 		return Stored{}, ErrNoRecipient
 	}
 	return stored, nil
+}
+
+// HandedOut tells whether st records the stored kit, which it does once that kit was handed out. Until then the
+// stored recipient may be a key nobody holds, such as the key of a replacement whose kit never reached the
+// administrator.
+func HandedOut(st *v1alpha1.RecoveryKitStatus, stored Stored) bool {
+	return st != nil && st.Recipient == stored.Recipient && st.Issuance == stored.Issuance
+}
+
+// Usable tells whether backups may be encrypted to the stored key: its kit was handed out and the administrator
+// confirmed holding it.
+func Usable(st *v1alpha1.RecoveryKitStatus, stored Stored) bool {
+	return HandedOut(st, stored) && st.Confirmed
 }

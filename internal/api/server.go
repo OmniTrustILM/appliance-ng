@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,8 +14,10 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/mail"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
@@ -39,8 +42,20 @@ type AuditStore interface {
 	Tail(n int) ([]audit.Entry, error)
 }
 
+// BackupRunner takes backups, serves the local ones and reaches the targets.
+type BackupRunner interface {
+	Run(ctx context.Context, reason string, targets []string, opts ...backup.RunOption) (v1alpha1.BackupRecord, error)
+	// Start makes the checks of Run and takes the backup in the background.
+	Start(ctx context.Context, reason string, targets []string, opts ...backup.RunOption) error
+	Local() ([]v1alpha1.BackupRecord, error)
+	Open(name string) (*os.File, int64, error)
+	TestTarget(ctx context.Context, name string) error
+	ScanHostKey(ctx context.Context, host string, port int32) (string, error)
+}
+
 // Deps is what the Server needs. Now defaults to time.Now; without Talos, reboot and shutdown are unavailable;
-// everything else must be set.
+// without Backups, no backup follows a confirmed recovery kit and the backup operations are unavailable; everything
+// else must be set.
 type Deps struct {
 	// Client reads the Appliance and the Secrets in SystemNamespace, possibly from a cache, and writes them.
 	Client client.Client
@@ -57,6 +72,8 @@ type Deps struct {
 	Now       func() time.Time
 	// Talos returns the Talos API of the node, or an error while it cannot be reached.
 	Talos func(context.Context) (talos.Node, error)
+	// Backups takes a backup to every target once a recovery kit is confirmed and serves the backup operations.
+	Backups BackupRunner
 }
 
 // Server serves the manager's API under auth.APIBase.
@@ -142,6 +159,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPost, recoveryKitPath+"/reissue"), change(AuditEntryActionRecoveryKitReissue))
 	mux.Handle(route(http.MethodPost, recoveryKitPath+"/replace"), change(AuditEntryActionRecoveryKitReplace))
 	mux.Handle(route(http.MethodPost, recoveryKitPath+"/confirm"), change(AuditEntryActionRecoveryKitConfirm))
+	mux.Handle(route(http.MethodPost, backupsPath), change(AuditEntryActionBackup))
+	mux.Handle(route(http.MethodPut, backupTargetsPath+"/{name}"), change(AuditEntryActionBackupTargetSet))
+	mux.Handle(route(http.MethodDelete, backupTargetsPath+"/{name}"), change(AuditEntryActionBackupTargetRemove))
+	mux.Handle(route(http.MethodPost, backupTargetsPath+"/hostkey"), withWriteDeadline(targetTestTimeout, change(AuditEntryActionBackupHostKeyScan)))
+	mux.Handle(route(http.MethodPost, backupTargetsPath+"/{name}/test"), withWriteDeadline(targetTestTimeout, change(AuditEntryActionBackupTargetTest)))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
 }
@@ -160,6 +182,8 @@ type request struct {
 	unaudited bool
 	// written is the result of an entry the handler wrote itself.
 	written AuditEntryResult
+	// result, when set, is the audit result of an answer that reports a failure with a success status.
+	result AuditEntryResult
 }
 
 type requestKey struct{}
@@ -188,9 +212,9 @@ func withRequest(next http.Handler) http.Handler {
 }
 
 // bodyLimit is the largest request body accepted for path: certificate uploads carry chains, trust uploads CA
-// bundles and re-issuing the recovery kit uploads the kit.
+// bundles, re-issuing the recovery kit uploads the kit and backup targets carry private keys and CA bundles.
 func bodyLimit(path string) int64 {
-	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue"} {
+	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue", backupTargetsPath} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return maxUploadBody
 		}

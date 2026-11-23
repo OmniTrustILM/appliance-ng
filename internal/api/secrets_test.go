@@ -50,10 +50,11 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 	mailAnswers(t, h, s, &answers)
 	kubeToken := accessSecretAnswers(t, h, s, &answers)
 	backupKey := recoverySecretAnswers(t, h, s, &answers)
+	sftpKey := backupTargetAnswers(t, h, s, &answers)
 
 	for _, path := range []string{
 		"/appliance/api/v1/appliance", "/appliance/api/v1/status", "/appliance/api/v1/audit", "/appliance/api/v1/session", "/appliance/api/v1/catalogue", pathCertificate,
-		pathTrust, pathRegistries, pathTestRegistry, pathMail, pathPlatform, pathAccess, pathRecoveryKit,
+		pathTrust, pathRegistries, pathTestRegistry, pathMail, pathPlatform, pathAccess, pathRecoveryKit, pathBackups,
 	} {
 		rec := h.request(http.MethodGet, path, nil, s)
 		wantStatus(t, rec, http.StatusOK)
@@ -85,6 +86,10 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 		"kit passphrase":      kitPassphrase,
 		"next kit passphrase": nextPassphrase,
 		"backup key":          backupKey,
+		"S3 access key":       s3AccessKey,
+		"S3 secret key":       s3SecretKey,
+		"SFTP password":       sftpPassword,
+		"SFTP private key":    keyBody([]byte(sftpKey)),
 	}
 	for where, data := range map[string]string{
 		"API answers":   answers.String(),

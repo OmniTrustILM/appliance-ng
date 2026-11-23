@@ -24,6 +24,9 @@ const (
 	dirMode  = 0o700
 )
 
+// SystemUser is the user of the entries the manager writes on its own.
+const SystemUser = "system:manager"
+
 // Entry is one audited request. Paths are the JSON paths of the Appliance fields the request changed, never their
 // values; Details describe an issued or revoked credential, never its secret.
 type Entry struct {

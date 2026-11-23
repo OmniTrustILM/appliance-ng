@@ -33,6 +33,8 @@ import (
 	apiserver "github.com/OmniTrustILM/appliance-ng/internal/api"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
 	"github.com/OmniTrustILM/appliance-ng/internal/console"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/manager"
@@ -48,11 +50,13 @@ const (
 	certificateRefresh = 30 * time.Second
 	// failedPodSweep is how often the manager deletes its own Failed pods.
 	failedPodSweep = 10 * time.Minute
+	// backupDir, under the data directory, keeps the local backups.
+	backupDir = "backups"
 )
 
 func main() {
 	listen := flag.String("listen", ":8443", "HTTPS address of the console")
-	data := flag.String("data", "/data", "directory for the manager's persistent data: the audit log")
+	data := flag.String("data", "/data", "directory for the manager's persistent data: the audit log and the local backups")
 	talosEndpoint := flag.String("talos-endpoint", "127.0.0.1:50000", "Talos API endpoint")
 	flag.Parse()
 
@@ -145,17 +149,20 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	// One Talos client for the controllers and the API.
 	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
 		talosEndpoint, talos.DialAPI)
-	handover := &manager.HandoverReconciler{Client: mgr.GetClient(), Users: users, Talos: talosAccess}
-	if err := handover.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("set up the hand-over controller: %w", err)
-	}
-	node := &manager.NodeReconciler{Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess}
-	if err := node.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("set up the node controller: %w", err)
+	if err := setupNodeControllers(mgr, users, talosAccess); err != nil {
+		return err
 	}
 
 	kubeClient, clusterCA, err := clusterAccess(cfg)
 	if err != nil {
+		return err
+	}
+
+	backups, err := newBackupRunner(ctx, mgr, cfg, direct, auditLog, rel, log, filepath.Join(data, backupDir))
+	if err != nil {
+		return err
+	}
+	if err := addBackupSchedule(mgr, reconciler, backups); err != nil {
 		return err
 	}
 
@@ -169,6 +176,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Release:   rel,
 		Log:       log,
 		Talos:     talosAccess,
+		Backups:   backups,
 	})
 	cert, err := console.NewCertificate(log, mgr.GetClient())
 	if err != nil {
@@ -181,6 +189,55 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	return mgr.Start(ctx)
 }
 
+// setupNodeControllers sets up the hand-over and the node controllers with mgr.
+func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAccess func(context.Context) (talos.Node, error)) error {
+	handover := &manager.HandoverReconciler{Client: mgr.GetClient(), Users: users, Talos: talosAccess}
+	if err := handover.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up the hand-over controller: %w", err)
+	}
+	node := &manager.NodeReconciler{Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess}
+	if err := node.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up the node controller: %w", err)
+	}
+	return nil
+}
+
+// addBackupSchedule runs the backup schedule of backups with mgr; the reconciler keeps it in step with the targets.
+func addBackupSchedule(mgr crmanager.Manager, reconciler *manager.ApplianceReconciler, backups *backup.Runner) error {
+	schedule := backup.NewScheduler(backups, time.Now)
+	reconciler.Schedule = schedule
+	if err := mgr.Add(crmanager.RunnableFunc(schedule.Start)); err != nil {
+		return fmt.Errorf("add the backup schedule: %w", err)
+	}
+	return nil
+}
+
+// newBackupRunner returns the backup runner on dir, after deleting the partial files a backup cut off by a crash or
+// a restart left there and clearing the backup the status still shows running.
+func newBackupRunner(ctx context.Context, mgr crmanager.Manager, cfg *rest.Config, direct client.Client, auditLog *audit.Log, rel *release.Manifest, log *slog.Logger, dir string) (*backup.Runner, error) {
+	if err := backup.RemoveStale(dir); err != nil {
+		return nil, fmt.Errorf("remove the partial backups: %w", err)
+	}
+	busybox, err := rel.PinnedImage("busybox")
+	if err != nil {
+		return nil, err
+	}
+	runner := backup.NewRunner(backup.RunnerDeps{
+		Client:  mgr.GetClient(),
+		Reader:  mgr.GetAPIReader(),
+		Dumper:  backup.NewManagedDumper(mgr.GetAPIReader(), cfg),
+		Audit:   auditLog,
+		Dir:     dir,
+		Version: version,
+		Targets: target.Deps{Client: direct, Config: cfg, Image: busybox, Namespace: kube.SystemNamespace},
+		Log:     log,
+	})
+	if err := runner.ResetRunning(ctx); err != nil {
+		log.Warn("could not clear the backup a restart cut off from the status", "failure", backup.Describe(err))
+	}
+	return runner, nil
+}
+
 // addRunnables adds the console certificate refresh, the console server and the failed pod sweep to mgr.
 func addRunnables(mgr crmanager.Manager, log *slog.Logger, cert *console.Certificate, srv *http.Server) error {
 	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error { return cert.Run(ctx, certificateRefresh) })); err != nil {
@@ -190,7 +247,7 @@ func addRunnables(mgr crmanager.Manager, log *slog.Logger, cert *console.Certifi
 		return fmt.Errorf("add the console server: %w", err)
 	}
 	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error {
-		return manager.RemoveFailedPods(ctx, mgr.GetClient(), failedPodSweep)
+		return manager.RemoveFailedPods(ctx, mgr.GetAPIReader(), mgr.GetClient(), failedPodSweep)
 	})); err != nil {
 		return fmt.Errorf("add the failed pod sweep: %w", err)
 	}

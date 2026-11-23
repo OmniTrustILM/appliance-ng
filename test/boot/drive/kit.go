@@ -41,7 +41,7 @@ type cluster interface {
 	// talosReady asks the node's Talos API for its stage with talosconfig and wants it running.
 	talosReady(ctx context.Context, talosconfig []byte) error
 	// checkManager checks that no container of the Appliance Manager was killed for lack of memory and that no
-	// log of it holds one of secrets.
+	// log of it, of a restarted container's previous run too, holds one of secrets.
 	checkManager(ctx context.Context, kubeconfig []byte, secrets ...string) error
 }
 
@@ -334,25 +334,52 @@ func (f forwarded) checkManager(ctx context.Context, kubeconfig []byte, secrets 
 		return errors.New("the cluster has no manager pod")
 	}
 	for _, pod := range pods.Items {
-		for _, st := range pod.Status.ContainerStatuses {
-			fmt.Printf("drive: %s container %s restarted %d time(s)\n", pod.Name, st.Name, st.RestartCount)
-			if t := st.LastTerminationState.Terminated; t != nil && t.Reason == "OOMKilled" {
-				return fmt.Errorf("container %s of %s was killed for lack of memory", st.Name, pod.Name)
-			}
+		restarted, err := checkRestarts(pod)
+		if err != nil {
+			return err
 		}
-		for _, container := range pod.Spec.Containers {
-			if err := containerLogHolds(ctx, cs, pod.Name, container.Name, secrets); err != nil {
-				return err
-			}
+		if err := checkLogs(ctx, cs, pod, restarted, secrets); err != nil {
+			return err
 		}
 	}
-	fmt.Printf("drive: the logs of %d manager pod(s) hold no passphrase or backup key\n", len(pods.Items))
+	fmt.Printf("drive: the logs of %d manager pod(s) hold none of the %d secrets searched for\n", len(pods.Items), len(secrets))
 	return nil
 }
 
-// containerLogHolds fails when the log of the container holds one of secrets.
-func containerLogHolds(ctx context.Context, cs kubernetes.Interface, pod, container string, secrets []string) error {
-	stream, err := cs.CoreV1().Pods(managerNamespace).GetLogs(pod, &corev1.PodLogOptions{Container: container}).Stream(ctx)
+// checkRestarts reports the restarts of pod's containers and tells which restarted; a container killed for lack of
+// memory fails the check.
+func checkRestarts(pod corev1.Pod) (map[string]bool, error) {
+	restarted := map[string]bool{}
+	for _, st := range pod.Status.ContainerStatuses {
+		restarted[st.Name] = st.RestartCount > 0
+		fmt.Printf("drive: %s container %s restarted %d time(s)\n", pod.Name, st.Name, st.RestartCount)
+		if t := st.LastTerminationState.Terminated; t != nil && t.Reason == "OOMKilled" {
+			return nil, fmt.Errorf("container %s of %s was killed for lack of memory", st.Name, pod.Name)
+		}
+	}
+	return restarted, nil
+}
+
+// checkLogs searches the log of every container of pod, and the previous run's of those restarted, for secrets.
+func checkLogs(ctx context.Context, cs kubernetes.Interface, pod corev1.Pod, restarted map[string]bool, secrets []string) error {
+	for _, container := range pod.Spec.Containers {
+		if err := containerLogHolds(ctx, cs, pod.Name, container.Name, false, secrets); err != nil {
+			return err
+		}
+		if !restarted[container.Name] {
+			continue
+		}
+		if err := containerLogHolds(ctx, cs, pod.Name, container.Name, true, secrets); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// containerLogHolds fails when the log of the container, or of its previous run, holds one of secrets.
+func containerLogHolds(ctx context.Context, cs kubernetes.Interface, pod, container string, previous bool, secrets []string) error {
+	opts := &corev1.PodLogOptions{Container: container, Previous: previous}
+	stream, err := cs.CoreV1().Pods(managerNamespace).GetLogs(pod, opts).Stream(ctx)
 	if err != nil {
 		return fmt.Errorf("read the log of %s: %w", pod, err)
 	}

@@ -931,3 +931,30 @@ func TestReconcileDeletesRemovedConnectors(t *testing.T) {
 	}
 	secret(t, "software-cryptography-provider-keys")
 }
+
+// fakeSchedule records the targets each reconcile schedules.
+type fakeSchedule struct{ synced [][]v1alpha1.BackupTarget }
+
+func (f *fakeSchedule) Sync(targets []v1alpha1.BackupTarget) { f.synced = append(f.synced, targets) }
+
+func TestReconcileSchedulesTheBackupTargets(t *testing.T) {
+	targets := []v1alpha1.BackupTarget{{Name: "nfs", Type: v1alpha1.BackupTypeNFS, Retention: 14,
+		NFS: &v1alpha1.NFSTarget{Server: "nfs.example.com", Export: "/e"}}}
+	createAppliance(t, v1alpha1.ApplianceSpec{Backup: &v1alpha1.BackupSpec{Targets: targets}})
+	r, _ := newReconciler(testClient, &fakeCluster{unready: "cert-manager"})
+	schedule := &fakeSchedule{}
+	r.Schedule = schedule
+	runReconcile(t, r)
+	if len(schedule.synced) != 1 || len(schedule.synced[0]) != 1 || schedule.synced[0][0].Name != "nfs" {
+		t.Errorf("scheduled %+v, want the nfs target", schedule.synced)
+	}
+	a := getAppliance(t)
+	a.Spec.Backup = nil
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	runReconcile(t, r)
+	if len(schedule.synced) != 2 || len(schedule.synced[1]) != 0 {
+		t.Errorf("scheduled %+v, want no targets after their removal", schedule.synced)
+	}
+}

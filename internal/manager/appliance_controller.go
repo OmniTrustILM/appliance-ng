@@ -97,6 +97,8 @@ type ApplianceReconciler struct {
 	DataDir string
 	// Audit records the expired kubeconfigs the reconciler revokes.
 	Audit AuditWriter
+	// Schedule, when set, schedules the backups of the targets on every reconcile.
+	Schedule BackupScheduler
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -116,8 +118,13 @@ type AuditWriter interface {
 	Write(e audit.Entry) error
 }
 
+// BackupScheduler schedules the backups of the targets; Sync is called on every reconcile.
+type BackupScheduler interface {
+	Sync(targets []v1alpha1.BackupTarget)
+}
+
 // AuditActor is the user of the audit entries the manager writes on its own.
-const AuditActor = "system:manager"
+const AuditActor = audit.SystemUser
 
 const (
 	auditKubeconfigRevoke = "kubeconfig-revoke"
@@ -200,6 +207,13 @@ func (r *ApplianceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.Client.Status().Update(ctx, a, client.FieldOwner(fieldManager)); err != nil {
 			return ctrl.Result{}, fmt.Errorf("start setup part 2: %w", err)
 		}
+	}
+	if r.Schedule != nil {
+		var targets []v1alpha1.BackupTarget
+		if a.Spec.Backup != nil {
+			targets = a.Spec.Backup.Targets
+		}
+		r.Schedule.Sync(targets)
 	}
 	before := a.Status.DeepCopy()
 	r.setReleaseVersions(a)

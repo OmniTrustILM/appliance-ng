@@ -15,6 +15,13 @@ kind: Namespace
 metadata:
   name: ilm
 ---
+# The cert-manager namespace, so the manager's Role in it can be bound. The manager is applied first; the
+# cert-manager add-on later applies the same Namespace server-side and the two merge.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+---
 # The ServiceAccounts of the kubeconfigs the console issues and the record of the talosconfigs it issued.
 apiVersion: v1
 kind: Namespace
@@ -92,6 +99,11 @@ rules:
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterrolebindings]
     verbs: [delete]
+  # An NFS backup target is mounted from a static volume the manager creates and deletes around each operation, and
+  # lists to remove what an interrupted operation left.
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, create, delete]
 ---
 # The role of the view kubeconfigs the console issues: what view grants, and read access to nodes, which view leaves
 # out.
@@ -133,7 +145,9 @@ subjects:
 # The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
 # It keeps the console accounts, the SMTP credentials, the uploaded certificate and a signing request's key there,
 # replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
-# Failed pods, which pile up while the node shuts down.
+# Failed pods, which pile up while the node shuts down. A backup of an external database runs pg_dump in a short-lived
+# pod it creates, execs into and deletes; an NFS backup target is written the same way, by a pod with a claim on the
+# target's volume.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -145,7 +159,13 @@ rules:
     verbs: [get, list, watch, create, update, delete]
   - apiGroups: [""]
     resources: [pods]
-    verbs: [deletecollection]
+    verbs: [get, create, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -163,7 +183,8 @@ subjects:
 ---
 # Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
 # the administrator certificate there and marks its Secret once handed out. The copies of the trust bundle, the
-# registry credentials and the mail credentials are deleted once the Appliance no longer references them.
+# registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
+# dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -177,12 +198,48 @@ rules:
     resources: [secrets]
     resourceNames: [appliance-trust, appliance-registry-credentials, appliance-mail]
     verbs: [delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: [ilm-db]
+    verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: appliance-manager
   namespace: ilm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A backup holds the root CA of the built-in certificate chain, which cert-manager keeps in its own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-root-ca]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: cert-manager
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -392,6 +449,142 @@ spec:
           spec:
             description: ApplianceSpec is the desired configuration of the appliance.
             properties:
+              backup:
+                description: BackupSpec configures the targets that receive copies
+                  of the backups.
+                properties:
+                  targets:
+                    items:
+                      description: BackupTarget is a place that receives scheduled
+                        backups. Exactly the block matching Type is set.
+                      properties:
+                        credentialsRef:
+                          description: |-
+                            CredentialsRef names the Secret in the appliance namespace holding the target credentials: accessKey and
+                            secretKey for s3, password or privateKey for sftp.
+                          type: string
+                        name:
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        nfs:
+                          description: NFSTarget is a directory on an NFS export.
+                          properties:
+                            export:
+                              type: string
+                            path:
+                              type: string
+                            server:
+                              type: string
+                            version:
+                              enum:
+                              - "3"
+                              - "4.1"
+                              - "4.2"
+                              type: string
+                          required:
+                          - export
+                          - server
+                          type: object
+                        retention:
+                          description: Retention is the number of backups kept on
+                            the target.
+                          format: int32
+                          maximum: 365
+                          minimum: 1
+                          type: integer
+                        s3:
+                          description: S3Target is an S3 compatible bucket.
+                          properties:
+                            bucket:
+                              type: string
+                            ca:
+                              description: CA references the Secret key holding the
+                                PEM CA bundle that signs the endpoint certificate.
+                              properties:
+                                key:
+                                  type: string
+                                name:
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                            endpoint:
+                              type: string
+                            prefix:
+                              type: string
+                            region:
+                              type: string
+                          required:
+                          - bucket
+                          - endpoint
+                          type: object
+                        schedule:
+                          description: Schedule is a five-field cron expression; empty
+                            selects the default schedule.
+                          maxLength: 128
+                          pattern: ^(\s*\S+(\s+\S+){4}\s*)?$
+                          type: string
+                        sftp:
+                          description: SFTPTarget is a directory on an SFTP server.
+                          properties:
+                            host:
+                              type: string
+                            hostKey:
+                              description: HostKey is the SHA256 fingerprint of the
+                                server's host key, as printed by ssh-keygen -l.
+                              pattern: ^SHA256:.+$
+                              type: string
+                            path:
+                              type: string
+                            port:
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            user:
+                              type: string
+                          required:
+                          - host
+                          - hostKey
+                          - path
+                          - port
+                          - user
+                          type: object
+                        timeZone:
+                          description: TimeZone is the IANA time zone of Schedule;
+                            empty selects the default zone.
+                          maxLength: 64
+                          type: string
+                        type:
+                          enum:
+                          - s3
+                          - sftp
+                          - nfs
+                          type: string
+                      required:
+                      - name
+                      - retention
+                      - type
+                      type: object
+                      x-kubernetes-validations:
+                      - message: backup target s3 must be set exactly when type is
+                          s3
+                        rule: 'self.type == ''s3'' ? has(self.s3) : !has(self.s3)'
+                      - message: backup target sftp must be set exactly when type
+                          is sftp
+                        rule: 'self.type == ''sftp'' ? has(self.sftp) : !has(self.sftp)'
+                      - message: backup target nfs must be set exactly when type is
+                          nfs
+                        rule: 'self.type == ''nfs'' ? has(self.nfs) : !has(self.nfs)'
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               dns:
                 description: DNSSpec lists the DNS servers.
                 properties:
@@ -550,6 +743,96 @@ spec:
           status:
             description: ApplianceStatus is the observed state of the appliance.
             properties:
+              backup:
+                description: Backup reports the local backups and the state of every
+                  target.
+                properties:
+                  last:
+                    description: Last is the most recent backup taken.
+                    properties:
+                      database:
+                        enum:
+                        - included
+                        - notIncluded
+                        type: string
+                      name:
+                        type: string
+                      sizeBytes:
+                        format: int64
+                        type: integer
+                      time:
+                        format: date-time
+                        type: string
+                    required:
+                    - database
+                    - name
+                    - sizeBytes
+                    - time
+                    type: object
+                  local:
+                    description: Local lists the backup copies kept on the data volume.
+                    items:
+                      description: BackupRecord is one backup file.
+                      properties:
+                        database:
+                          enum:
+                          - included
+                          - notIncluded
+                          type: string
+                        name:
+                          type: string
+                        sizeBytes:
+                          format: int64
+                          type: integer
+                        time:
+                          format: date-time
+                          type: string
+                      required:
+                      - database
+                      - name
+                      - sizeBytes
+                      - time
+                      type: object
+                    type: array
+                  running:
+                    type: boolean
+                  targets:
+                    items:
+                      description: TargetStatus is the state of a backup target.
+                      properties:
+                        firstAttempt:
+                          description: FirstAttempt is the first copy attempted to
+                            the target, from which a target without a success is overdue.
+                          format: date-time
+                          type: string
+                        lastAttempt:
+                          format: date-time
+                          type: string
+                        lastError:
+                          description: LastError is a fixed reason, never an error
+                            text of the target.
+                          enum:
+                          - unreachable
+                          - authFailed
+                          - hostKeyMismatch
+                          - notFound
+                          - noSpace
+                          - timeout
+                          - failed
+                          type: string
+                        lastSuccess:
+                          format: date-time
+                          type: string
+                        name:
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                type: object
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -627,6 +910,10 @@ spec:
                 - freeBytes
                 - sizeBytes
                 type: object
+              lastRestoreTest:
+                description: LastRestoreTest is when a restore test last succeeded.
+                format: date-time
+                type: string
               nodeAddress:
                 type: string
               observedGeneration:
