@@ -440,15 +440,30 @@ func (e TalosconfigRequestRole) Valid() bool {
 	}
 }
 
+// Defines values for GetBackupsParamsXBackgroundRefresh.
+const (
+	GetBackupsParamsXBackgroundRefreshN1 GetBackupsParamsXBackgroundRefresh = "1"
+)
+
+// Valid indicates whether the value is a known member of the GetBackupsParamsXBackgroundRefresh enum.
+func (e GetBackupsParamsXBackgroundRefresh) Valid() bool {
+	switch e {
+	case GetBackupsParamsXBackgroundRefreshN1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetStatusParamsXBackgroundRefresh.
 const (
-	N1 GetStatusParamsXBackgroundRefresh = "1"
+	GetStatusParamsXBackgroundRefreshN1 GetStatusParamsXBackgroundRefresh = "1"
 )
 
 // Valid indicates whether the value is a known member of the GetStatusParamsXBackgroundRefresh enum.
 func (e GetStatusParamsXBackgroundRefresh) Valid() bool {
 	switch e {
-	case N1:
+	case GetStatusParamsXBackgroundRefreshN1:
 		return true
 	default:
 		return false
@@ -1185,6 +1200,15 @@ type GetAuditParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// GetBackupsParams defines parameters for GetBackups.
+type GetBackupsParams struct {
+	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
+	XBackgroundRefresh *GetBackupsParamsXBackgroundRefresh `json:"X-Background-Refresh,omitempty"`
+}
+
+// GetBackupsParamsXBackgroundRefresh defines parameters for GetBackups.
+type GetBackupsParamsXBackgroundRefresh string
+
 // GetStatusParams defines parameters for GetStatus.
 type GetStatusParams struct {
 	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
@@ -1282,7 +1306,7 @@ type ServerInterface interface {
 	GetAudit(w http.ResponseWriter, r *http.Request, params GetAuditParams)
 	// GetBackups The local backups and the backup targets
 	// (GET /backups)
-	GetBackups(w http.ResponseWriter, r *http.Request)
+	GetBackups(w http.ResponseWriter, r *http.Request, params GetBackupsParams)
 	// PostBackups Back up now
 	// (POST /backups)
 	PostBackups(w http.ResponseWriter, r *http.Request)
@@ -1538,8 +1562,35 @@ func (siw *ServerInterfaceWrapper) GetAudit(w http.ResponseWriter, r *http.Reque
 // GetBackups operation middleware
 func (siw *ServerInterfaceWrapper) GetBackups(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetBackupsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Background-Refresh" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Background-Refresh")]; found {
+		var XBackgroundRefresh GetBackupsParamsXBackgroundRefresh
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Background-Refresh", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Background-Refresh", valueList[0], &XBackgroundRefresh, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Background-Refresh", Err: err})
+			return
+		}
+
+		params.XBackgroundRefresh = &XBackgroundRefresh
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetBackups(w, r)
+		siw.Handler.GetBackups(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2867,6 +2918,7 @@ func (response GetAudit401JSONResponse) VisitGetAuditResponse(w http.ResponseWri
 }
 
 type GetBackupsRequestObject struct {
+	Params GetBackupsParams
 }
 
 type GetBackupsResponseObject interface {
@@ -6127,8 +6179,10 @@ func (sh *strictHandler) GetAudit(w http.ResponseWriter, r *http.Request, params
 }
 
 // GetBackups operation middleware
-func (sh *strictHandler) GetBackups(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) GetBackups(w http.ResponseWriter, r *http.Request, params GetBackupsParams) {
 	var request GetBackupsRequestObject
+
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetBackups(ctx, request.(GetBackupsRequestObject))

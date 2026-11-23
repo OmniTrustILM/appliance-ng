@@ -2904,7 +2904,10 @@ export interface operations {
     getBackups: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description 1 marks a read the console makes on its own, which does not keep the session from going idle. */
+                "X-Background-Refresh"?: "1";
+            };
             path?: never;
             cookie?: never;
         };

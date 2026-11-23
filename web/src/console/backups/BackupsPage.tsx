@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import { Alert } from '../../components/Alert';
 import { Card } from '../../components/Card';
@@ -12,24 +12,48 @@ import { LocalBackups } from './LocalBackups';
 import { TargetForm, type Target } from './TargetForm';
 import { TargetRow } from './TargetRow';
 
-const loadBackups = () => api.GET('/backups');
 /** How often the page reads the backups again while one runs. */
 export const runningRefreshMs = 5000;
+/** How many reads after "Back up now" look for the accepted backup before the page stops looking. */
+export const startedReads = 6;
 const removeTarget = (target: Target) =>
   api.DELETE('/backups/targets/{name}', { params: { path: { name: target.name } } });
 
 /** The local backups and the targets that receive copies on a schedule; target secrets are never shown. */
 export function BackupsPage() {
-  const { data, error, reload } = useLoaded(loadBackups);
+  const background = useRef(false);
+  // Marked as a background refresh, a read the page makes on its own does not keep the session from going idle.
+  const loadBackups = useCallback(
+    () => api.GET('/backups', background.current ? { params: { header: { 'X-Background-Refresh': '1' } } } : {}),
+    [],
+  );
+  const { data, error, reload: load, settled } = useLoaded(loadBackups);
   const [editing, setEditing] = useState<Target>();
   const [saves, setSaves] = useState(0);
+  // Reads left to find a backup that was accepted but does not show as running yet.
+  const [awaited, setAwaited] = useState(0);
   const removal = useRemoval(removeTarget, removed);
+  const running = data?.running === true;
+
+  const reload = useCallback(() => {
+    background.current = false;
+    load();
+  }, [load]);
 
   useEffect(() => {
-    if (!data?.running) return undefined;
-    const timer = setTimeout(reload, runningRefreshMs);
+    if (!running && awaited === 0) return undefined;
+    const timer = setTimeout(() => {
+      setAwaited((left) => (running ? 0 : left - 1));
+      background.current = true;
+      load();
+    }, runningRefreshMs);
     return () => clearTimeout(timer);
-  }, [data, reload]);
+  }, [running, awaited, settled, load]);
+
+  function started() {
+    setAwaited(startedReads);
+    reload();
+  }
 
   function removed(target: Target) {
     if (editing?.name === target.name) setEditing(undefined);
@@ -51,7 +75,7 @@ export function BackupsPage() {
         {error && <Alert tone="error">{error}</Alert>}
         {unhealthy && <Alert tone="warning">Backups are not healthy: {unhealthy.message ?? unhealthy.reason}</Alert>}
         {!data && !error && <Loading />}
-        {data && <LocalBackups backups={data} onStarted={reload} />}
+        {data && <LocalBackups backups={data} onStarted={started} />}
       </Card>
 
       {data && (

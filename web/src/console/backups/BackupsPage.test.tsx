@@ -2,9 +2,12 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../../setup/test-utils';
-import { BackupsPage, runningRefreshMs } from './BackupsPage';
+import { BackupsPage, runningRefreshMs, startedReads } from './BackupsPage';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const BACKUPS = 'GET /appliance/api/v1/backups';
 const noSecrets = { accessKey: false, secretKey: false, ca: false, password: false, privateKey: false };
@@ -55,7 +58,7 @@ describe('BackupsPage', () => {
   it('reads the backups again until the running one has ended', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
     let reads = 0;
-    stubApi({ [BACKUPS]: () => [200, backups({ running: ++reads < 3, local: reads < 3 ? [] : backups().local })] });
+    const { mock } = stubApi({ [BACKUPS]: () => [200, backups({ running: ++reads < 3, local: reads < 3 ? [] : backups().local })] });
     render(<BackupsPage />);
     expect(await screen.findByText('A backup is running')).toBeInTheDocument();
     for (const read of [2, 3]) {
@@ -66,6 +69,70 @@ describe('BackupsPage', () => {
     expect(screen.queryByText('A backup is running')).not.toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(3 * runningRefreshMs);
     expect(reads).toBe(3);
+    // Only the reads the page makes on its own are marked, so that they do not keep the session from going idle.
+    expect(mock.mock.calls.map(([request]) => request.headers.get('X-Background-Refresh'))).toEqual([null, '1', '1']);
+    vi.useRealTimers();
+  });
+
+  it('keeps reading after a failed read while a backup runs', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    let reads = 0;
+    stubApi({
+      [BACKUPS]: () => (++reads === 2 ? [503, { code: 'unavailable', message: 'Try again.' }] : [200, backups({ running: reads < 3 })]),
+    });
+    render(<BackupsPage />);
+    expect(await screen.findByText('A backup is running')).toBeInTheDocument();
+    for (const read of [2, 3]) {
+      await vi.advanceTimersByTimeAsync(runningRefreshMs);
+      await vi.waitFor(() => expect(reads).toBe(read));
+    }
+    await vi.waitFor(() => expect(screen.queryByText('A backup is running')).not.toBeInTheDocument());
+    await vi.advanceTimersByTimeAsync(3 * runningRefreshMs);
+    expect(reads).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it('keeps reading after "Back up now" until the accepted backup shows as running and ends', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    let reads = 0;
+    let started = 0;
+    stubApi({
+      [BACKUPS]: () => {
+        reads++;
+        // The backup shows as running only on the second read after it was accepted, and ends on the third.
+        const since = started ? reads - started : 0;
+        return [200, backups({ running: since === 2, local: since >= 3 ? backups().local : [] })];
+      },
+      'POST /appliance/api/v1/backups': () => {
+        started = reads;
+        return [202];
+      },
+    });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Back up now' }));
+    await vi.waitFor(() => expect(reads).toBe(started + 1));
+    await vi.advanceTimersByTimeAsync(runningRefreshMs);
+    expect(await screen.findByText('A backup is running')).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(runningRefreshMs);
+    expect(await screen.findByText(/3\.0 MB/)).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(3 * runningRefreshMs);
+    expect(reads).toBe(started + 3);
+    vi.useRealTimers();
+  });
+
+  it('stops looking for an accepted backup that never shows as running', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    let reads = 0;
+    stubApi({ [BACKUPS]: () => [200, backups({ local: [], running: !++reads })], 'POST /appliance/api/v1/backups': [202] });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Back up now' }));
+    await vi.waitFor(() => expect(reads).toBe(2));
+    for (let read = 3; read < 3 + startedReads; read++) {
+      await vi.advanceTimersByTimeAsync(runningRefreshMs);
+      await vi.waitFor(() => expect(reads).toBe(read));
+    }
+    await vi.advanceTimersByTimeAsync(3 * runningRefreshMs);
+    expect(reads).toBe(2 + startedReads);
     vi.useRealTimers();
   });
 
