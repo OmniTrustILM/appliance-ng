@@ -482,6 +482,65 @@ func TestVerifyDetectsTruncation(t *testing.T) {
 	}
 }
 
+// trailer writes tail into the encrypted stream after the tar end, as a tar tool padding to its record size does.
+type trailer struct {
+	io.WriteCloser
+	tail []byte
+}
+
+func (t trailer) Close() error {
+	if _, err := t.Write(t.tail); err != nil {
+		return err
+	}
+	return t.WriteCloser.Close()
+}
+
+// paddedArchive is the sample archive with tail after the tar end, in the encrypted stream.
+func paddedArchive(t *testing.T, id *age.X25519Identity, tail []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := newWriter(t, &buf, id)
+	w.enc = trailer{WriteCloser: w.enc, tail: tail}
+	if err := w.Add("appliance.yaml", 5, strings.NewReader("a: b\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(testManifest()); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestVerifyReadsTheStreamPastTheTarEnd(t *testing.T) {
+	id := newIdentity(t)
+	extract := func(data []byte) error {
+		return Extract(bytes.NewReader(data), id, func(_ string, r io.Reader) error {
+			_, err := io.Copy(io.Discard, r)
+			return err
+		})
+	}
+	// Zero padding running into a further age chunk is accepted.
+	padded := paddedArchive(t, id, make([]byte, 64<<10+100))
+	if _, err := Verify(bytes.NewReader(padded), id); err != nil {
+		t.Fatalf("verify padded = %v", err)
+	}
+	// A cut inside the last age chunk, after the tar end, is refused.
+	cut := padded[:len(padded)-50]
+	if _, err := Verify(bytes.NewReader(cut), id); !errors.Is(err, ErrTampered) && !errors.Is(err, ErrTruncated) {
+		t.Errorf("verify cut = %v, want a refusal", err)
+	}
+	if err := extract(cut); !errors.Is(err, ErrTampered) && !errors.Is(err, ErrTruncated) {
+		t.Errorf("extract cut = %v, want a refusal", err)
+	}
+	// Data after the tar end is refused.
+	trailing := paddedArchive(t, id, append(make([]byte, 600), 'x'))
+	if _, err := Verify(bytes.NewReader(trailing), id); !errors.Is(err, ErrTampered) {
+		t.Errorf("verify trailing data = %v, want ErrTampered", err)
+	}
+	if err := extract(trailing); !errors.Is(err, ErrTampered) {
+		t.Errorf("extract trailing data = %v, want ErrTampered", err)
+	}
+}
+
 func TestTruncatedTarIsErrTruncated(t *testing.T) {
 	id := newIdentity(t)
 	// A clean age stream whose tar member ends before its declared size.

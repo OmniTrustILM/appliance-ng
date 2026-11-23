@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"slices"
 
 	"filippo.io/age"
 )
@@ -18,6 +19,7 @@ const maxManifestSize = 4 << 20
 
 // decoder walks the tar members of a decrypted archive, hashing each one as it is read.
 type decoder struct {
+	plain    io.Reader
 	tr       *tar.Reader
 	seen     map[string]string
 	pending  *tar.Header
@@ -38,7 +40,7 @@ func newDecoder(r io.Reader, id age.Identity) (*decoder, error) {
 		}
 		return nil, fmt.Errorf("decrypt backup: %w", err)
 	}
-	return &decoder{tr: tar.NewReader(dec), seen: map[string]string{}, started: map[string]bool{}}, nil
+	return &decoder{plain: dec, tr: tar.NewReader(dec), seen: map[string]string{}, started: map[string]bool{}}, nil
 }
 
 // readError classifies an error from the decrypted stream: a stream that ends early is truncated, anything else
@@ -169,6 +171,9 @@ func (d *decoder) finish() (Manifest, error) {
 	if _, err := d.next(); !errors.Is(err, io.EOF) {
 		return Manifest{}, err
 	}
+	if err := d.drain(); err != nil {
+		return Manifest{}, err
+	}
 	m := *d.manifest
 	if len(m.Members) != len(d.seen) {
 		return Manifest{}, fmt.Errorf("%w: member list differs from the manifest", ErrTampered)
@@ -179,6 +184,24 @@ func (d *decoder) finish() (Manifest, error) {
 		}
 	}
 	return m, nil
+}
+
+// drain reads the decrypted stream past the tar end to its end, so that age authenticates its last chunk. Only zero
+// padding may follow the tar end.
+func (d *decoder) drain() error {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := d.plain.Read(buf)
+		if slices.ContainsFunc(buf[:n], func(b byte) bool { return b != 0 }) {
+			return fmt.Errorf("%w: data after the end of the archive", ErrTampered)
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return readError(err)
+		}
+	}
 }
 
 // walk calls fn for every member except the manifest, then checks the archive against the manifest.
