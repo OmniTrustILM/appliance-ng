@@ -530,6 +530,30 @@ func TestBackupFailureKeepsPreviousCopies(t *testing.T) {
 		check(t, "noSpace")
 	})
 
+	t.Run("dump stalls", func(t *testing.T) {
+		old := writeTimeout
+		writeTimeout = 200 * time.Millisecond
+		t.Cleanup(func() { writeTimeout = old })
+		f, check := setup(t)
+		f.dumper.block = make(chan struct{})
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.runner.Run(ctx, RunSchedule, nil)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrFailed) {
+				t.Fatalf("run: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a stalled dump holds the run")
+		}
+		check(t, "timeout")
+		f.dumper.block = nil
+		mustRun(t, f, RunSchedule, nil)
+	})
+
 	t.Run("restart leaves a partial file", func(t *testing.T) {
 		f, _ := setup(t)
 		before := localNames(t, f.dir)

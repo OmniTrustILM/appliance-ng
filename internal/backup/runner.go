@@ -106,6 +106,9 @@ var (
 	// copyRate, in bytes per second, is the slowest transfer a copy may run at once it needs more than
 	// minCopyTimeout.
 	copyRate int64 = 1 << 20
+	// writeTimeout bounds the local backup, the dump included, so that a stalled pg_dump or API server cannot hold
+	// the runner busy; it matches the lifetime of an external dump pod.
+	writeTimeout = dumpPodDeadline * time.Second
 )
 
 // AuditWriter appends entries to the audit log.
@@ -350,9 +353,14 @@ func (r *Runner) execute(ctx context.Context, a *v1alpha1.Appliance, recipient a
 	}
 	r.deps.Log.Info("backup started", "reason", reason, "user", o.user)
 
-	rec, stage, err := r.writeLocal(ctx, a, recipient, start)
+	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	rec, stage, err := r.writeLocal(wctx, a, recipient, start)
+	cancel()
 	if err != nil {
 		failure := localReason(err)
+		if errors.Is(wctx.Err(), context.DeadlineExceeded) {
+			failure = target.ReasonTimeout
+		}
 		r.deps.Log.Error("backup failed", "reason", reason, "stage", stage, "failure", failure)
 		r.finish(ctx, func(st *v1alpha1.ApplianceStatus) {
 			r.refreshLocal(st)
