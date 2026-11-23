@@ -54,7 +54,10 @@ func (f *fakeExec) exec(_ context.Context, _ *rest.Config, k kube.Container, cmd
 	return f.handler(c, stdout)
 }
 
-const dumpText = "-- PostgreSQL database dump\nSELECT 1;\n"
+// dumpText ends as pg_dump 18 ends a plain dump: the completion trailer, then the \unrestrict of its random key.
+const dumpText = "--\n-- PostgreSQL database dump\n--\n\n\\restrict k3y\n\nSELECT 1;\n\n" +
+	"--\n-- PostgreSQL database dump complete\n--\n\n" +
+	"\\unrestrict " + "Zx0aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdefghijklmnopqrstuvw" + "\n\n"
 
 func writeDump(_ call, stdout io.Writer) error {
 	_, err := io.WriteString(stdout, dumpText)
@@ -115,6 +118,52 @@ func TestManagedDumpCommand(t *testing.T) {
 	for _, arg := range c.cmd {
 		if strings.Contains(strings.ToLower(arg), "password") {
 			t.Errorf("argument %q mentions a password", arg)
+		}
+	}
+}
+
+func TestDumpFailsWithoutTheCompletionTrailer(t *testing.T) {
+	managedCluster(t, "ilm")
+	quickPods(t)
+	runPods(t)
+	cut := strings.Index(dumpText, "-- PostgreSQL database dump complete")
+	// bytewise writes the dump one byte at a time after a body longer than the kept tail, ending with tail.
+	bytewise := func(tail string) func(call, io.Writer) error {
+		return func(c call, stdout io.Writer) error {
+			if c.cmd[0] != "pg_dump" {
+				return nil
+			}
+			text := strings.Repeat("SELECT 1;\n", 100) + tail
+			for i := range len(text) {
+				if _, err := io.WriteString(stdout, text[i:i+1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		handler func(call, io.Writer) error
+		ok      bool
+	}{
+		{"complete", bytewise(dumpText), true},
+		{"cut before the trailer", bytewise(dumpText[:cut]), false},
+		{"cut inside the trailer", bytewise(dumpText[:cut+20]), false},
+		{"empty", func(call, io.Writer) error { return nil }, false},
+	} {
+		dumpers := map[string]Dumper{
+			"managed":  newManagedDumper(testClient, nil, (&fakeExec{handler: tc.handler}).exec),
+			"external": newExternalDumper(externalDB, testClient, nil, (&fakeExec{handler: tc.handler}).exec),
+		}
+		for kind, d := range dumpers {
+			err := d.Dump(context.Background(), io.Discard)
+			if tc.ok && err != nil {
+				t.Errorf("%s, %s: %v", kind, tc.name, err)
+			}
+			if !tc.ok && (err == nil || strings.Contains(err.Error(), "SELECT")) {
+				t.Errorf("%s, %s: error = %v, want an incomplete dump without its content", kind, tc.name, err)
+			}
 		}
 	}
 }

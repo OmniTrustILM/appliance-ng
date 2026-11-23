@@ -79,7 +79,10 @@ func (d *externalDumper) Dump(ctx context.Context, w io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("check the external database: %w", err)
 		}
-		if err := d.exec(ctx, d.cfg, kube.Container{Namespace: kube.SystemNamespace, Pod: pod, Name: dumpContainer}, dumpCommand(d.db.Name), nil, w); err != nil {
+		err = dumpTo(w, func(out io.Writer) error {
+			return d.exec(ctx, d.cfg, kube.Container{Namespace: kube.SystemNamespace, Pod: pod, Name: dumpContainer}, dumpCommand(d.db.Name), nil, out)
+		})
+		if err != nil {
 			return fmt.Errorf("dump the external database: %w", err)
 		}
 		return nil

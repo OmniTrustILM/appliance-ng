@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,44 @@ import (
 
 // ErrDatabaseUnreachable means the external database did not answer, so there is nothing to dump.
 var ErrDatabaseUnreachable = errors.New("database unreachable")
+
+var errDumpIncomplete = errors.New("the dump ended before pg_dump's completion trailer")
+
+const (
+	// dumpTrailer is written by pg_dump at the end of a complete plain dump; only the \unrestrict line of its
+	// 63-character key follows it.
+	dumpTrailer = "\n-- PostgreSQL database dump complete\n"
+	// tailSize is how much of the end of a dump is kept to find the trailer in.
+	tailSize = 256
+)
+
+// tailWriter passes writes on to w and keeps the last tailSize bytes written.
+type tailWriter struct {
+	w    io.Writer
+	tail []byte
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	n, err := t.w.Write(p)
+	t.tail = append(t.tail, p[max(0, n-tailSize):n]...)
+	if over := len(t.tail) - tailSize; over > 0 {
+		t.tail = append(t.tail[:0], t.tail[over:]...)
+	}
+	return n, err
+}
+
+// dumpTo runs a pg_dump into w and fails a stream that ends without pg_dump's completion trailer: an exec whose
+// connection closes early without an exit status ends the stream as if pg_dump had succeeded.
+func dumpTo(w io.Writer, run func(io.Writer) error) error {
+	t := &tailWriter{w: w}
+	if err := run(t); err != nil {
+		return err
+	}
+	if !bytes.Contains(t.tail, []byte(dumpTrailer)) {
+		return errDumpIncomplete
+	}
+	return nil
+}
 
 // Dumper moves the platform database in and out of a backup. Neither direction touches a disk: the dump streams
 // from pg_dump into w, and r streams into psql.
@@ -69,7 +108,10 @@ func (d *managedDumper) Dump(ctx context.Context, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := d.exec(ctx, d.cfg, kube.Container{Namespace: platform.Namespace, Pod: pod, Name: managedContainer}, dumpCommand(database), nil, w); err != nil {
+	err = dumpTo(w, func(out io.Writer) error {
+		return d.exec(ctx, d.cfg, kube.Container{Namespace: platform.Namespace, Pod: pod, Name: managedContainer}, dumpCommand(database), nil, out)
+	})
+	if err != nil {
 		return fmt.Errorf("dump the managed database: %w", err)
 	}
 	return nil
