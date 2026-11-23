@@ -231,6 +231,40 @@ func TestAddStreamWrappedUnexpectedEOFFails(t *testing.T) {
 	}
 }
 
+func TestAddKnownSizeReadErrorAfterDataFails(t *testing.T) {
+	w := newWriter(t, io.Discard, newIdentity(t))
+	r := &partialReader{data: []byte("abc"), err: errors.New("boom")}
+	if err := w.Add("appliance.yaml", 3, r); err == nil {
+		t.Fatal("a read error after the declared size was taken for the end of the data")
+	}
+}
+
+// lastReadErrReader returns all its data with err in a single read.
+type lastReadErrReader struct {
+	data []byte
+	err  error
+}
+
+func (r *lastReadErrReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	if len(r.data) == 0 {
+		return n, r.err
+	}
+	return n, nil
+}
+
+func TestAddKnownSizeReadErrorWithLastDataFails(t *testing.T) {
+	w := newWriter(t, io.Discard, newIdentity(t))
+	r := &lastReadErrReader{data: []byte("abc"), err: errors.New("boom")}
+	if err := w.Add("appliance.yaml", 3, r); err == nil {
+		t.Fatal("a read error returned with the last data was dropped")
+	}
+}
+
 func TestVerifyDetectsTamper(t *testing.T) {
 	id := newIdentity(t)
 	data := sampleArchive(t, id)

@@ -58,13 +58,21 @@ func (w *Writer) addMember(name string, size int64, r io.Reader) error {
 		return fmt.Errorf("write %s header: %w", name, err)
 	}
 	h := sha256.New()
-	n, err := io.CopyN(io.MultiWriter(w.tw, h), r, size)
+	// io.CopyN would drop a source error returned with the last of the size bytes.
+	n, err := io.Copy(io.MultiWriter(w.tw, h), io.LimitReader(r, size))
 	if err != nil {
 		return fmt.Errorf("write %s: got %d of %d bytes: %w", name, n, size, err)
 	}
+	if n < size {
+		return fmt.Errorf("write %s: got %d of %d bytes: %w", name, n, size, io.ErrUnexpectedEOF)
+	}
 	var extra [1]byte
-	if k, _ := io.ReadFull(r, extra[:]); k > 0 {
+	k, err := io.ReadFull(r, extra[:])
+	if k > 0 {
 		return fmt.Errorf("write %s: more data than the declared %d bytes", name, size)
+	}
+	if err != io.EOF {
+		return fmt.Errorf("read %s: %w", name, err)
 	}
 	w.members[name] = hex.EncodeToString(h.Sum(nil))
 	return nil
