@@ -124,8 +124,8 @@ func main() {
 	fs.StringVar(&o.sftpPasswordFile, "sftp-password-file", "", "file holding the SFTP password, generated when missing (serve-targets, backup)")
 	fs.StringVar(&o.s3SecretFile, "s3-secret-file", "", "file holding the S3 secret key, generated when missing (serve-targets, backup)")
 	fs.StringVar(&o.sftpFingerprint, "sftp-fingerprint", "", "host key fingerprint serve-targets printed (backup)")
-	fs.StringVar(&o.sftpGuest, "sftp-guest", "10.0.2.2:2222", "address the appliance reaches the SFTP server at (backup)")
-	fs.StringVar(&o.s3Guest, "s3-guest", "10.0.2.2:9000", "address the appliance reaches the S3 server at (backup)")
+	fs.StringVar(&o.sftpGuest, "sftp-guest", "10.0.2.100:2222", "address the appliance reaches the SFTP server at (backup)")
+	fs.StringVar(&o.s3Guest, "s3-guest", "10.0.2.100:9000", "address the appliance reaches the S3 server at (backup)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {

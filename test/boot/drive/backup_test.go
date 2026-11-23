@@ -142,7 +142,7 @@ func newBackupConsole(t *testing.T) (*backupConsole, options) {
 		manifest: backup.Manifest{Format: backup.FormatVersion, Database: "managed", DatabaseIncluded: true, HostName: testHostName},
 	}
 	return b, options{
-		dir: dir, hostName: testHostName, sftpFingerprint: "SHA256:served", sftpGuest: "10.0.2.2:2222", s3Guest: "10.0.2.2:9000",
+		dir: dir, hostName: testHostName, sftpFingerprint: "SHA256:served", sftpGuest: "10.0.2.100:2222", s3Guest: "10.0.2.100:9000",
 		sftpPasswordFile: filepath.Join(dir, "sftp.password"), s3SecretFile: filepath.Join(dir, "s3.secret"),
 	}
 }
@@ -171,7 +171,7 @@ func TestDriveBackupNeverPrintsSecrets(t *testing.T) {
 	if sftp["password"] != testSFTPPassword || sftp["port"] != float64(2222) || sftp["path"] != "/" || sftp["hostKey"] != "SHA256:served" {
 		t.Errorf("the SFTP target saved = %v", sftp)
 	}
-	if s3["secretKey"] != testS3Secret || s3["endpoint"] != "http://10.0.2.2:9000" || s3["prefix"] != s3Prefix {
+	if s3["secretKey"] != testS3Secret || s3["endpoint"] != "http://10.0.2.100:9000" || s3["prefix"] != s3Prefix {
 		t.Errorf("the S3 target saved = %v", s3)
 	}
 	if got := strings.Join(cl.logSecrets, " "); !strings.Contains(got, testSFTPPassword) || !strings.Contains(got, testS3Secret) ||

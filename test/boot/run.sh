@@ -55,7 +55,7 @@ seed_file="$dir/totp.seed"
 kit_file="$dir/recovery-kit.tar.age"
 kit_passphrase_file="$dir/kit.passphrase"
 setup_cert="$dir/setup-cert.pem"
-# serve-targets keeps the SFTP and S3 files in targets_dir; the guest reaches the ports at 10.0.2.2 (see vm.sh).
+# serve-targets keeps the SFTP and S3 files in targets_dir; the guest reaches the ports at 10.0.2.100 (see vm.sh).
 targets_dir="$dir/targets"
 sftp_password_file="$dir/sftp.password"
 s3_secret_file="$dir/s3.secret"
