@@ -22,6 +22,8 @@ type memTarget struct {
 	puts    []string
 	corrupt bool
 	putErr  error
+	// deleteFails is how many Delete calls fail before one succeeds.
+	deleteFails int
 }
 
 func newMemTarget() *memTarget { return &memTarget{objects: map[string][]byte{}} }
@@ -73,23 +75,29 @@ func (m *memTarget) Get(_ context.Context, name string) (io.ReadCloser, error) {
 func (m *memTarget) Delete(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deleteFails > 0 {
+		m.deleteFails--
+		return context.DeadlineExceeded
+	}
 	delete(m.objects, name)
 	return nil
 }
 
 func TestTestCleansUp(t *testing.T) {
 	for name, tc := range map[string]struct {
-		corrupt bool
-		putErr  error
-		wantErr bool
+		corrupt     bool
+		putErr      error
+		deleteFails int
+		wantErr     bool
 	}{
-		"success":       {},
-		"read mismatch": {corrupt: true, wantErr: true},
-		"put fails":     {putErr: ErrNoSpace, wantErr: true},
+		"success":            {},
+		"read mismatch":      {corrupt: true, wantErr: true},
+		"put fails":          {putErr: ErrNoSpace, wantErr: true},
+		"first delete fails": {deleteFails: 1, wantErr: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			m := newMemTarget()
-			m.corrupt, m.putErr = tc.corrupt, tc.putErr
+			m.corrupt, m.putErr, m.deleteFails = tc.corrupt, tc.putErr, tc.deleteFails
 			m.objects["keep.ilmbackup"] = []byte("x")
 			err := Test(context.Background(), m)
 			if (err != nil) != tc.wantErr {

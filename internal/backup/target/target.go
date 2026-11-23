@@ -131,10 +131,10 @@ func Test(ctx context.Context, t Target) error {
 	if !bytes.Equal(got, data) {
 		return errors.New("the test file read back differs from what was written")
 	}
-	deleted = true
 	if err := t.Delete(ctx, name); err != nil {
 		return fmt.Errorf("delete the test file: %w", err)
 	}
+	deleted = true
 	return nil
 }
 
