@@ -690,3 +690,14 @@ func restoreSecretAnswers(t *testing.T, h *harness, s *session, answers *bytes.B
 	}
 	return key.String()
 }
+
+// TestUploadedRefusesPathNames refuses a stored name that is not a plain file name.
+func TestUploadedRefusesPathNames(t *testing.T) {
+	h := newHarness(t)
+	h.srv.deps.RestoreDir = t.TempDir()
+	for _, name := range []string{"../a.ilmbackup", "a/b.ilmbackup", ".."} {
+		if _, answer, err := h.srv.uploaded(name); err != nil || answer != &answerBadName {
+			t.Errorf("uploaded(%q) = %v, %v; want the bad-name answer", name, answer, err)
+		}
+	}
+}

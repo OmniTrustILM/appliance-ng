@@ -435,8 +435,11 @@ func (s *Server) resume(ctx context.Context, parts map[string][]byte) (restoreAn
 	return restoreAnswer{status: http.StatusAccepted}, nil
 }
 
-// uploaded is the path of the uploaded or fetched backup name, which must exist.
+// uploaded is the path of the uploaded or fetched backup name, which must exist and be a plain file name.
 func (s *Server) uploaded(name string) (string, *restoreAnswer, error) {
+	if strings.Contains(name, "..") || filepath.Base(name) != name {
+		return "", &answerBadName, nil
+	}
 	file := filepath.Join(s.deps.RestoreDir, name)
 	if _, err := os.Stat(file); err != nil {
 		return "", &answerNoBackup, nil
