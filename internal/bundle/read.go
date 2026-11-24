@@ -167,11 +167,17 @@ func layoutEntry(h *tar.Header) (string, bool) {
 		return "", false
 	}
 	name := path.Clean(strings.TrimPrefix(h.Name, "./"))
+	if strings.Contains(name, "..") {
+		return "", false
+	}
 	if name == "oci-layout" || name == "index.json" {
 		return name, true
 	}
 	hexDigest, ok := strings.CutPrefix(name, "blobs/sha256/")
-	return name, ok && validHex(hexDigest)
+	if !ok || !validHex(hexDigest) {
+		return "", false
+	}
+	return path.Join("blobs", "sha256", filepath.Base(hexDigest)), true
 }
 
 // extractFile writes r to the new file dst and returns the bytes written.
