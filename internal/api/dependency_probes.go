@@ -16,6 +16,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
@@ -44,23 +45,15 @@ func (s *Server) PostDependencyTest(ctx context.Context, req PostDependencyTestR
 	if ferr != nil {
 		return PostDependencyTest400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
-	a, err := s.appliance(ctx)
+	a, data, ferr, err := s.testInputs(ctx, kind, in)
 	if apierrors.IsNotFound(err) {
 		return PostDependencyTest409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var data map[string][]byte
-	if kind != v1alpha1.DependencyIdentity {
-		name, _ := dependencySecret(kind)
-		stored, err := s.systemSecret(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		if data, ferr = in.credentialsData(kind, stored, a.Spec.Platform); ferr != nil {
-			return PostDependencyTest400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
-		}
+	if ferr != nil {
+		return PostDependencyTest400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, dependencyTestTimeout)
 	defer cancel()
@@ -75,6 +68,27 @@ func (s *Server) PostDependencyTest(ctx context.Context, req PostDependencyTestR
 	recordDetails(ctx, map[string]string{"kind": kind, "result": result})
 	s.deps.Log.Info("dependency tested", "kind", kind, "result", result)
 	return PostDependencyTest200JSONResponse(out), nil
+}
+
+// testInputs reads the Appliance and the credentials of the dependency kind of in to test with, past the cache and
+// between saves, so that they are of the same save.
+func (s *Server) testInputs(ctx context.Context, kind string, in *dependenciesInput) (*v1alpha1.Appliance, map[string][]byte, *fieldError, error) {
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
+	a := &v1alpha1.Appliance{}
+	if err := s.deps.Reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, a); err != nil {
+		return nil, nil, nil, fmt.Errorf("read the Appliance: %w", err)
+	}
+	if kind == v1alpha1.DependencyIdentity {
+		return a, nil, nil, nil
+	}
+	name, _ := dependencySecret(kind)
+	stored, err := s.systemSecret(ctx, name)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	data, ferr := in.credentialsData(kind, stored, a.Spec.Platform)
+	return a, data, ferr, nil
 }
 
 // parseTestSettings validates the settings of a dependency test, which must be external.

@@ -245,6 +245,35 @@ func wantResult(t *testing.T, got DependencyTestResult, reason DependencyTestRes
 	}
 }
 
+// A dependency test reads the stored credentials between saves and makes its check without holding saves up.
+func TestDependencyTestWaitsForASave(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	installedAppliance(t)
+	heldDuringCheck := true
+	h.srv.deps.CheckDatabase = func(context.Context, backup.ExternalDatabase, string, string, []byte) error {
+		if h.srv.credentialsMu.TryLock() {
+			heldDuringCheck = false
+			h.srv.credentialsMu.Unlock()
+		}
+		return nil
+	}
+	body := dependencyTest(t, KindDatabase, externalDatabaseBody("db.example.com", ptr(databasePassword)))
+	h.srv.credentialsMu.Lock()
+	done := make(chan DependencyTestResult, 1)
+	go func() { done <- testResult(t, h, s, body) }()
+	select {
+	case <-done:
+		t.Fatal("a dependency test read the credentials during a save")
+	case <-time.After(200 * time.Millisecond):
+	}
+	h.srv.credentialsMu.Unlock()
+	wantResult(t, <-done, "")
+	if heldDuringCheck {
+		t.Error("the check held up the saves")
+	}
+}
+
 func TestDependencyTests(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
