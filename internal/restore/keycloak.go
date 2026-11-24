@@ -13,12 +13,16 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
 // The managed Keycloak as operator v1.1.0 and the Keycloak operator make it: its Service in the platform namespace,
-// which serves plain HTTP behind the ILM gateway under a base path, and the realm of ILM.
+// which serves plain HTTP behind the ILM gateway under a base path and admits any source on that port, and the realm
+// of ILM.
 const (
 	keycloakService  = keycloakName + "-service"
 	keycloakPort     = "8080"
@@ -40,10 +44,22 @@ var errKeycloakUnavailable = errors.New("keycloak is not available")
 // The fields of a Keycloak client that hold URLs, which may name the ILM host.
 var clientURLFields = []string{"rootUrl", "baseUrl", "adminUrl", "redirectUris", "webOrigins"}
 
-// keycloakServiceURL is the base URL of the managed Keycloak in the cluster.
-func keycloakServiceURL() string {
-	u := url.URL{Scheme: "http", Host: net.JoinHostPort(keycloakService+"."+platform.Namespace+".svc", keycloakPort), Path: keycloakBasePath}
-	return u.String()
+// keycloakURL is the base URL of the managed Keycloak: the one of the Deps, else the cluster IP of its Service. The
+// manager runs in the host network, where the cluster's DNS does not answer.
+func (e *Engine) keycloakURL(ctx context.Context) (string, error) {
+	if e.deps.KeycloakURL != "" {
+		return e.deps.KeycloakURL, nil
+	}
+	svc := &corev1.Service{}
+	if err := e.deps.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: keycloakService}, svc); err != nil {
+		return "", fmt.Errorf("read service %s/%s: %w", platform.Namespace, keycloakService, err)
+	}
+	ip := svc.Spec.ClusterIP
+	if ip == "" || ip == corev1.ClusterIPNone {
+		return "", fmt.Errorf("service %s/%s has no cluster IP", platform.Namespace, keycloakService)
+	}
+	u := url.URL{Scheme: "http", Host: net.JoinHostPort(ip, keycloakPort), Path: keycloakBasePath}
+	return u.String(), nil
 }
 
 // keycloakHTTPClient reaches Keycloak directly, never through a proxy of the environment.
@@ -80,7 +96,11 @@ func (e *Engine) rehostKeycloak(ctx context.Context, j *job) error {
 	if admin == nil {
 		return fmt.Errorf("secret %s/%s not found", platform.Namespace, platform.KeycloakAdminSecret)
 	}
-	kc := keycloak{base: e.deps.KeycloakURL, client: e.deps.HTTPClient, user: string(admin.Data["username"]), password: string(admin.Data["password"])}
+	base, err := e.keycloakURL(ctx)
+	if err != nil {
+		return err
+	}
+	kc := keycloak{base: base, client: e.deps.HTTPClient, user: string(admin.Data["username"]), password: string(admin.Data["password"])}
 	return e.waitFor(ctx, "Keycloak", func(ctx context.Context) (bool, error) {
 		moved, err := kc.rehost(ctx, from, to)
 		if errors.Is(err, errKeycloakUnavailable) {

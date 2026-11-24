@@ -96,7 +96,7 @@ type Deps struct {
 	// OperatorLock, when set, is held while the ILM operator is scaled; the add-on pass holds it while it applies the
 	// operator's Deployment.
 	OperatorLock sync.Locker
-	// KeycloakURL is the base URL of the managed Keycloak; empty is its Service in the cluster.
+	// KeycloakURL is the base URL of the managed Keycloak; empty is the cluster IP of its Service.
 	KeycloakURL string
 	// HTTPClient calls Keycloak; nil is a client that never uses a proxy.
 	HTTPClient *http.Client
@@ -130,9 +130,6 @@ type job struct {
 
 // New returns an Engine on deps.
 func New(deps Deps) *Engine {
-	if deps.KeycloakURL == "" {
-		deps.KeycloakURL = keycloakServiceURL()
-	}
 	if deps.HTTPClient == nil {
 		deps.HTTPClient = keycloakHTTPClient()
 	}
