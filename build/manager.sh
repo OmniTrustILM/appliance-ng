@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the Appliance Manager for $ARCH and pushes its image as $MANAGER_REF, which cache.sh caches.
+# Builds the Appliance Manager for $ARCH, pushes its image as $MANAGER_REF, which cache.sh caches, and writes the
+# pushed digest to $OUT/manager.digest.
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
@@ -17,4 +18,6 @@ CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags "-s -w -X ma
 
 log "building and pushing $MANAGER_REF"
 docker buildx build --platform "linux/$ARCH" --provenance=false -f Dockerfile.manager \
-  -t "$MANAGER_REF" --push "$ctx"
+  --metadata-file "$OUT/manager-metadata.json" -t "$MANAGER_REF" --push "$ctx"
+jq -er '."containerimage.digest" | select(startswith("sha256:"))' "$OUT/manager-metadata.json" >"$OUT/manager.digest" ||
+  die "buildx recorded no digest for $MANAGER_REF"

@@ -1,0 +1,353 @@
+name: Release
+
+# A tag X.Y.Z that matches release.yaml's version runs the long tests, pushes the signed system and platform bundles
+# of each architecture to GHCR and drafts the GitHub release. A dry run pushes the bundles under dev/ with the commit
+# as their tag, signs them with a throw-away key and drafts no release.
+on:
+  push:
+    tags: [ '[0-9]+.[0-9]+.[0-9]+' ]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Push the bundles, signed with a throw-away key, to ghcr.io/omnitrustilm/appliance-ng/dev/ as <commit>-<arch>; draft no release.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# The long tests this workflow calls use a group of their own.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      dry-run: ${{ steps.check.outputs.dry-run }}
+      registry: ${{ steps.check.outputs.registry }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Check the tag against release.yaml
+        id: check
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          version="$(go run github.com/mikefarah/yq/v4@v4.54.1 '.version' release.yaml)"
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run of $version at $SHA"
+            registry=ghcr.io/omnitrustilm/appliance-ng/dev
+            tag="$SHA"
+          else
+            if [ "$REF_TYPE" != tag ] || ! [[ "$REF_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::A release runs on a tag X.Y.Z; start a dry run to test the workflow on a branch."
+              exit 1
+            fi
+            if [ "$REF_NAME" != "$version" ]; then
+              echo "::error::The tag $REF_NAME differs from the version $version in release.yaml."
+              exit 1
+            fi
+            if [ ! -f "release-notes/$version.md" ]; then
+              echo "::error::release-notes/$version.md is missing."
+              exit 1
+            fi
+            registry=ghcr.io/omnitrustilm/appliance-ng
+            tag="$version"
+          fi
+          go run ./cmd/release validate
+          {
+            echo "version=$version"
+            echo "dry-run=$DRY_RUN"
+            echo "registry=$registry"
+            echo "tag=$tag"
+          } >>"$GITHUB_OUTPUT"
+
+      # Fails before anything is pushed when the tag's release is published. Drafts are not visible to this read-only
+      # token; a re-run over a draft goes on and the release job updates it. A failed lookup fails the step.
+      - name: Refuse a published release
+        if: steps.check.outputs.dry-run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          drafts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.VERSION) | .draft')"
+          if grep -qx false <<<"$drafts"; then
+            echo "::error::The release $VERSION is published already."
+            exit 1
+          fi
+
+  images:
+    needs: check
+    if: needs.check.outputs.dry-run != 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/images.yaml
+    with:
+      publish: true
+      bundles: true
+
+  # On a tag, the bundles are pushed only after the long tests pass; a dry run skips the images and the long tests.
+  bundles:
+    name: bundles (${{ matrix.arch }})
+    needs: [ check, images, long-tests ]
+    if: >-
+      !cancelled() && needs.check.result == 'success' && (needs.check.outputs.dry-run == 'true'
+      || (needs.images.result == 'success' && needs.long-tests.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ amd64, arm64 ]
+    env:
+      ARCH: ${{ matrix.arch }}
+      REGISTRY: ${{ needs.check.outputs.registry }}
+      TAG: ${{ needs.check.outputs.tag }}-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install oras, cosign and syft
+        run: |
+          fetch() { local output="$1" url="$2"; curl -fsSL --proto '=https' --tlsv1.2 -o "$output" "$url"; }
+          dir="$(mktemp -d)"
+          fetch "$dir/oras.tar.gz" https://github.com/oras-project/oras/releases/download/v1.4.0/oras_1.4.0_linux_amd64.tar.gz
+          fetch "$dir/cosign" https://github.com/sigstore/cosign/releases/download/v3.0.2/cosign-linux-amd64
+          fetch "$dir/syft.tar.gz" https://github.com/anchore/syft/releases/download/v1.57.0/syft_1.57.0_linux_amd64.tar.gz
+          sha256sum --check --strict <<EOF
+          d8e1dce2fd8ce996f1d901845b688eb0cf505a6082897606f053825bb47935d1  $dir/oras.tar.gz
+          46dbdcb5467a3dfec2526923d0b3365e40c8d9dc00ec23d5aca3437449e8cbfd  $dir/cosign
+          9c077a7d43029b3b13e98a8db720661e700c4d58db6352153a06395ae4a2a704  $dir/syft.tar.gz
+          EOF
+          tar -xzf "$dir/oras.tar.gz" -C "$dir" oras
+          tar -xzf "$dir/syft.tar.gz" -C "$dir" syft
+          sudo install -m 0755 "$dir/oras" "$dir/cosign" "$dir/syft" /usr/local/bin/
+          oras version
+          cosign version
+          syft version
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The system bundle carries the installer and the manager the images job pushed, by the digests it recorded:
+      # other builds push the same tags.
+      - name: Download the pushed digests
+        if: needs.check.outputs.dry-run != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests
+
+      - name: Name the built images
+        if: needs.check.outputs.dry-run != 'true'
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          built=()
+          for name in installer manager; do
+            digest="$(cat "$RUNNER_TEMP/digests/$name.digest")"
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::The images job recorded no valid digest for $name."
+              exit 1
+            fi
+            built+=("ghcr.io/omnitrustilm/appliance-ng/$name:$VERSION-$ARCH@$digest")
+          done
+          echo "BUILT_IMAGES=${built[*]}" >>"$GITHUB_ENV"
+
+      - name: Build and push the bundles
+        run: make bundles ARCH="$ARCH" REGISTRY="$REGISTRY" PUSH=1 TAG="$TAG"
+
+      # A dry run never sees the release key: it signs with a key pair made here and verifies with its public key.
+      - name: Make a throw-away key pair
+        if: needs.check.outputs.dry-run == 'true'
+        run: |
+          dir="$RUNNER_TEMP/dry-run-key"
+          mkdir -p "$dir"
+          (cd "$dir" && COSIGN_PASSWORD='' cosign generate-key-pair)
+          {
+            echo "SIGNING_KEY=$dir/cosign.key"
+            echo "VERIFY_KEY=$dir/cosign.pub"
+          } >>"$GITHUB_ENV"
+
+      # Without --use-signing-config=false, cosign v3 ignores --tlog-upload=false and logs to public Rekor.
+      - name: Sign the bundles
+        env:
+          COSIGN_PRIVATE_KEY: ${{ needs.check.outputs.dry-run != 'true' && secrets.COSIGN_PRIVATE_KEY || '' }}
+          COSIGN_PASSWORD: ${{ needs.check.outputs.dry-run != 'true' && secrets.COSIGN_PASSWORD || '' }}
+        run: |
+          export COSIGN_PASSWORD="${COSIGN_PASSWORD:-}"
+          for kind in system platform; do
+            cosign sign --key "${SIGNING_KEY:-env://COSIGN_PRIVATE_KEY}" --tlog-upload=false --use-signing-config=false -y \
+              "$(cat "out/$ARCH/bundles/$kind.ref")"
+          done
+
+      # One SPDX document per bundle: syft scans each image of the bundle, and the documents are merged into one
+      # that describes every image.
+      - name: Generate the SBOMs
+        run: |
+          mkdir -p out/sbom
+          for kind in system platform; do
+            ref="$(cat "out/$ARCH/bundles/$kind.ref")"
+            index="out/$ARCH/bundles/$kind/blobs/sha256/${ref##*@sha256:}"
+            parts="$(mktemp -d)"
+            while read -r digest image; do
+              syft scan "registry:${ref%@*}@$digest" --source-name "${image%@*}" --source-version "$digest" --quiet \
+                --output "spdx-json=$parts/${digest#sha256:}.json"
+            done < <(jq -r '.manifests[] | (.annotations["org.opencontainers.image.ref.name"] // empty) as $image
+              | "\(.digest) \($image)"' "$index")
+            name="appliance-ng-$kind-$TAG"
+            jq -s --arg name "$name" --arg ns "https://github.com/$GITHUB_REPOSITORY/sbom/$name-$GITHUB_RUN_ID" '{
+                spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", name: $name,
+                documentNamespace: $ns, creationInfo: .[0].creationInfo,
+                packages: ([.[].packages[]?] | unique_by(.SPDXID)),
+                files: ([.[].files[]?] | unique_by(.SPDXID)),
+                hasExtractedLicensingInfos: ([.[].hasExtractedLicensingInfos[]?] | unique_by(.licenseId)),
+                relationships: ([.[].relationships[]?] | unique)
+              }' "$parts"/*.json >"out/sbom/$name.spdx.json"
+            rm -rf -- "$parts"
+          done
+
+      - name: Attest the SBOMs
+        env:
+          COSIGN_PRIVATE_KEY: ${{ needs.check.outputs.dry-run != 'true' && secrets.COSIGN_PRIVATE_KEY || '' }}
+          COSIGN_PASSWORD: ${{ needs.check.outputs.dry-run != 'true' && secrets.COSIGN_PASSWORD || '' }}
+        run: |
+          export COSIGN_PASSWORD="${COSIGN_PASSWORD:-}"
+          for kind in system platform; do
+            cosign attest --key "${SIGNING_KEY:-env://COSIGN_PRIVATE_KEY}" --tlog-upload=false --use-signing-config=false -y \
+              --type spdxjson --predicate "out/sbom/appliance-ng-$kind-$TAG.spdx.json" "$(cat "out/$ARCH/bundles/$kind.ref")"
+          done
+
+      # Exports each bundle as an offline file would be made, verifies it with the manager's verifier and the
+      # committed cosign.pub (the throw-away public key on a dry run), and fails when any signature or attestation carries a transparency log entry or a
+      # timestamp: that would mean it was published to a public log.
+      - name: Check the signatures
+        run: |
+          for kind in system platform; do
+            ref="$(cat "out/$ARCH/bundles/$kind.ref")"
+            cosign verify --key "${VERIFY_KEY:-cosign.pub}" --insecure-ignore-tlog=true "$ref" >/dev/null
+            dir="$(mktemp -d)/$kind"
+            oras copy -r "$REGISTRY/$kind:$TAG" --to-oci-layout "$dir:$TAG"
+            go run ./cmd/bundle verify ${VERIFY_KEY:+--key "$VERIFY_KEY"} --arch "$ARCH" "$dir"
+            blob() { echo "$dir/blobs/sha256/${1#sha256:}"; }
+            found=0
+            while read -r manifest; do
+              jq -e '.artifactType == "application/vnd.dev.sigstore.bundle.v0.3+json"' "$(blob "$manifest")" >/dev/null || continue
+              layer="$(jq -r '.layers[0].digest' "$(blob "$manifest")")"
+              if ! jq -e '(.verificationMaterial.tlogEntries // [] | length) == 0
+                  and (.verificationMaterial.timestampVerificationData.rfc3161Timestamps // [] | length) == 0' \
+                  "$(blob "$layer")" >/dev/null; then
+                echo "::error::The sigstore bundle $manifest of the $kind bundle has transparency log entries or timestamps."
+                exit 1
+              fi
+              found=$((found + 1))
+            done < <(jq -r '.manifests[] | select(.mediaType == "application/vnd.oci.image.manifest.v1+json") | .digest' \
+              "$dir/index.json")
+            if [ "$found" -lt 2 ]; then
+              echo "::error::The $kind bundle has $found sigstore bundles; want its signature and its SBOM attestation."
+              exit 1
+            fi
+            rm -rf -- "$dir"
+          done
+
+      - name: Upload the throw-away public key
+        if: needs.check.outputs.dry-run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dry-run-cosign-pub-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dry-run-key/cosign.pub
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload the SBOMs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-${{ matrix.arch }}
+          path: out/sbom/*.spdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # One image build per run: the long tests take the images-amd64 artifact of the images job, as artifact names
+  # must be unique within a run.
+  long-tests:
+    needs: [ check, images ]
+    if: needs.check.outputs.dry-run != 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/long-tests.yaml
+    with:
+      caller-images: true
+
+  release:
+    needs: [ check, images, bundles, long-tests ]
+    if: needs.check.outputs.dry-run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download the SBOMs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sbom-*
+          merge-multiple: true
+          path: sbom
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          # The releases list holds drafts too; tags/<tag> returns only published releases. A failed lookup fails.
+          drafts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == env.VERSION) | .draft')"
+          if grep -qx false <<<"$drafts"; then
+            echo "::error::The release $VERSION is published already; a re-run changes only a draft."
+            exit 1
+          elif grep -qx true <<<"$drafts"; then
+            gh release upload "$VERSION" --clobber sbom/*.spdx.json cosign.pub
+          else
+            gh release create "$VERSION" --draft --verify-tag --title "$VERSION" \
+              --notes-file "release-notes/$VERSION.md" sbom/*.spdx.json cosign.pub
+          fi

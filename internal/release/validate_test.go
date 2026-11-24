@@ -3,6 +3,7 @@ package release
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -39,7 +40,7 @@ func TestValidateFindsUnlistedImage(t *testing.T) {
 		Addons:         []AddonFile{{Name: "app", File: "app.yaml", SHA256: hash(workload)}},
 	}
 
-	errs := Validate(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}})
+	errs := contentErrors(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}})
 
 	if len(errs) != 3 {
 		t.Fatalf("want 3 errors, got %v", errs)
@@ -64,7 +65,7 @@ func TestValidateAcceptsListedImages(t *testing.T) {
 		},
 	}
 
-	if errs := Validate(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}}); len(errs) != 0 {
+	if errs := contentErrors(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}}); len(errs) != 0 {
 		t.Fatalf("want no errors, got %v", errs)
 	}
 }
@@ -72,7 +73,7 @@ func TestValidateAcceptsListedImages(t *testing.T) {
 func TestValidateChecksAddonHash(t *testing.T) {
 	m := &Manifest{Addons: []AddonFile{{Name: "app", File: "app.yaml", SHA256: "deadbeef"}}}
 
-	errs := Validate(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}})
+	errs := contentErrors(m, fstest.MapFS{"app.yaml": {Data: []byte(workload)}})
 
 	if !strings.Contains(joinErrors(errs), "app.yaml") || !strings.Contains(joinErrors(errs), "sha256") {
 		t.Fatalf("want hash error, got %v", errs)
@@ -85,7 +86,7 @@ func TestValidateReportsMissingAndBrokenAddonFiles(t *testing.T) {
 		{Name: "bad", File: "bad.yaml", SHA256: hash("a: [")},
 	}}
 
-	errs := Validate(m, fstest.MapFS{"bad.yaml": {Data: []byte("a: [")}})
+	errs := contentErrors(m, fstest.MapFS{"bad.yaml": {Data: []byte("a: [")}})
 
 	if len(errs) != 2 {
 		t.Fatalf("want 2 errors, got %v", errs)
@@ -93,7 +94,7 @@ func TestValidateReportsMissingAndBrokenAddonFiles(t *testing.T) {
 }
 
 func TestValidatePassesWithoutAddons(t *testing.T) {
-	if errs := Validate(&Manifest{}, nil); len(errs) != 0 {
+	if errs := contentErrors(&Manifest{}, nil); len(errs) != 0 {
 		t.Fatalf("want no errors, got %v", errs)
 	}
 }
@@ -147,7 +148,7 @@ func TestValidateConnectorImagesListed(t *testing.T) {
 		},
 	}
 
-	errs := Validate(m, nil)
+	errs := contentErrors(m, nil)
 
 	if len(errs) != 2 {
 		t.Fatalf("want 2 errors, got %v", errs)
@@ -179,7 +180,7 @@ func TestValidateConnectorFields(t *testing.T) {
 			c.Name, c.Image, c.Digest = "conn", "registry.example/ilm/conn:1", "sha256:1"
 			m := &Manifest{Images: []Image{{Ref: c.Image, Digest: c.Digest}}, Connectors: []Connector{c}}
 
-			errs := Validate(m, nil)
+			errs := contentErrors(m, nil)
 
 			if tt.wantErr == "" {
 				if len(errs) != 0 {
@@ -208,14 +209,14 @@ func TestValidateAcceptsManagerImage(t *testing.T) {
 		ManagerImage: "appliance.invalid/manager:release",
 		Addons:       []AddonFile{{Name: "manager", File: "manager.yaml", SHA256: hash(managerWorkload)}},
 	}
-	if errs := Validate(m, fstest.MapFS{"manager.yaml": {Data: []byte(managerWorkload)}}); len(errs) != 0 {
+	if errs := contentErrors(m, fstest.MapFS{"manager.yaml": {Data: []byte(managerWorkload)}}); len(errs) != 0 {
 		t.Fatalf("want no errors, got %v", errs)
 	}
 }
 
 func TestValidateReportsUnusedManagerImage(t *testing.T) {
 	m := &Manifest{ManagerImage: "appliance.invalid/manager:other"}
-	errs := Validate(m, fstest.MapFS{})
+	errs := contentErrors(m, fstest.MapFS{})
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "manager image appliance.invalid/manager:other is used by no add-on") {
 		t.Fatalf("errors = %v, want the unused manager image", errs)
 	}
@@ -223,11 +224,27 @@ func TestValidateReportsUnusedManagerImage(t *testing.T) {
 
 func TestValidateChecksTheChartPins(t *testing.T) {
 	m := &Manifest{Charts: []Chart{{Name: "repo", File: "charts/repo-1.tgz", SHA256: hash("chart")}}}
-	if errs := Validate(m, fstest.MapFS{"charts/repo-1.tgz": {Data: []byte("chart")}}); len(errs) != 0 {
+	if errs := contentErrors(m, fstest.MapFS{"charts/repo-1.tgz": {Data: []byte("chart")}}); len(errs) != 0 {
 		t.Fatalf("pinned chart refused: %v", errs)
 	}
-	errs := Validate(m, fstest.MapFS{"charts/repo-1.tgz": {Data: []byte("other")}})
+	errs := contentErrors(m, fstest.MapFS{"charts/repo-1.tgz": {Data: []byte("other")}})
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "charts/repo-1.tgz") {
 		t.Fatalf("errors %v, want the changed chart", errs)
+	}
+}
+
+// contentErrors is Validate without the bundle and compatibility checks.
+func contentErrors(m *Manifest, addons fs.FS) []error {
+	errs, _ := validateContent(m, addons)
+	return errs
+}
+
+func TestImagesIn(t *testing.T) {
+	data := []byte("apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n        - image: hub.omnitrustregistry.com/ilm/operator:1.1.0\n")
+
+	got, err := ImagesIn(data)
+
+	if err != nil || len(got) != 1 || got[0] != "hub.omnitrustregistry.com/ilm/operator:1.1.0" {
+		t.Fatalf("ImagesIn = %v, %v", got, err)
 	}
 }

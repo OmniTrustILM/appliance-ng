@@ -14,6 +14,7 @@ import (
 // Manifest is the content of release.yaml.
 type Manifest struct {
 	Version        string           `json:"version"`
+	Compatibility  Compatibility    `json:"compatibility"`
 	Talos          TalosPin         `json:"talos"`
 	Platform       PlatformDefaults `json:"platform"`
 	ImplicitImages []string         `json:"implicitImages,omitempty"`
@@ -25,6 +26,14 @@ type Manifest struct {
 	Charts     []Chart     `json:"charts,omitempty"`
 	Images     []Image     `json:"images"`
 	Connectors []Connector `json:"connectors,omitempty"`
+}
+
+// Compatibility states what the release works with.
+type Compatibility struct {
+	// Operator is the range of ILM operator versions the release supports, such as ">=1.1.0 <2.0.0".
+	Operator string `json:"operator"`
+	// MinAppliance is the oldest appliance release that can update to this one.
+	MinAppliance string `json:"minAppliance"`
 }
 
 // Chart is a Helm chart archive the manager renders as templates, never installed as a Helm release.
@@ -60,6 +69,8 @@ type Image struct {
 	// Ref is the reference exactly as the manifests write it; it may carry a digest.
 	Ref    string `json:"ref"`
 	Digest string `json:"digest"`
+	// Bundle is the update bundle the image travels in, BundleSystem or BundlePlatform.
+	Bundle string `json:"bundle"`
 	// Arches limits the image to the listed architectures; empty means all.
 	Arches []string `json:"arches,omitempty"`
 }

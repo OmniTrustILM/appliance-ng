@@ -1,4 +1,4 @@
-.PHONY: addons images test lint boot-test generate manifests api-gen web
+.PHONY: addons images bundles test lint boot-test generate manifests api-gen web
 
 ENVTEST_K8S_VERSION ?= 1.37.x
 CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@v0.23.0
@@ -14,6 +14,10 @@ images:
 	./build/installer.sh
 	./build/cache.sh
 	./build/media.sh
+
+# Builds the system and platform bundles of ARCH; build/bundles.sh describes PUSH, TAG and BUILT_IMAGES.
+bundles:
+	./build/bundles.sh
 
 # make boot-test MEDIA=iso|qcow2 ARCH=arm64|amd64 boots the image built by make images.
 MEDIA ?= iso

@@ -42,7 +42,11 @@ func TestRenderDefaultMatchesAddonsPlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, connectors, err := Render(defaultAppliance(), loadManifest(t), SecretNames{}, testNodeIP)
+	m := loadManifest(t)
+	a := defaultAppliance()
+	a.Spec.Platform.ILMVersion = m.Platform.ILMVersion
+
+	got, connectors, err := Render(a, m, SecretNames{}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
@@ -63,12 +67,14 @@ func TestRenderFallsBackToNodeAndManifestDefaults(t *testing.T) {
 	a.Spec.Platform = nil
 	a.Spec.Node.HostName = "ilm.example.com"
 
-	got, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+	m := loadManifest(t)
+
+	got, _, err := Render(a, m, SecretNames{}, testNodeIP)
 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Spec.Version != "2.20.0" || got.Spec.Common.HostName != "ilm.example.com" {
+	if got.Spec.Version != m.Platform.ILMVersion || got.Spec.Common.HostName != "ilm.example.com" {
 		t.Fatalf("version %q host %q", got.Spec.Version, got.Spec.Common.HostName)
 	}
 }

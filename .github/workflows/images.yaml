@@ -7,6 +7,22 @@ on:
         description: Push the intermediate images to GHCR and keep the images as artifacts.
         type: boolean
         default: false
+      keep-images:
+        description: Keep the amd64 and arm64 images as artifacts without publishing them.
+        type: boolean
+        default: false
+      boot:
+        description: "quick runs the boot test with the browser test on the amd64 ISO; none skips it."
+        type: string
+        default: quick
+      bundles:
+        description: Also build the unsigned system and platform bundles and keep them with the images.
+        type: boolean
+        default: false
+      arches:
+        description: JSON array of the architectures to build.
+        type: string
+        default: '["amd64","arm64"]'
 
 defaults:
   run:
@@ -15,16 +31,12 @@ defaults:
 jobs:
   images:
     name: images (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        arch: ${{ fromJSON(inputs.arches) }}
     env:
       ARCH: ${{ matrix.arch }}
       REGISTRY: ${{ inputs.publish && 'ghcr.io/omnitrustilm/appliance-ng' || 'localhost:5005' }}
@@ -110,20 +122,24 @@ jobs:
       - name: Build images
         run: make images ARCH="$ARCH" REGISTRY="$REGISTRY"
 
+      - name: Build bundles
+        if: inputs.bundles
+        run: make bundles ARCH="$ARCH"
+
       # The boot test answers the wizard and changes settings in Chromium; the browser leaves no trace, video or
       # screenshot to upload. Only lock-file packages run here, after the registry log-in: CI type-checks the test
       # and checks its licences.
       - name: Install the browser test
-        if: matrix.arch == 'amd64'
+        if: matrix.arch == 'amd64' && inputs.boot == 'quick'
         working-directory: test/e2e
         run: |
           npm ci --ignore-scripts
           ./node_modules/.bin/playwright install --with-deps chromium
 
-      # Two VMs one after the other: the second restores the first one's backup.
+      # The restore run, which boots a second VM, is in long-tests.yaml.
       - name: Boot test
-        if: matrix.arch == 'amd64'
-        run: E2E=1 RESTORE=1 make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
+        if: matrix.arch == 'amd64' && inputs.boot == 'quick'
+        run: E2E=1 make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
 
       - name: Upload failure logs
         if: failure()
@@ -136,8 +152,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
-      - name: Upload images
+      # The digests the build pushed, so that a release bundles exactly these images even when the tags move on.
+      - name: Upload the pushed digests
         if: inputs.publish
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ matrix.arch }}
+          path: |
+            out/${{ matrix.arch }}/installer.digest
+            out/${{ matrix.arch }}/manager.digest
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload images
+        if: inputs.publish || inputs.keep-images
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: images-${{ matrix.arch }}
@@ -145,4 +173,5 @@ jobs:
             out/${{ matrix.arch }}/*.iso
             out/${{ matrix.arch }}/*.qcow2
             out/${{ matrix.arch }}/SHA256SUMS
+            out/${{ matrix.arch }}/bundles/
           retention-days: 3

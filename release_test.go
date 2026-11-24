@@ -1,6 +1,7 @@
 package appliance
 
 import (
+	"os"
 	"slices"
 	"testing"
 
@@ -40,5 +41,38 @@ func TestCacheListHasCBOMImages(t *testing.T) {
 	}
 	if chart.File != "charts/cbom-repository-1.2.0.tgz" || chart.SHA256 == "" {
 		t.Errorf("chart %s = %+v, want the vendored 1.2.0 archive with its SHA-256", cbom.ChartName, chart)
+	}
+}
+
+func TestReleaseManifestIsValid(t *testing.T) {
+	m, err := release.Parse(ReleaseManifest, "release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Compatibility.Operator != ">=1.1.0 <2.0.0" || m.Compatibility.MinAppliance != "0.1.0" {
+		t.Errorf("compatibility = %+v", m.Compatibility)
+	}
+	for _, err := range release.Validate(m, os.DirFS("addons")) {
+		t.Error(err)
+	}
+}
+
+func TestBundlesCarry3aImages(t *testing.T) {
+	m, err := release.Parse(ReleaseManifest, "release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := func(kind string) []string {
+		var refs []string
+		for _, img := range m.BundleImages(kind, "amd64") {
+			refs = append(refs, img.Ref)
+		}
+		return refs
+	}
+	if !slices.Contains(refs(release.BundleSystem), cbom.StoreImage) {
+		t.Errorf("the system bundle lacks %s", cbom.StoreImage)
+	}
+	if !slices.Contains(refs(release.BundlePlatform), cbom.RepositoryImage) {
+		t.Errorf("the platform bundle lacks %s", cbom.RepositoryImage)
 	}
 }
