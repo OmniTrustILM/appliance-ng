@@ -23,8 +23,12 @@ const (
 	markerGroup = "restore-marker"
 	groupsPath  = "/api/v1/groups"
 	// tokenPath is the token endpoint of the ILM realm of the managed Keycloak, behind the ILM edge.
-	tokenPath   = "/kc/realms/ilm/protocol/openid-connect/token"
-	ilmClientID = "ilm"
+	tokenPath = "/kc/realms/ilm/protocol/openid-connect/token"
+	// authPath is the authorization endpoint of the same realm, and loginCallbackPath the path of the redirect URI
+	// ILM signs in with.
+	authPath          = "/kc/realms/ilm/protocol/openid-connect/auth"
+	loginCallbackPath = "/api/login/oauth2/code/internal"
+	ilmClientID       = "ilm"
 	// The Secret in which the ILM operator keeps the secret of the ILM client of Keycloak.
 	oidcNamespace = "ilm"
 	oidcSecret    = "ilm-oidc-client"
@@ -87,7 +91,7 @@ func checkAfterRestore(ctx context.Context, ui *http.Client, o options, password
 			return err
 		}
 	}
-	if err := waitUntil(ctx, registerTimeout, func() error { return checkRestored(ctx, ui, o.uiURL, secret) }); err != nil {
+	if err := waitUntil(ctx, registerTimeout, func() error { return checkRestored(ctx, ui, o.uiURL, o.hostName, secret) }); err != nil {
 		return err
 	}
 	step("manager logs")
@@ -111,9 +115,10 @@ func createMarker(ctx context.Context, ui *http.Client, base string) error {
 	return nil
 }
 
-// checkRestored checks with the backup's administrator credential that ILM holds the marker group, and that the
-// ILM realm's token endpoint accepts the ILM client's secret and refuses another one.
-func checkRestored(ctx context.Context, ui *http.Client, base, secret string) error {
+// checkRestored checks with the backup's administrator credential that ILM holds the marker group, that the ILM
+// realm's token endpoint accepts the ILM client's secret and refuses another one, and that Keycloak takes the
+// redirect URI of the ILM host name host.
+func checkRestored(ctx context.Context, ui *http.Client, base, host, secret string) error {
 	step("marker group")
 	groups, err := listGroups(ctx, ui, base)
 	if err != nil {
@@ -140,7 +145,46 @@ func checkRestored(ctx context.Context, ui *http.Client, base, secret string) er
 		return fmt.Errorf("keycloak accepts another secret too (%s), so the check tells nothing", answer)
 	}
 	fmt.Printf("drive: keycloak refuses another secret (%s)\n", answer)
+	return checkRedirect(ctx, ui, base, host)
+}
+
+// checkRedirect checks that Keycloak takes the ILM client's redirect URI on the ILM host name host and refuses one on
+// another host name.
+func checkRedirect(ctx context.Context, ui *http.Client, base, host string) error {
+	step("Keycloak redirect URI")
+	accepted, status, err := redirectAccepted(ctx, ui, base, "https://"+host+loginCallbackPath)
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return fmt.Errorf("keycloak refuses the redirect URI of %s: HTTP %d", host, status)
+	}
+	fmt.Printf("drive: keycloak accepts the redirect URI of %s\n", host)
+	accepted, status, err = redirectAccepted(ctx, ui, base, "https://not-"+host+loginCallbackPath)
+	if err != nil {
+		return err
+	}
+	if accepted {
+		return fmt.Errorf("keycloak accepts the redirect URI of another host name too (HTTP %d), so the check tells nothing", status)
+	}
+	fmt.Printf("drive: keycloak refuses the redirect URI of another host name (HTTP %d)\n", status)
 	return nil
+}
+
+// redirectAccepted asks the authorization endpoint to sign in to the ILM client and come back to redirect, and tells
+// whether Keycloak took the redirect URI: it then shows its login page, and else answers that the redirect URI is
+// invalid with HTTP 400.
+func redirectAccepted(ctx context.Context, ui *http.Client, base, redirect string) (bool, int, error) {
+	query := url.Values{"client_id": {ilmClientID}, "response_type": {"code"}, "scope": {"openid"}, "redirect_uri": {redirect}}
+	status, _, err := ilmRequest(ctx, ui, http.MethodGet, base+authPath+"?"+query.Encode(), "", nil)
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		err = nil // a refused redirect URI is an answer
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	return status == http.StatusOK, status, nil
 }
 
 // clientSecretAccepted asks the token endpoint for a client_credentials token of the ILM client with secret and

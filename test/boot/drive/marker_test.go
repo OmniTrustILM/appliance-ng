@@ -9,13 +9,19 @@ import (
 	"testing"
 )
 
-const testClientSecret = "oidc-client-secret-61b7"
+const (
+	testClientSecret = "oidc-client-secret-61b7"
+	testILMHost      = "ilm-new.example.test"
+)
 
-// ilmServer models the ILM groups API and the Keycloak token endpoint as clientSecretAccepted expects them.
+// ilmServer models the ILM groups API and the Keycloak token and authorization endpoints as clientSecretAccepted and
+// redirectAccepted expect them. Keycloak takes the redirect URI of redirectHost, of any host with anyRedirect.
 type ilmServer struct {
 	groups       []string
 	acceptsAll   bool
 	refusesRight bool
+	redirectHost string
+	anyRedirect  bool
 }
 
 func (s *ilmServer) serve(t *testing.T) *httptest.Server {
@@ -50,6 +56,18 @@ func (s *ilmServer) serve(t *testing.T) *httptest.Server {
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(answer)
 	})
+	mux.HandleFunc("GET "+authPath, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("client_id") != ilmClientID || q.Get("response_type") != "code" {
+			t.Errorf("authorization request for client %q response type %q", q.Get("client_id"), q.Get("response_type"))
+		}
+		if !s.anyRedirect && q.Get("redirect_uri") != "https://"+s.redirectHost+loginCallbackPath {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("Invalid parameter: redirect_uri"))
+			return
+		}
+		_, _ = w.Write([]byte("<form id=\"kc-form-login\"></form>"))
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -74,17 +92,19 @@ func TestCreateMarker(t *testing.T) {
 }
 
 func TestDriveILMMarkerCheckNeverPrintsSecrets(t *testing.T) {
-	s := &ilmServer{groups: []string{"other", markerGroup}}
+	s := &ilmServer{groups: []string{"other", markerGroup}, redirectHost: testILMHost}
 	srv := s.serve(t)
 	var err error
-	out := captureStdout(t, func() { err = checkRestored(context.Background(), srv.Client(), srv.URL, testClientSecret) })
+	out := captureStdout(t, func() {
+		err = checkRestored(context.Background(), srv.Client(), srv.URL, testILMHost, testClientSecret)
+	})
 	if err != nil {
 		t.Fatalf("checkRestored = %v\n%s", err, out)
 	}
 	if strings.Contains(out, testClientSecret) {
 		t.Errorf("drive printed the client secret:\n%s", out)
 	}
-	for _, want := range []string{markerGroup, "accepts", "refuses"} {
+	for _, want := range []string{markerGroup, "accepts", "refuses", "redirect URI of " + testILMHost} {
 		if !strings.Contains(out, want) {
 			t.Errorf("drive printed no %q:\n%s", want, out)
 		}
@@ -93,14 +113,18 @@ func TestDriveILMMarkerCheckNeverPrintsSecrets(t *testing.T) {
 
 func TestCheckRestoredFails(t *testing.T) {
 	for name, s := range map[string]*ilmServer{
-		"no marker":                      {groups: []string{"other"}},
-		"Keycloak refuses the secret":    {groups: []string{markerGroup}, refusesRight: true},
-		"Keycloak tells no secret apart": {groups: []string{markerGroup}, acceptsAll: true},
+		"no marker":                       {groups: []string{"other"}, redirectHost: testILMHost},
+		"Keycloak refuses the secret":     {groups: []string{markerGroup}, refusesRight: true, redirectHost: testILMHost},
+		"Keycloak tells no secret apart":  {groups: []string{markerGroup}, acceptsAll: true, redirectHost: testILMHost},
+		"Keycloak keeps the old host":     {groups: []string{markerGroup}, redirectHost: "ilm-old.example.test"},
+		"Keycloak takes any redirect URI": {groups: []string{markerGroup}, anyRedirect: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := s.serve(t)
 			var err error
-			captureStdout(t, func() { err = checkRestored(context.Background(), srv.Client(), srv.URL, testClientSecret) })
+			captureStdout(t, func() {
+				err = checkRestored(context.Background(), srv.Client(), srv.URL, testILMHost, testClientSecret)
+			})
 			if err == nil {
 				t.Fatal("checkRestored passed")
 			}
