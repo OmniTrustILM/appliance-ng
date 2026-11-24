@@ -234,6 +234,13 @@ type CBOMSpec struct {
 // ExternalDatabase and ExternalMessaging use CredentialsUsernameKey and CredentialsPasswordKey.
 const CredentialsClientSecretKey = "clientSecret"
 
+// Keys of the Secret that ExternalIdentity.CredentialsRef names that hold the issuer and the client ID its client
+// secret was given for; the manager sends the client secret to ILM only with that issuer and client ID.
+const (
+	CredentialsIssuerKey   = "issuer"
+	CredentialsClientIDKey = "clientID"
+)
+
 // TLS modes of ExternalDatabase.TLSMode, as libpq and pgjdbc name them.
 const (
 	DatabaseTLSDisable    = "disable"

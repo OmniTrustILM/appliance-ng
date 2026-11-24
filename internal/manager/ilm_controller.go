@@ -45,6 +45,7 @@ var defaultScopes = []string{"openid", "profile", "email"}
 // reason is the fixed reason of the ILM client; its message is fixed, the error goes to the manager's log only.
 const (
 	reasonWaitingForPlatform = "WaitingForPlatform"
+	reasonCredentialsPending = "CredentialsPending"
 	messageILMFailed         = "applying the ILM settings failed, retrying; the manager log has the details"
 )
 
@@ -137,7 +138,13 @@ func (r *ILMReconciler) reconcile(ctx context.Context, a *v1alpha1.Appliance) (c
 		setCondition(a, v1alpha1.ConditionILMSettingsApplied, metav1.ConditionFalse, reasonWaitingForPlatform, "waiting for the platform to be ready")
 		return ctrl.Result{}, nil
 	}
-	if err := r.apply(ctx, a); err != nil {
+	err := r.apply(ctx, a)
+	if errors.Is(err, errCredentialsPending) {
+		setCondition(a, v1alpha1.ConditionILMSettingsApplied, metav1.ConditionFalse, reasonCredentialsPending,
+			"waiting for the client secret of the identity provider's issuer and client ID")
+		return ctrl.Result{RequeueAfter: addonsRequeue}, nil
+	}
+	if err != nil {
 		reason := ilmclient.Reason(err)
 		log.FromContext(ctx).Error(err, "could not apply the ILM settings", "reason", reason)
 		setCondition(a, v1alpha1.ConditionILMSettingsApplied, metav1.ConditionFalse, ilmConditionReason(reason), messageILMFailed)
@@ -154,6 +161,10 @@ func ilmConditionReason(reason string) string {
 	}
 	return strings.ToUpper(reason[:1]) + reason[1:]
 }
+
+// errCredentialsPending is returned while the identity credentials Secret holds a client secret given for another
+// issuer or client ID than the spec's, as between the writes of a change of both.
+var errCredentialsPending = errors.New("the identity credentials are for another issuer or client ID")
 
 // cbomRepositoryURLSetting is ILM's platform setting of the CBOM repository's base URL.
 const cbomRepositoryURLSetting = "utils.cbomRepositoryUrl"
@@ -226,6 +237,9 @@ func (r *ILMReconciler) provider(ctx context.Context, a *v1alpha1.Appliance, id 
 	secret, err := secretValue(credentials, v1alpha1.CredentialsClientSecretKey)
 	if err != nil {
 		return ilmclient.OAuth2Provider{}, err
+	}
+	if string(credentials.Data[v1alpha1.CredentialsIssuerKey]) != id.Issuer || string(credentials.Data[v1alpha1.CredentialsClientIDKey]) != id.ClientID {
+		return ilmclient.OAuth2Provider{}, errCredentialsPending
 	}
 	scopes := id.Scopes
 	if len(scopes) == 0 {

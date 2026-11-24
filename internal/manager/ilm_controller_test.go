@@ -142,9 +142,13 @@ func ilmAppliance(t *testing.T, idp *httptest.Server, identity *v1alpha1.Externa
 	t.Helper()
 	ctx := context.Background()
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: idp.Certificate().Raw})
+	credentials := map[string][]byte{v1alpha1.CredentialsClientSecretKey: []byte("s3cret")}
+	if identity != nil {
+		credentials[v1alpha1.CredentialsIssuerKey], credentials[v1alpha1.CredentialsClientIDKey] = []byte(identity.Issuer), []byte(identity.ClientID)
+	}
 	for _, s := range []*corev1.Secret{
 		{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "trust"}, Data: map[string][]byte{"ca.crt": caPEM}},
-		{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "idp-credentials"}, Data: map[string][]byte{v1alpha1.CredentialsClientSecretKey: []byte("s3cret")}},
+		{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "idp-credentials"}, Data: credentials},
 		{ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: platform.TLSSecretName}, Data: map[string][]byte{corev1.TLSCertKey: caPEM}},
 	} {
 		if err := testClient.Create(ctx, s); err != nil {
@@ -293,6 +297,29 @@ func TestOAuth2ProviderNeedsTheClientSecret(t *testing.T) {
 	}
 	if slices.Contains(edge.methods(), http.MethodPut) {
 		t.Fatal("ILM was written to without the client secret")
+	}
+}
+
+// A client secret given for another issuer or client ID than the spec's is not sent to ILM.
+func TestOAuth2ProviderWaitsForItsCredentials(t *testing.T) {
+	idp, issuer := fakeIssuer(t, discoveryDoc)
+	ilmAppliance(t, idp, &v1alpha1.ExternalIdentity{Issuer: issuer, ClientID: "ilm", CredentialsRef: "idp-credentials"})
+	a := getAppliance(t)
+	a.Spec.Platform.Identity.ClientID = "other"
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	edge := newFakeEdge(t)
+	res, err := reconcileILM(&ILMReconciler{Client: testClient, APIReader: testClient, ILM: &fakeIdentity{edge: edge}})
+	if err != nil || res.RequeueAfter != addonsRequeue {
+		t.Fatalf("result %+v, %v", res, err)
+	}
+	if slices.Contains(edge.methods(), http.MethodPut) {
+		t.Fatal("ILM got a client secret given for another client")
+	}
+	c := condition(t, getAppliance(t), v1alpha1.ConditionILMSettingsApplied)
+	if c.Status != metav1.ConditionFalse || c.Reason != reasonCredentialsPending {
+		t.Fatalf("condition %+v", c)
 	}
 }
 

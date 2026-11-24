@@ -371,11 +371,14 @@ func (in *dependenciesInput) apply(p, current *v1alpha1.PlatformSpec) {
 // credentialsData is the data of the credentials Secret of the external kind of in: the given password or client
 // secret, or the stored one when it was stored for the same server, TLS setting and user name, as current chose it;
 // otherwise a field error asks for it. It holds the CA when kind verifies its server: the given one, else the stored
-// one.
+// one. The client secret of the identity provider is stored with the issuer and client ID it is given for.
 func (in *dependenciesInput) credentialsData(kind string, stored *corev1.Secret, current *v1alpha1.PlatformSpec) (map[string][]byte, *fieldError) {
 	data, ferr := in.caData(kind, stored)
 	if ferr != nil {
 		return nil, ferr
+	}
+	if id := in.spec.Identity; kind == v1alpha1.DependencyIdentity {
+		data[v1alpha1.CredentialsIssuerKey], data[v1alpha1.CredentialsClientIDKey] = []byte(id.Issuer), []byte(id.ClientID)
 	}
 	creds := in.credentials[kind]
 	_, key := dependencySecret(kind)

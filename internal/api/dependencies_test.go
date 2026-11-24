@@ -77,8 +77,12 @@ func TestWizardChoosesDependencies(t *testing.T) {
 		!p.Utils {
 		t.Fatalf("platform %+v", p)
 	}
-	if got := systemSecret(t, IdentitySecretName).Data[v1alpha1.CredentialsClientSecretKey]; string(got) != identitySecret {
+	stored := systemSecret(t, IdentitySecretName).Data
+	if string(stored[v1alpha1.CredentialsClientSecretKey]) != identitySecret {
 		t.Error("the client secret is not stored")
+	}
+	if string(stored[v1alpha1.CredentialsIssuerKey]) != p.Identity.Issuer || string(stored[v1alpha1.CredentialsClientIDKey]) != p.Identity.ClientID {
+		t.Error("the client secret is not stored with its issuer and client ID")
 	}
 	if e := lastEntry(h); !slices.Contains(e.Paths, "spec.platform") {
 		t.Errorf("audit paths %v", e.Paths)
