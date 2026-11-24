@@ -141,6 +141,18 @@ describe('RestorePage', () => {
     expect(screen.getByLabelText('Bucket')).toBeInTheDocument();
   });
 
+  it('keeps the other backup choice disabled while the restore is started', async () => {
+    let answer: (reply: readonly [number, unknown]) => void = () => undefined;
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary], [START]: () => new Promise((resolve) => { answer = resolve; }) });
+    renderPage();
+    await uploadAndCheck();
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore the backup' }));
+    expect(screen.getByRole('button', { name: 'Choose another backup' })).toBeDisabled();
+    answer([400, { code: 'invalid', field: 'confirm', message: 'Confirm that the backup replaces what the appliance holds now.' }]);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Choose another backup' })).toBeEnabled();
+  });
+
   it('shows why a target could not be listed', async () => {
     stubApi({ [STATE]: [200, waiting], [LIST]: [502, { code: 'authFailed', message: 'The target refused the credentials.' }] });
     renderPage();

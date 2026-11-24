@@ -61,7 +61,7 @@ export function SummaryStep({ summary, onStarted, onBack }: SummaryStepProps) {
         hint="The backup's ILM host name; enter another to restore ILM under a new name." />
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button busy={busy} disabled={!host.trim()} onClick={() => void start()}>Restore the backup</Button>
-        <Button variant="secondary" onClick={onBack}>Choose another backup</Button>
+        <Button variant="secondary" disabled={busy} onClick={onBack}>Choose another backup</Button>
       </div>
     </>
   );
