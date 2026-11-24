@@ -70,6 +70,7 @@ images:
   - { ref: "hub.omnitrustregistry.com/ilm/pyadcs-connector:1.2.1", digest: "sha256:ac80a82ce56b1655903ff899bf84c1e59f01e7eb1252e20455ad688904e1702c", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/scheduler:1.2.0", digest: "sha256:138cc67120689b7f1445519e5423a6b84f046797eee55b7129fb95707cbe668e", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/software-cryptography-provider:1.4.0", digest: "sha256:866afba118eaf3e8ede4074e8927054b686f4c12545e8782a5b28e9f99f15e5f", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/utils-service:1.0.2", digest: "sha256:d3fafd2b139d40932001e2cd186fc8b0013e9ef691e92eb5968179d73896fa01", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/webhook-notification-provider:1.1.0", digest: "sha256:1e5f210375f72992204a80d9b6bd1193324e82f2fdd82da98bddc16f5403b138", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/x509-compliance-provider:1.3.1", digest: "sha256:9ac8a1debb9168a9e2e860c1759edb6730b10fcbc933c9b6d9ce4930fa317e8e", bundle: platform }
   - { ref: "quay.io/jetstack/cert-manager-acmesolver:v1.20.2", digest: "sha256:cfa55e9c3dcfc6a3cba97575748c1549b04a30fd14d88a2fcb9e2dddef415e2f", bundle: system }

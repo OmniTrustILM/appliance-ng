@@ -26,6 +26,7 @@ images:
   - { ref: "hub.omnitrustregistry.com/ilm/opa:1.10.0-static", digest: "sha256:f62988ac3a11fd607e56d0bdcff7a8d815b315a2d45af5b158ffa3dae0e5fd10", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/operator:1.1.0", digest: "sha256:584678a6ffb25f4a048cfc6fbd2074413c81629a36cf9b7e727d37e2b492e7be", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/scheduler:1.2.0", digest: "sha256:6c386914928034e78036db561490be34b332f7c5198897e5ceaa508a53cc3b66", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/utils-service:1.0.2", digest: "sha256:34999baee242eb462a6a20a77db617482cb7844243d9ad2f425ff92bd8e1ca04", bundle: platform }
   - { ref: "rabbitmq:4.3.1-management", digest: "sha256:70e7f1e9aa15e33f200d55dd6523d31cbf6b7f1e295d8395c38621e01a75da1b", bundle: platform }
 connectors:
   - name: common-credential-provider

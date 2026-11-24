@@ -26,6 +26,7 @@ images:
   - { ref: "hub.omnitrustregistry.com/ilm/opa:1.10.0-static", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/operator:1.0.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/scheduler:1.1.1", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/utils-service:1.0.2", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "rabbitmq:4.3.1-management", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
 connectors:
   - name: common-credential-provider

@@ -24,7 +24,7 @@ const operatorAddon = "ilm-operator"
 
 // applianceComponents are the components of the operator's bill of materials that the appliance deploys.
 var applianceComponents = []string{
-	"core", "auth", "auth-opa-policies", "curl", "fe-administrator", "api-gateway", "keycloak-theme", "opa", "scheduler",
+	"core", "auth", "auth-opa-policies", "curl", "fe-administrator", "api-gateway", "keycloak-theme", "opa", "scheduler", "utils",
 }
 
 var releaseVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)

@@ -25,6 +25,7 @@ var bomImages = []string{
 	"hub.omnitrustregistry.com/ilm/keycloak-theme:0.1.4",
 	"hub.omnitrustregistry.com/ilm/opa:1.10.0-static",
 	"hub.omnitrustregistry.com/ilm/scheduler:1.2.0",
+	"hub.omnitrustregistry.com/ilm/utils-service:1.0.2",
 	"ghcr.io/cloudnative-pg/postgresql:18",
 	"docker.io/library/rabbitmq:4.3.1-management",
 }
@@ -110,6 +111,19 @@ func TestPlatformImagesCoverBOM(t *testing.T) {
 	errs := Validate(m, files)
 
 	assertOneError(t, errs, removed, "bill of materials")
+}
+
+func TestPlatformImagesCoverUtilsService(t *testing.T) {
+	m, files := validManifest()
+	const utils = "hub.omnitrustregistry.com/ilm/utils-service:1.0.2"
+	for i, img := range m.Images {
+		if img.Ref == utils {
+			m.Images = append(m.Images[:i], m.Images[i+1:]...)
+			break
+		}
+	}
+
+	assertOneError(t, Validate(m, files), utils, "bill of materials")
 }
 
 func TestPlatformImagesCoverBOMTagMismatch(t *testing.T) {
