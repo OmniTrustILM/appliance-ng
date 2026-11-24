@@ -130,6 +130,17 @@ func TestBOMImagesArePlatform(t *testing.T) {
 	assertOneError(t, Validate(m, files), bomImages[0], "platform")
 }
 
+func TestBOMImageListedWithDigestIsMatched(t *testing.T) {
+	m, files := validManifest()
+	m.Images[5].Ref = bomImages[0] + "@sha256:1234"
+
+	if errs := Validate(m, files); len(errs) != 0 {
+		t.Fatalf("want no errors for a digest-qualified bill of materials image, got %v", errs)
+	}
+	m.Images[5].Bundle = BundleSystem
+	assertOneError(t, Validate(m, files), bomImages[0], "platform")
+}
+
 func TestConnectorAndOperatorImagesArePlatform(t *testing.T) {
 	m, files := validManifest()
 	m.Images[0].Bundle = BundleSystem

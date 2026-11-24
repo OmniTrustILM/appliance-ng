@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -59,7 +60,7 @@ func validateBundles(m *Manifest, usage map[string][]string) []error {
 	required, reqErrs := requiredBundles(m, usage)
 	errs = append(errs, reqErrs...)
 	for _, img := range m.Images {
-		want, ok := required[normalize(img.Ref)]
+		want, ok := required[tagRef(img.Ref)]
 		if ok && img.Bundle != want.bundle && slices.Contains([]string{BundleSystem, BundlePlatform}, img.Bundle) {
 			errs = append(errs, fmt.Errorf("image %s is %s, so it belongs in the %s bundle, not %s", img.Ref, want.reason, want.bundle, img.Bundle))
 		}
@@ -82,32 +83,39 @@ func validateBundleNames(m *Manifest) []error {
 	return errs
 }
 
+// tagRef is the normalized reference without its digest, so a digest-qualified reference matches the tag-only
+// references of the bill of materials.
+func tagRef(ref string) string {
+	name, _, _ := strings.Cut(normalize(ref), "@")
+	return name
+}
+
 // requiredBundles maps each normalized image the add-ons, the connectors and the bill of materials use to the bundle
 // it must be in, and reports the images of the bill of materials the manifest does not list.
 func requiredBundles(m *Manifest, usage map[string][]string) (map[string]requirement, []error) {
 	var errs []error
 	listed := map[string]bool{}
 	for _, img := range m.Images {
-		listed[normalize(img.Ref)] = true
+		listed[tagRef(img.Ref)] = true
 	}
 	required := map[string]requirement{}
 	for ref, addons := range usage {
 		if slices.Contains(addons, operatorAddon) {
-			required[ref] = requirement{BundlePlatform, "an image of the " + operatorAddon + " add-on"}
+			required[tagRef(ref)] = requirement{BundlePlatform, "an image of the " + operatorAddon + " add-on"}
 		} else {
-			required[ref] = requirement{BundleSystem, "an add-on image"}
+			required[tagRef(ref)] = requirement{BundleSystem, "an add-on image"}
 		}
 	}
 	for _, c := range m.Connectors {
-		required[normalize(c.Image)] = requirement{BundlePlatform, "a connector image"}
+		required[tagRef(c.Image)] = requirement{BundlePlatform, "a connector image"}
 	}
 	bomRefs, err := BOMImageRefs(m.Platform.ILMVersion)
 	if err != nil {
 		errs = append(errs, err)
 	}
 	for _, ref := range bomRefs {
-		required[normalize(ref)] = requirement{BundlePlatform, "in the bill of materials of ILM " + m.Platform.ILMVersion}
-		if !listed[normalize(ref)] {
+		required[tagRef(ref)] = requirement{BundlePlatform, "in the bill of materials of ILM " + m.Platform.ILMVersion}
+		if !listed[tagRef(ref)] {
 			errs = append(errs, fmt.Errorf("image %s of the bill of materials of ILM %s is not listed in the manifest", ref, m.Platform.ILMVersion))
 		}
 	}
