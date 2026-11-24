@@ -214,22 +214,25 @@ func (l *Log) Page(before string, n int) (entries []Entry, next string, err erro
 	if err != nil {
 		return nil, "", err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	files, err := l.snapshot()
+	if err != nil {
+		return nil, "", err
+	}
+	defer closeAll(files)
 	var positions []cursor
-	for i := 0; i < MaxFiles && len(entries) <= n && n > 0; i++ {
-		id, err := fileID(l.path(i))
+	for i := 0; i < len(files) && len(entries) <= n && n > 0; i++ {
+		id, err := fileID(files[i])
 		if err != nil {
 			return nil, "", err
 		}
-		limit := int64(-1)
+		limit := files[i].size
 		if from != nil {
 			if id != from.file {
 				continue
 			}
-			limit, from = from.offset, nil
+			limit, from = min(from.offset, limit), nil
 		}
-		lines, offsets, err := readEntries(l.path(i), limit)
+		lines, offsets, err := readEntries(files[i], limit)
 		if err != nil {
 			return nil, "", err
 		}
@@ -239,6 +242,47 @@ func (l *Log) Page(before string, n int) (entries []Entry, next string, err erro
 		entries, next = entries[:n], positions[n-1].String()
 	}
 	return entries, next, nil
+}
+
+// snapshot is a file of the log, open, with its size when it was opened; a missing file has no file.
+type snapshot struct {
+	file *os.File
+	size int64
+}
+
+// snapshot opens every file of the log, newest first, as they are between two writes. Files are only appended to
+// and renamed, so they can be read up to their sizes without holding up the writes.
+func (l *Log) snapshot() ([]snapshot, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	files := make([]snapshot, 0, MaxFiles)
+	for i := range MaxFiles {
+		f, err := os.Open(l.path(i))
+		if errors.Is(err, os.ErrNotExist) {
+			files = append(files, snapshot{})
+			continue
+		}
+		if err != nil {
+			closeAll(files)
+			return nil, fmt.Errorf(errOpen, err)
+		}
+		info, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			closeAll(files)
+			return nil, fmt.Errorf(errRead, err)
+		}
+		files = append(files, snapshot{file: f, size: info.Size()})
+	}
+	return files, nil
+}
+
+func closeAll(files []snapshot) {
+	for _, s := range files {
+		if s.file != nil {
+			_ = s.file.Close()
+		}
+	}
 }
 
 // appendNewest appends the lines of the file id, newest first, with their positions at offsets, until entries holds
@@ -290,17 +334,12 @@ func parseCursor(s string) (cursor, error) {
 
 // fileID identifies a file by the start of the SHA-256 of its first line without the newline, which neither rotation
 // nor the ending of a torn first line changes; a missing or empty file has the zero identity.
-func fileID(path string) ([8]byte, error) {
+func fileID(s snapshot) ([8]byte, error) {
 	var id [8]byte
-	f, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
+	if s.file == nil {
 		return id, nil
 	}
-	if err != nil {
-		return id, fmt.Errorf(errOpen, err)
-	}
-	defer func() { _ = f.Close() }()
-	first, err := bufio.NewReader(f).ReadSlice('\n')
+	first, err := bufio.NewReader(io.NewSectionReader(s.file, 0, s.size)).ReadSlice('\n')
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
 		return id, fmt.Errorf(errRead, err)
 	}
@@ -311,27 +350,18 @@ func fileID(path string) ([8]byte, error) {
 	return id, nil
 }
 
-// readEntries returns the entries of a file, oldest first, with the offsets of their lines; with a limit of 0 or
-// more, only the lines that end before it. A missing file has none.
-func readEntries(path string, limit int64) ([]Entry, []int64, error) {
-	f, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
+// readEntries returns the entries of a file, oldest first, with the offsets of their lines, reading only the lines
+// that end before limit. A missing file has none.
+func readEntries(s snapshot, limit int64) ([]Entry, []int64, error) {
+	if s.file == nil {
 		return nil, nil, nil
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf(errOpen, err)
-	}
-	defer func() { _ = f.Close() }()
-	var r io.Reader = f
-	if limit >= 0 {
-		r = io.LimitReader(f, limit)
 	}
 	var (
 		entries []Entry
 		offsets []int64
 		offset  int64
 	)
-	scanner := bufio.NewScanner(r)
+	scanner := bufio.NewScanner(io.NewSectionReader(s.file, 0, limit))
 	scanner.Buffer(make([]byte, 0, 64<<10), MaxBytes)
 	for scanner.Scan() {
 		var e Entry

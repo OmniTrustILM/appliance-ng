@@ -436,12 +436,73 @@ func TestAuditPageBefore(t *testing.T) {
 	})
 }
 
+// A page taken while entries are appended and files rotate lists them newest first, and its cursor goes on from it.
+func TestAuditPageWhileWriting(t *testing.T) {
+	l, _ := open(t)
+	l.maxBytes = 2048
+	const total = 400
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		for i := range total {
+			if err := l.Write(entry(i)); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	})
+	for range 4 {
+		wg.Go(func() {
+			for range 50 {
+				checkPages(t, l)
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// checkPages pages through l, three entries at a time, and fails unless every entry is older than the one before.
+func checkPages(t *testing.T, l *Log) {
+	t.Helper()
+	var last *Entry
+	for next := ""; ; {
+		page, after, err := l.Page(next, 3)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, e := range page {
+			if last != nil && !e.Time.Before(last.Time) {
+				t.Errorf("%s listed after %s", e.Action, last.Action)
+				return
+			}
+			last = &e
+		}
+		if after == "" {
+			return
+		}
+		next = after
+	}
+}
+
+func pathID(path string) ([8]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return [8]byte{}, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return [8]byte{}, err
+	}
+	return fileID(snapshot{file: f, size: info.Size()})
+}
+
 func TestFileIDStableOnceATornFirstLineEnds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
 	if err := os.WriteFile(path, []byte(`{"user":"tor`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	torn, err := fileID(path)
+	torn, err := pathID(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +514,7 @@ func TestFileIDStableOnceATornFirstLineEnds(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = f.Close()
-	if ended, err := fileID(path); err != nil || ended != torn {
+	if ended, err := pathID(path); err != nil || ended != torn {
 		t.Errorf("fileID changed from %x to %x (%v) when the torn first line ended", torn, ended, err)
 	}
 }
