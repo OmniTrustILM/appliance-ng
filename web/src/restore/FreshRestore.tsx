@@ -6,6 +6,7 @@ import { KitForm } from './KitForm';
 import { inspectBackup, refusalOf } from './restoreApi';
 import { SourceStep } from './SourceStep';
 import { SummaryStep } from './SummaryStep';
+import { useLatest } from './useLatest';
 
 type Summary = components['schemas']['RestoreSummary'];
 
@@ -13,14 +14,18 @@ type Summary = components['schemas']['RestoreSummary'];
 export function FreshRestore({ onStarted }: Readonly<{ onStarted: () => void }>) {
   const [name, setName] = useState<string>();
   const [summary, setSummary] = useState<Summary>();
+  const begin = useLatest();
 
   function startOver() {
+    begin();
     setSummary(undefined);
     setName(undefined);
   }
 
   async function check(kit: File, passphrase: string) {
+    const latest = begin();
     const result = await attempt(() => inspectBackup('upload', name ?? '', kit, passphrase));
+    if (!latest()) return undefined;
     if (result?.data) setSummary(result.data);
     return refusalOf(result);
   }

@@ -99,6 +99,31 @@ describe('BackupsPage', () => {
     expect(screen.queryByRole('form', { name: `Restore ${name}` })).not.toBeInTheDocument();
   });
 
+  it('keeps Cancel disabled while the backup is checked and starts nothing once the form is gone', async () => {
+    const [name, other] = ['appliance-20261120T020000Z-1.0.0.ilmbackup', 'appliance-20261119T020000Z-1.0.0.ilmbackup'];
+    let answer: (reply: readonly [number, unknown]) => void = () => undefined;
+    const { sent } = stubApi({
+      [BACKUPS]: [200, backups()],
+      'POST /appliance/api/v1/restore/inspect': () => new Promise((resolve) => { answer = resolve; }),
+      'POST /appliance/api/v1/restore/start': [202],
+    });
+    render(<BackupsPage />);
+    await userEvent.click(await screen.findByRole('button', { name: `Restore ${name}` }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restore' }));
+    const form = screen.getByRole('form', { name: `Restore ${name}` });
+    await userEvent.upload(within(form).getByLabelText(/recovery kit/i), new File(['kit'], 'kit.tar.age'));
+    await userEvent.type(within(form).getByLabelText('Passphrase'), 'the kit passphrase');
+    await userEvent.click(within(form).getByRole('button', { name: 'Restore the backup' }));
+    await vi.waitFor(() => expect(sent['POST /appliance/api/v1/restore/inspect']).toHaveLength(1));
+    expect(within(form).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: `Restore ${other}` }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Restore' }));
+    expect(screen.queryByRole('form', { name: `Restore ${name}` })).not.toBeInTheDocument();
+    answer([200, { inspection: 'check-1', backup: name, inPlace: true }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sent['POST /appliance/api/v1/restore/start']).toBeUndefined();
+  });
+
   it('reads the backups again until the running one has ended', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
     let reads = 0;

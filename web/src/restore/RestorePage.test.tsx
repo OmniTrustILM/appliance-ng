@@ -106,6 +106,16 @@ describe('RestorePage', () => {
     expect(await screen.findByText('old-node')).toBeInTheDocument();
   });
 
+  it('keeps the other backup choice disabled while the backup is checked', async () => {
+    let answer: (reply: readonly [number, unknown]) => void = () => undefined;
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: () => new Promise((resolve) => { answer = resolve; }) });
+    renderPage();
+    await uploadAndCheck();
+    expect(screen.getByRole('button', { name: 'Choose another backup' })).toBeDisabled();
+    answer([200, summary]);
+    expect(await screen.findByText('old-node')).toBeInTheDocument();
+  });
+
   it('shows why a target could not be listed', async () => {
     stubApi({ [STATE]: [200, waiting], [LIST]: [502, { code: 'authFailed', message: 'The target refused the credentials.' }] });
     renderPage();

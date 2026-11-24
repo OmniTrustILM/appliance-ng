@@ -7,6 +7,7 @@ import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { basePath } from '../../base';
 import { KitForm } from '../../restore/KitForm';
 import { inspectBackup, refusalOf, restoreTimeoutMs } from '../../restore/restoreApi';
+import { useLatest } from '../../restore/useLatest';
 import { attempt } from '../../setup/failure';
 
 type Backup = components['schemas']['BackupRecord'];
@@ -26,11 +27,13 @@ export function RestoreConfirmation({ backup, onConfirm, onCancel }: Readonly<{ 
 /** Restores a local backup in place with the recovery kit, once its restore was confirmed. */
 export function InPlaceRestore({ backup, onCancel }: Readonly<{ backup: Backup; onCancel: () => void }>) {
   const [started, setStarted] = useState(false);
+  const begin = useLatest();
 
   async function restore(kit: File, passphrase: string) {
+    const latest = begin();
     const checked = await attempt(() => inspectBackup('local', backup.name, kit, passphrase));
     const refused = refusalOf(checked);
-    if (refused || !checked?.data) return refused;
+    if (refused || !checked?.data || !latest()) return refused;
     const body = { inspection: checked.data.inspection, inPlace: true, confirm: true };
     const failed = refusalOf(await attempt(() => api.POST('/restore/start', { body, signal: timeoutSignal(restoreTimeoutMs) })));
     if (!failed) setStarted(true);

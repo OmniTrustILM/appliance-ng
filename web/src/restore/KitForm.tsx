@@ -13,7 +13,8 @@ type KitFormProps = Readonly<{
   children?: ReactNode;
 }>;
 
-/** Asks for the recovery kit and its passphrase; the passphrase is cleared after each attempt. */
+/** Asks for the recovery kit and its passphrase; the passphrase is cleared after each attempt. The other actions in
+ * children wait while an attempt runs. */
 export function KitForm({ label, submitLabel, onSubmit, children }: KitFormProps) {
   const [kit, setKit] = useState<File>();
   const [passphrase, setPassphrase] = useState('');
@@ -40,7 +41,7 @@ export function KitForm({ label, submitLabel, onSubmit, children }: KitFormProps
         onChange={(event) => setPassphrase(event.target.value)} error={atPassphrase ? refusal.message : undefined} />
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button type="submit" busy={busy} disabled={!kit || passphrase === ''}>{submitLabel}</Button>
-        {children}
+        <fieldset disabled={busy} className="contents">{children}</fieldset>
       </div>
     </form>
   );
