@@ -102,9 +102,9 @@ func (r *HandoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 
 // deleteInvalid deletes a hand-over Secret that holds no valid hand-over file: it cannot be imported, and it may hold
 // a password hash and a TOTP seed. The log and the Event name the fixed reason only, never the content, and only
-// when this reconcile deleted the Secret.
+// when this reconcile deleted the Secret. A Secret changed since it was read conflicts and is read again.
 func (r *HandoverReconciler) deleteInvalid(ctx context.Context, secret *corev1.Secret, reason string) error {
-	err := r.Client.Delete(ctx, secret, client.Preconditions{UID: &secret.UID})
+	err := r.Client.Delete(ctx, secret, client.Preconditions{UID: &secret.UID, ResourceVersion: &secret.ResourceVersion})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

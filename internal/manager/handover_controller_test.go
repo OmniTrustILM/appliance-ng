@@ -627,6 +627,36 @@ func TestUnparseableHandoverGoneClaimsNoDeletion(t *testing.T) {
 	}
 }
 
+func TestUnparseableHandoverCorrectedMeanwhileKept(t *testing.T) {
+	cleanupHandover(t)
+	createHandoverSecret(t, []byte("{"))
+	r := newHandoverReconciler(testClient, &fakeTalos{mounted: true})
+	r.Client = interceptor.NewClient(watchClient(t), interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			corrected := &corev1.Secret{}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(obj), corrected); err != nil {
+				return err
+			}
+			corrected.Data = map[string][]byte{wizard.HandoverSecretKey: handoverJSON(t)}
+			if err := c.Update(ctx, corrected); err != nil {
+				return err
+			}
+			return c.Delete(ctx, obj, opts...)
+		},
+	})
+	if _, err := reconcileHandover(context.Background(), r); !apierrors.IsConflict(errors.Unwrap(err)) {
+		t.Fatalf("reconcile: %v, want a conflict", err)
+	}
+	if !handoverSecretExists(t) {
+		t.Error("the hand-over Secret corrected meanwhile was deleted")
+	}
+	select {
+	case e := <-r.Recorder.(*events.FakeRecorder).Events:
+		t.Errorf("event %q for a Secret this reconcile did not delete", e)
+	default:
+	}
+}
+
 func TestHandoverSetupWithManagerImports(t *testing.T) {
 	cleanupHandover(t)
 	skipNameValidation := true
