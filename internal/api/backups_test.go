@@ -570,7 +570,7 @@ func TestPostBackups(t *testing.T) {
 		t.Error("the runner's error text left the manager")
 	}
 
-	resetCluster(t)
+	deleteAppliance(t)
 	wantStatus(t, h.request(http.MethodPost, pathBackups, nil, s), http.StatusConflict)
 }
 
@@ -676,7 +676,7 @@ func TestBackupTargetTest(t *testing.T) {
 
 	f.testErr = backup.ErrNotFound
 	wantStatus(t, h.request(http.MethodPost, pathTargets+"/a/test", nil, s), http.StatusNotFound)
-	resetCluster(t)
+	deleteAppliance(t)
 	wantStatus(t, h.request(http.MethodPost, pathTargets+"/a/test", nil, s), http.StatusConflict)
 }
 
@@ -760,7 +760,7 @@ func TestBackupHostKey(t *testing.T) {
 			t.Errorf("failed scan audited as %+v", entries[len(entries)-1])
 		}
 	}
-	resetCluster(t)
+	deleteAppliance(t)
 	wantStatus(t, h.request(http.MethodPost, pathHostKey, body, s), http.StatusConflict)
 }
 

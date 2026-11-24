@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -130,13 +131,25 @@ func NewServer(deps Deps) *Server {
 	}
 	return &Server{
 		deps:          deps,
-		sessions:      auth.NewSessions(deps.Now),
+		sessions:      auth.NewSessions(deps.Now).WithUserCheck(accountExists(deps.Users)),
 		limiter:       auth.SignInLimiter(),
 		checkPassword: auth.CheckPassword,
 		hashSlots:     auth.NewHashSlots(maxPasswordChecks),
 		dummyHash:     newDummyHash(),
 		sendMail:      mail.SendTest,
 		checkSpace:    storage.Check,
+	}
+}
+
+// accountExists returns the check that keeps a session only while its user is a console account. A failed read
+// keeps the session, so that a passing error does not sign everyone out.
+func accountExists(users auth.UserStore) func(ctx context.Context, user string) bool {
+	return func(ctx context.Context, user string) bool {
+		if users == nil {
+			return true
+		}
+		_, err := users.Get(ctx, user)
+		return !errors.Is(err, auth.ErrUserNotFound)
 	}
 }
 

@@ -167,13 +167,19 @@ func newHarnessWith(t *testing.T, c client.Client, cfg *rest.Config) *harness {
 func resetCluster(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	if err := testClient.Delete(ctx, &v1alpha1.Appliance{ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName}}); err != nil && !apierrors.IsNotFound(err) {
-		t.Fatal(err)
-	}
+	deleteAppliance(t)
 	for _, ns := range []string{SystemNamespace, platform.Namespace} {
 		if err := testClient.DeleteAllOf(ctx, &corev1.Secret{}, client.InNamespace(ns)); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// deleteAppliance removes the Appliance and keeps the accounts, so that signed-in sessions stay valid.
+func deleteAppliance(t *testing.T) {
+	t.Helper()
+	if err := testClient.Delete(context.Background(), &v1alpha1.Appliance{ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName}}); err != nil && !apierrors.IsNotFound(err) {
+		t.Fatal(err)
 	}
 }
 

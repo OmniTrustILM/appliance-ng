@@ -35,6 +35,9 @@ const (
 // of each session token. It is safe for concurrent use.
 type Sessions struct {
 	now func() time.Time
+	// userExists, when set, tells whether a session's user is still an account; a session of a user that is not
+	// ends at its next request.
+	userExists func(ctx context.Context, user string) bool
 
 	mu       sync.Mutex
 	sessions map[[sha256.Size]byte]*session
@@ -61,6 +64,13 @@ func NewSessions(now func() time.Time) *Sessions {
 		now = time.Now
 	}
 	return &Sessions{now: now, sessions: map[[sha256.Size]byte]*session{}}
+}
+
+// WithUserCheck makes a session end at the first request after exists reports its user gone, such as when a
+// restore replaced the accounts. It returns s.
+func (s *Sessions) WithUserCheck(exists func(ctx context.Context, user string) bool) *Sessions {
+	s.userExists = exists
+	return s
 }
 
 // Create starts a session for user and returns its token, for the session
@@ -131,6 +141,19 @@ func (s *Sessions) Lookup(r *http.Request) (user, csrf string, ok bool) {
 		return "", "", false
 	}
 	key := sha256.Sum256([]byte(cookie.Value))
+	user, csrf, ok = s.touch(key, r.Header.Get(BackgroundRefreshHeader) != "1")
+	if ok && s.userExists != nil && !s.userExists(r.Context(), user) {
+		s.mu.Lock()
+		delete(s.sessions, key)
+		s.mu.Unlock()
+		return "", "", false
+	}
+	return user, csrf, ok
+}
+
+// touch returns the user and CSRF token of the live session under key and, if seen, marks it seen. It deletes an
+// expired session.
+func (s *Sessions) touch(key [sha256.Size]byte, seen bool) (user, csrf string, ok bool) {
 	now := s.now()
 
 	s.mu.Lock()
@@ -143,7 +166,7 @@ func (s *Sessions) Lookup(r *http.Request) (user, csrf string, ok bool) {
 		delete(s.sessions, key)
 		return "", "", false
 	}
-	if r.Header.Get(BackgroundRefreshHeader) != "1" {
+	if seen {
 		sess.lastSeen = now
 	}
 	return sess.user, sess.csrf, true
