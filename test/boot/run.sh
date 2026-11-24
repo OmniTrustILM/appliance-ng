@@ -39,6 +39,7 @@ READY_TIMEOUT=1500
 RESTORE_READY_TIMEOUT=3000
 LEAK_PATTERNS=(-e 'BEGIN ' -e 'PRIVATE KEY' -e 'client-key-data' -e 'AGE-SECRET-KEY-' -e 'INSERT INTO' -e 'COPY public.')
 CODE_ALPHABET=23456789ABCDEFGHJKLMNPQRSTUVWXYZ
+SECRET_ALPHABET=A-Za-z0-9
 PRESET_KEY=io.otilm.appliance.setup-code-sha256=
 ADMIN='admin'
 # QEMU's user network with restrict=on offers no router or DNS server by DHCP; wizard part 1 sets these.
@@ -138,14 +139,14 @@ draw_wizard_secrets() { # draw_wizard_secrets: draws the setup code and the admi
   # The code is drawn from the setup code alphabet in upper case, so the appliance's normalisation keeps it intact.
   code="$(random "$CODE_ALPHABET" 32)" || fail "could not draw the setup code"
   code_hash="$(sha256 "$code")"
-  password="$(random 'A-Za-z0-9' 24)" || fail "could not draw the password"
+  password="$(random "$SECRET_ALPHABET" 24)" || fail "could not draw the password"
 }
 
 draw_wizard_secrets
-kit_passphrase="$(random 'A-Za-z0-9' 24)" || fail "could not draw the kit passphrase"
-sftp_password="$(random 'A-Za-z0-9' 24)" || fail "could not draw the SFTP password"
-s3_secret="$(random 'A-Za-z0-9' 40)" || fail "could not draw the S3 secret key"
-p12_password="$(random 'A-Za-z0-9' 24)" || fail "could not draw the credential's password"
+kit_passphrase="$(random "$SECRET_ALPHABET" 24)" || fail "could not draw the kit passphrase"
+sftp_password="$(random "$SECRET_ALPHABET" 24)" || fail "could not draw the SFTP password"
+s3_secret="$(random "$SECRET_ALPHABET" 40)" || fail "could not draw the S3 secret key"
+p12_password="$(random "$SECRET_ALPHABET" 24)" || fail "could not draw the credential's password"
 
 # preset_hidden dumps every resource the node in maintenance mode serves without credentials and checks that none
 # holds the preset key or the code's hash.
