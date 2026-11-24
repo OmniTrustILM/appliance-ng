@@ -87,6 +87,24 @@ describe('SignInPage', () => {
     expect(sent['GET /appliance/api/v1/recovery-kit']).toBeUndefined();
   });
 
+  it('opens the restore page when a restore in place did not finish', async () => {
+    for (const restore of [
+      { backup: 'b.ilmbackup', inPlace: true, step: 'waitingForKit', pausedStep: 'database' },
+      { backup: 'b.ilmbackup', inPlace: true, step: 'database', message: 'failed' },
+    ]) {
+      stubApi({
+        'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+        'GET /appliance/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }],
+        'GET /appliance/api/v1/restore': [200, { setup: 'complete', restore }],
+        'GET /appliance/api/v1/recovery-kit': [200, { confirmed: false }],
+      });
+      const { unmount } = renderPage();
+      await fill();
+      expect(await screen.findByText('restore page')).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it('opens the status page when the recovery kit is confirmed', async () => {
     stubApi({
       'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
