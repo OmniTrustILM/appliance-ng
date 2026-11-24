@@ -52,6 +52,8 @@ var (
 		"Confirm that the backup replaces what the appliance holds now.")
 	answerBadILMHost = refusedField(codeInvalid, fieldILMHost,
 		"Enter a fully qualified host name, such as ilm.example.com, not an IP address.")
+	answerRenameInPlace = refusedField(codeInvalid, fieldILMHost,
+		"A restore in place keeps the backup's ILM host name; restore onto a fresh appliance to use another one.")
 	answerBadSource = refusedField(codeInvalid, partSource, "Choose an uploaded or a local backup.")
 	answerNoBackup  = refused(http.StatusNotFound, codeNotFound, "There is no backup of that name to restore.")
 	answerFreshOnly = refused(http.StatusConflict, codeSetup,
@@ -392,6 +394,9 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 	}
 	if host == in.summary.Manifest.ILMHostName {
 		host = ""
+	}
+	if host != "" && in.local {
+		return answerRenameInPlace, nil
 	}
 	if in.local {
 		a, err := s.appliance(ctx)

@@ -1859,7 +1859,7 @@ export interface components {
             inspection: string;
             /** @description Restore a local backup onto this appliance instead of onto a fresh one. */
             inPlace: boolean;
-            /** @description The ILM host name to set; left out, the backup's is kept. */
+            /** @description The ILM host name to set on a fresh restore; left out, the backup's is kept. A restore in place takes only the backup's. */
             ilmHostName?: string;
             /** @description Must be true; what the appliance holds now is replaced by the backup. */
             confirm: boolean;

@@ -1233,7 +1233,7 @@ type RestoreStart struct {
 	// Confirm Must be true; what the appliance holds now is replaced by the backup.
 	Confirm bool `json:"confirm"`
 
-	// IlmHostName The ILM host name to set; left out, the backup's is kept.
+	// IlmHostName The ILM host name to set on a fresh restore; left out, the backup's is kept. A restore in place takes only the backup's.
 	IlmHostName *string `json:"ilmHostName,omitempty"`
 
 	// InPlace Restore a local backup onto this appliance instead of onto a fresh one.

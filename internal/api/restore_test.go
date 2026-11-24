@@ -319,8 +319,14 @@ func TestInPlaceNeedsSameVersion(t *testing.T) {
 		t.Fatalf("restored in place over another ILM version: %+v", f.started)
 	}
 	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Versions.ILM = running })
-	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, InPlace: true}, s), http.StatusAccepted)
-	if len(f.started) != 1 || !f.started[0].opts.InPlace || f.started[0].file != filepath.Join(local, same) {
+	// A restore in place keeps the backup's ILM host name.
+	rec = h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, InPlace: true, IlmHostName: ptr("ilm.other.example.com")}, s)
+	wantCode(t, rec, http.StatusBadRequest, codeInvalid)
+	if !strings.Contains(rec.Body.String(), `"field":"ilmHostName"`) || len(f.started) != 0 {
+		t.Fatalf("a restore in place under another ILM host name: %s, started %+v", rec.Body, f.started)
+	}
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, InPlace: true, IlmHostName: ptr(restoreILMHost)}, s), http.StatusAccepted)
+	if len(f.started) != 1 || !f.started[0].opts.InPlace || f.started[0].opts.ILMHostName != "" || f.started[0].file != filepath.Join(local, same) {
 		t.Errorf("started %+v", f.started)
 	}
 
