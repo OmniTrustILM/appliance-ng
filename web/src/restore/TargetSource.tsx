@@ -9,6 +9,7 @@ import { updateOf, useTargetValues, type SetValue } from '../console/backups/tar
 import { formatBytes } from '../console/shared/format';
 import { attempt } from '../setup/failure';
 import { refusalOf, restoreTimeoutMs, type Refusal } from './restoreApi';
+import { useLatest } from './useLatest';
 
 type RestoreFile = components['schemas']['RestoreFile'];
 
@@ -25,32 +26,39 @@ export function TargetSource({ onReady }: Readonly<{ onReady: (name: string) => 
   const [chosen, setChosen] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<Refusal>();
+  const begin = useLatest();
   const atField = refusal?.field !== undefined && targetField.test(refusal.field);
   const errors = refusal?.field && atField ? { [refusal.field]: refusal.message } : {};
 
-  /** A listing belongs to the target it was read from. */
+  /** A listing belongs to the target it was read from; one still being read is dropped. */
   const set: SetValue = (key, value) => {
+    begin();
+    setBusy(false);
     setValue(key, value);
     setFiles(undefined);
     setChosen(undefined);
   };
 
   async function list() {
+    const latest = begin();
     setBusy(true);
     setRefusal(undefined);
     setFiles(undefined);
     setChosen(undefined);
     const result = await attempt(() => api.POST('/restore/list', { body: { target: updateOf(values) }, signal: timeoutSignal(slowRequestTimeoutMs) }));
+    if (!latest()) return;
     setBusy(false);
     setRefusal(refusalOf(result));
     if (result?.data) setFiles(result.data.files);
   }
 
   async function fetchBackup(name: string) {
+    const latest = begin();
     setBusy(true);
     setRefusal(undefined);
     const body = { target: updateOf(values), name };
     const refused = refusalOf(await attempt(() => api.POST('/restore/fetch', { body, signal: timeoutSignal(restoreTimeoutMs) })));
+    if (!latest()) return;
     setBusy(false);
     if (refused) return setRefusal(refused);
     onReady(name);

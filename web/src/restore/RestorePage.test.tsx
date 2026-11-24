@@ -106,6 +106,18 @@ describe('RestorePage', () => {
     expect(await screen.findByText('old-node')).toBeInTheDocument();
   });
 
+  it('drops a listing that arrives after the target was changed', async () => {
+    let answer: (reply: readonly [number, unknown]) => void = () => undefined;
+    stubApi({ [STATE]: [200, waiting], [LIST]: () => new Promise((resolve) => { answer = resolve; }) });
+    renderPage();
+    await userEvent.click(await screen.findByLabelText('Fetch it from a target'));
+    await userEvent.click(screen.getByRole('button', { name: 'List the backups' }));
+    await userEvent.type(screen.getByLabelText('Bucket'), 'other');
+    answer([200, { files: [{ name: backupName, sizeBytes: 2048, modified: '2026-11-01T02:01:00Z' }] }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByLabelText(new RegExp(backupName))).not.toBeInTheDocument();
+  });
+
   it('keeps the other backup choice disabled while the backup is checked', async () => {
     let answer: (reply: readonly [number, unknown]) => void = () => undefined;
     stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: () => new Promise((resolve) => { answer = resolve; }) });
