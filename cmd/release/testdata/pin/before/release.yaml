@@ -14,7 +14,7 @@ addons:
 images:
   # Comments and the order of the entries stay as they are.
   - { ref: "registry.k8s.io/pause:3.10.2", digest: "sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4", bundle: system }
-  - { ref: "ghcr.io/cloudnative-pg/postgresql:17", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "ghcr.io/cloudnative-pg/postgresql:18", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/auth-opa-policies:1.4.1", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/auth:1.7.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/common-credential-provider:1.4.0", digest: "sha256:714778d1507dfdfed7699702742522dbf8f8c20395ac2eba788f51b2b881e9d1", bundle: platform }
@@ -26,7 +26,7 @@ images:
   - { ref: "hub.omnitrustregistry.com/ilm/opa:1.10.0-static", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/operator:1.0.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
   - { ref: "hub.omnitrustregistry.com/ilm/scheduler:1.1.1", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
-  - { ref: "rabbitmq:4.2.0-management", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "rabbitmq:4.3.1-management", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
 connectors:
   - name: common-credential-provider
     displayName: Common Credential Provider

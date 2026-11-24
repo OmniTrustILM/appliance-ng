@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -30,6 +31,9 @@ const (
 	platformAddon       = "platform"
 	operatorManifestURL = "https://github.com/OmniTrustILM/operator/releases/download/v%s/ilm-operator.yaml"
 )
+
+// runtimeDependencies are the repositories whose versions the manager's runtime defaults name.
+var runtimeDependencies = []string{"ghcr.io/cloudnative-pg/postgresql", "index.docker.io/library/rabbitmq"}
 
 var (
 	refField       = regexp.MustCompile(`ref: "([^"]+)"`)
@@ -82,12 +86,15 @@ func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 		return err
 	}
 
-	source := fmt.Sprintf(operatorManifestURL, operator)
-	manifest, err := p.download(ctx, source)
+	refs, err := release.BOMImageRefs(ilm)
 	if err != nil {
 		return err
 	}
-	refs, err := release.BOMImageRefs(ilm)
+	if err := refuseDependencyChange(m, refs); err != nil {
+		return err
+	}
+	source := fmt.Sprintf(operatorManifestURL, operator)
+	manifest, err := p.download(ctx, source)
 	if err != nil {
 		return err
 	}
@@ -205,6 +212,28 @@ func addon(m *release.Manifest, name string) (release.AddonFile, error) {
 		}
 	}
 	return release.AddonFile{}, fmt.Errorf("release.yaml has no %s add-on", name)
+}
+
+// refuseDependencyChange refuses a bill of materials that moves PostgreSQL or RabbitMQ to another version: the
+// Platform the manager renders and the PostgreSQL image it runs name those versions in code.
+func refuseDependencyChange(m *release.Manifest, refs []string) error {
+	for _, ref := range refs {
+		next, err := name.ParseReference(ref)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(runtimeDependencies, next.Context().Name()) {
+			continue
+		}
+		for _, img := range m.Images {
+			listed, _, _ := strings.Cut(img.Ref, "@")
+			current, err := name.ParseReference(listed)
+			if err == nil && current.Context().Name() == next.Context().Name() && current.Name() != next.Name() {
+				return fmt.Errorf("the bill of materials moves %s to %s; update the runtime defaults in internal/platform and cmd/manager by hand first", listed, ref)
+			}
+		}
+	}
+	return nil
 }
 
 func refuseDowngrade(what, current, next string) error {

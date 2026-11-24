@@ -239,6 +239,39 @@ func TestPinNeedsAListedImage(t *testing.T) {
 	}
 }
 
+func TestPinRefusesDependencyVersionChange(t *testing.T) {
+	for _, tc := range []struct{ name, from, to string }{
+		{"postgresql", `"ghcr.io/cloudnative-pg/postgresql:18"`, `"ghcr.io/cloudnative-pg/postgresql:17"`},
+		{"rabbitmq", `"rabbitmq:4.3.1-management"`, `"rabbitmq:4.2.0-management"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := copyTree(t, "testdata/pin/before")
+			file := filepath.Join(root, "release.yaml")
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = bytes.Replace(data, []byte(tc.from), []byte(tc.to), 1)
+			if err := os.WriteFile(file, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			err = (pinner{transport: failing{}}).pin(t.Context(), root, "1.1.0", "2.20.0")
+
+			if err == nil || !strings.Contains(err.Error(), strings.Trim(tc.from, `"`)) || !strings.Contains(err.Error(), "by hand") {
+				t.Fatalf("err = %v, want a refused change to %s", err, tc.from)
+			}
+			got, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Error("release.yaml changed")
+			}
+		})
+	}
+}
+
 func TestCommands(t *testing.T) {
 	root := copyTree(t, "testdata/pin/before")
 	for _, tc := range []struct {
