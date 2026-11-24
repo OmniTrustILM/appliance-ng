@@ -6,6 +6,7 @@ import { FileDropField } from '../components/FileDropField';
 import { attempt } from '../setup/failure';
 import { refusalOf, uploadBackup } from './restoreApi';
 import { TargetSource } from './TargetSource';
+import { useLatest } from './useLatest';
 
 type OnReady = Readonly<{ onReady: (name: string) => void }>;
 
@@ -14,12 +15,16 @@ function UploadSource({ onReady }: OnReady) {
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const begin = useLatest();
 
+  /** An upload that finishes after another source was chosen is dropped. */
   async function upload() {
     if (!file) return;
+    const latest = begin();
     setBusy(true);
     setError(undefined);
     const refusal = refusalOf(await attempt(() => uploadBackup(file)));
+    if (!latest()) return;
     setBusy(false);
     if (refusal) return setError(refusal.message);
     onReady(file.name);

@@ -128,6 +128,19 @@ describe('RestorePage', () => {
     expect(await screen.findByText('old-node')).toBeInTheDocument();
   });
 
+  it('drops an upload that finishes after the target source was chosen', async () => {
+    let answer: (reply: readonly [number, unknown]) => void = () => undefined;
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: () => new Promise((resolve) => { answer = resolve; }) });
+    renderPage();
+    await userEvent.upload(await screen.findByLabelText(/^backup file/i), new File(['encrypted backup'], backupName));
+    await userEvent.click(screen.getByRole('button', { name: 'Upload the backup' }));
+    await userEvent.click(screen.getByLabelText('Fetch it from a target'));
+    answer([204, undefined]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByLabelText(/recovery kit/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Bucket')).toBeInTheDocument();
+  });
+
   it('shows why a target could not be listed', async () => {
     stubApi({ [STATE]: [200, waiting], [LIST]: [502, { code: 'authFailed', message: 'The target refused the credentials.' }] });
     renderPage();
