@@ -30,6 +30,10 @@ const (
 	operatorAddon       = "ilm-operator"
 	platformAddon       = "platform"
 	operatorManifestURL = "https://github.com/OmniTrustILM/operator/releases/download/v%s/ilm-operator.yaml"
+
+	releaseFile   = "release.yaml"
+	platformFile  = "addons/platform.yaml"
+	downloadsFile = "addons/src/downloads.txt"
 )
 
 // runtimeDependencies are the repositories whose versions the manager's runtime defaults name.
@@ -71,7 +75,7 @@ type pinner struct {
 // platform.ilmVersion, and the digest of each platform image the operator's bill of materials and manifest name.
 // It refuses to move either version backwards and writes nothing when any step fails.
 func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
-	m, err := release.Load(filepath.Join(root, "release.yaml"))
+	m, err := release.Load(filepath.Join(root, releaseFile))
 	if err != nil {
 		return err
 	}
@@ -105,21 +109,21 @@ func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 	refs = append(refs, operatorImages...)
 
 	files := map[string][]byte{"addons/ilm-operator.yaml": manifest}
-	for _, file := range []string{"release.yaml", "addons/platform.yaml", "addons/src/downloads.txt"} {
+	for _, file := range []string{releaseFile, platformFile, downloadsFile} {
 		if files[file], err = os.ReadFile(filepath.Join(root, file)); err != nil {
 			return err
 		}
 	}
-	if files["addons/platform.yaml"], err = editLine(files["addons/platform.yaml"], "the platform version",
+	if files[platformFile], err = editLine(files[platformFile], "the platform version",
 		specVersion.MatchString, func(line string) string { return specVersion.ReplaceAllString(line, `${1}"`+ilm+`"`) }); err != nil {
 		return err
 	}
-	if files["addons/src/downloads.txt"], err = editLine(files["addons/src/downloads.txt"], "the "+operatorAddon+" download",
+	if files[downloadsFile], err = editLine(files[downloadsFile], "the "+operatorAddon+" download",
 		func(line string) bool { return strings.HasPrefix(line, current.File+" ") },
 		func(string) string { return current.File + " " + source }); err != nil {
 		return err
 	}
-	if files["release.yaml"], err = p.editRelease(ctx, files, ilm, "v"+operator, source, refs); err != nil {
+	if files[releaseFile], err = p.editRelease(ctx, files, ilm, "v"+operator, source, refs); err != nil {
 		return err
 	}
 
@@ -154,7 +158,7 @@ func writeAll(root string, files map[string][]byte) error {
 
 // editRelease rewrites release.yaml line by line, so that its comments, layout and order stay as they are.
 func (p pinner) editRelease(ctx context.Context, files map[string][]byte, ilm, operator, source string, refs []string) ([]byte, error) {
-	data := files["release.yaml"]
+	data := files[releaseFile]
 	data, err := editLine(data, "the "+operatorAddon+" add-on", addonLine(operatorAddon), func(line string) string {
 		line = setField(line, "version", operator)
 		line = setField(line, "source", source)
@@ -164,7 +168,7 @@ func (p pinner) editRelease(ctx context.Context, files map[string][]byte, ilm, o
 		return nil, err
 	}
 	if data, err = editLine(data, "the "+platformAddon+" add-on", addonLine(platformAddon), func(line string) string {
-		return setField(setField(line, "version", ilm), "sha256", sum(files["addons/platform.yaml"]))
+		return setField(setField(line, "version", ilm), "sha256", sum(files[platformFile]))
 	}); err != nil {
 		return nil, err
 	}
