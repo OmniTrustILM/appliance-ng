@@ -73,7 +73,7 @@ type pinner struct {
 
 // pin rewrites, under root, the ilm-operator add-on (its file, entry and download line), the platform add-on and
 // platform.ilmVersion, and the digest of each platform image the operator's bill of materials and manifest name.
-// It refuses to move either version backwards and writes nothing when any step fails.
+// It refuses to move either version backwards and changes no file when a check, a download or a write fails.
 func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 	m, err := release.Load(filepath.Join(root, releaseFile))
 	if err != nil {
@@ -131,7 +131,7 @@ func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 }
 
 // writeAll writes every file to a temporary file next to it first and renames them into place only when all were
-// written, so that a failed write leaves the files as they were.
+// written, so that a failed write leaves the files as they were. A failed rename can leave earlier files replaced.
 func writeAll(root string, files map[string][]byte) error {
 	temps := map[string]string{}
 	defer func() {
