@@ -295,7 +295,7 @@ func TestDiscoveryChecked(t *testing.T) {
 }
 
 func TestProviderClientFollowsOnlyHTTPSRedirects(t *testing.T) {
-	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer plain.Close()
 	var idp *httptest.Server
 	idp = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
