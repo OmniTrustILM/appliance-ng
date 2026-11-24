@@ -141,6 +141,46 @@ func TestEnsureIdentityRenewsBeforeExpiry(t *testing.T) {
 	}
 }
 
+// busyBackups refuses while busy and otherwise runs what it is given.
+type busyBackups struct{ busy bool }
+
+func (b *busyBackups) Exclusive(run func() error) error {
+	if b.busy {
+		return errors.New("a backup is running")
+	}
+	return run()
+}
+
+func TestEnsureIdentityRenewsOnlyWhileNoBackupRuns(t *testing.T) {
+	ctx := context.Background()
+	adminCA := newTestCA(t, "admin-ca")
+	ilm := newFakeILM(t, adminCA)
+	id, c := newIdentity(t, adminCA, ilm, time.Now())
+	backups := &busyBackups{busy: true}
+	id.Backups = backups
+	if _, err := id.Ensure(ctx, ilm.edgeAddr(), testHost, ilm.roots); err != nil {
+		t.Fatal(err)
+	}
+	first := storedCertificate(t, identitySecret(t, c))
+
+	id.Now = func() time.Time { return first.NotAfter.Add(-29 * 24 * time.Hour) }
+	if _, err := id.Ensure(ctx, ilm.edgeAddr(), testHost, ilm.roots); err != nil {
+		t.Fatal(err)
+	}
+	s := identitySecret(t, c)
+	if !storedCertificate(t, s).Equal(first) || s.Data[PendingCertKey] != nil || slices.Contains(ilm.edgeRequests(), "PUT /api/v1/users/uuid-1") {
+		t.Fatal("renewed while a backup runs")
+	}
+
+	backups.busy = false
+	if _, err := id.Ensure(ctx, ilm.edgeAddr(), testHost, ilm.roots); err != nil {
+		t.Fatal(err)
+	}
+	if storedCertificate(t, identitySecret(t, c)).Equal(first) {
+		t.Fatal("not renewed once the backup ended")
+	}
+}
+
 func TestEnsureIdentityRefusedValidCertificateNeverRegisters(t *testing.T) {
 	ctx := context.Background()
 	adminCA := newTestCA(t, "admin-ca")

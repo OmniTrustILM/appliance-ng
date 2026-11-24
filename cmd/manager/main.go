@@ -154,9 +154,6 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err != nil {
 		return fmt.Errorf("create the Kubernetes client: %w", err)
 	}
-	if err := setupILMController(mgr, direct, cfg); err != nil {
-		return err
-	}
 	users := auth.NewSecretUserStore(direct, manager.SystemNamespace)
 	// One Talos client for the controllers and the API.
 	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
@@ -177,6 +174,9 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	s := services{mgr: mgr, direct: direct, audit: auditLog, log: log, external: backup.ExternalDumpers(direct, cfg, postgres)}
 	backups, restorer, err := newBackupAndRestore(ctx, s, rel, reconciler, data)
 	if err != nil {
+		return err
+	}
+	if err := setupILMController(mgr, direct, cfg, backups); err != nil {
 		return err
 	}
 
@@ -213,12 +213,15 @@ func addConsole(mgr crmanager.Manager, log *slog.Logger, listen string, handler 
 	return addRunnables(mgr, log, cert, console.NewServer(log, listen, console.Routes(handler), cert))
 }
 
-// setupILMController sets up the controller of ILM's settings with mgr; its identity is kept through direct.
-func setupILMController(mgr crmanager.Manager, direct client.Client, cfg *rest.Config) error {
+// setupILMController sets up the controller of ILM's settings with mgr; its identity is kept through direct and
+// renewed while backups runs none.
+func setupILMController(mgr crmanager.Manager, direct client.Client, cfg *rest.Config, backups *backup.Runner) error {
 	ilm := &manager.ILMReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
-		ILM:       &ilmclient.Identity{Client: direct, Forward: ilmclient.CoreForward(cfg, mgr.GetAPIReader()), Now: time.Now},
+		ILM: &ilmclient.Identity{
+			Client: direct, Forward: ilmclient.CoreForward(cfg, mgr.GetAPIReader()), Now: time.Now, Backups: backups,
+		},
 	}
 	if err := ilm.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the ILM controller: %w", err)

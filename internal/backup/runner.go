@@ -262,8 +262,8 @@ func (r *Runner) Busy() bool {
 	return r.running
 }
 
-// Exclusive runs admit, a restore's admission, while no backup runs or passes its checks, and refuses with ErrBusy
-// while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
+// Exclusive runs admit, a restore's admission or a renewal of the manager's ILM certificate, while no backup runs or
+// passes its checks, and refuses with ErrBusy while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
 func (r *Runner) Exclusive(admit func() error) error {
 	r.admission.Lock()
 	defer r.admission.Unlock()

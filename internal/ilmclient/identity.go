@@ -75,6 +75,14 @@ type Identity struct {
 	// Forward makes Core reachable as localhost and returns its base URL and a function that ends the forward.
 	Forward func(context.Context) (string, func(), error)
 	Now     func() time.Time
+	// Backups, when set, keeps a renewal apart from a backup, so that a backup never holds a certificate that its
+	// database no longer accepts.
+	Backups Exclusive
+}
+
+// Exclusive runs a function while no backup runs and refuses without running it while one does.
+type Exclusive interface {
+	Exclusive(run func() error) error
 }
 
 // identity is the content of the identity Secret.
@@ -158,13 +166,34 @@ func (i *Identity) invalid(cert, ca *x509.Certificate) string {
 	return ""
 }
 
-// renew replaces the certificate of the user when it expires within renewBefore and returns the client to use. The
-// new certificate is stored as pending before ILM is asked to take it, so that a crash at any point leaves both
-// certificates for settlePending to choose from.
+// renew replaces the certificate of the user when it expires within renewBefore and returns the client to use. While
+// a backup runs it keeps the stored certificate.
 func (i *Identity) renew(ctx context.Context, c *Client, id *identity, ca tls.Certificate, edge, ilmHost string, roots *x509.CertPool) (*Client, error) {
 	if i.Now().Before(id.cert.Leaf.NotAfter.Add(-renewBefore)) {
 		return c, nil
 	}
+	if i.Backups == nil {
+		return i.replace(ctx, c, id, ca, edge, ilmHost, roots)
+	}
+	ran, renewed := false, c
+	err := i.Backups.Exclusive(func() error {
+		ran = true
+		var err error
+		renewed, err = i.replace(ctx, c, id, ca, edge, ilmHost, roots)
+		return err
+	})
+	if !ran {
+		// The stored certificate is still valid; a later pass renews it.
+		log.FromContext(ctx).Info("a backup is running; the manager's ILM certificate is renewed after it", "user", id.userUUID)
+		return c, nil
+	}
+	return renewed, err
+}
+
+// replace issues a new certificate for the user of id and has ILM take it. The new certificate is stored as pending
+// before ILM is asked to take it, so that a crash at any point leaves both certificates for settlePending to choose
+// from.
+func (i *Identity) replace(ctx context.Context, c *Client, id *identity, ca tls.Certificate, edge, ilmHost string, roots *x509.CertPool) (*Client, error) {
 	cert, err := i.newCertificate(ca)
 	if err != nil {
 		return nil, err
