@@ -28,7 +28,9 @@ type Holder interface {
 
 // Hold returns h itself, which nothing needs to release.
 func (h Holds) Hold(context.Context) (Holds, func(), error) {
-	return h, func() {}, nil
+	return h, func() {
+		// Fixed holds take no lock, so there is nothing to release.
+	}, nil
 }
 
 // Progress says how far a pass got: Step is the first step that is not ready, or the last step when Done.
