@@ -15,6 +15,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
@@ -467,4 +470,40 @@ func TestImagesStopsWhenAsked(t *testing.T) {
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
 	os.Exit(m.Run())
+}
+
+func TestBuildVerifyKeepsAliasedImages(t *testing.T) {
+	r := newTestRelease(t)
+	key := newKey(t)
+	first := r.pushImage(t, r.host+"/busybox:1.37", "amd64")
+	img, err := remote.Image(mustParse(t, first.Ref))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{r.host + "/busybox:latest", r.host + "/mirror/busybox:1.37"} {
+		if err := remote.Write(mustParse(t, ref), img); err != nil {
+			t.Fatal(err)
+		}
+		r.m.Images = append(r.m.Images, release.Image{Ref: ref, Digest: first.Digest, Bundle: release.BundleSystem, Arches: []string{"amd64"}})
+	}
+	r.m.Images = append(r.m.Images, first)
+	dir, built := build(t, r, release.BundleSystem, "amd64", key)
+
+	got, err := verifyLayout(t, dir, key)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, built) {
+		t.Errorf("verified metadata = %+v, want %+v", got, built)
+	}
+}
+
+func mustParse(t *testing.T, ref string) name.Reference {
+	t.Helper()
+	parsed, err := name.ParseReference(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }

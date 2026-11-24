@@ -281,13 +281,15 @@ func (b *Bundle) readMetadata(index *v1.IndexManifest) (*verified, error) {
 // checkImages checks that every listed image is in the bundle index with its reference and that all its blobs are
 // present and intact.
 func (b *Bundle) checkImages(index *v1.IndexManifest, images []ImageRef) error {
-	children := map[string]v1.Descriptor{}
+	// Several references may name the same manifest, so a child is known by its reference and its digest.
+	type key struct{ ref, digest string }
+	children := map[key]v1.Descriptor{}
 	for _, d := range index.Manifests[1:] {
-		children[d.Digest.String()] = d
+		children[key{d.Annotations[annotationRefName], d.Digest.String()}] = d
 	}
 	for _, ref := range images {
-		d, ok := children[ref.Digest]
-		if !ok || !d.MediaType.IsImage() || d.Annotations[annotationRefName] != ref.Ref {
+		d, ok := children[key{ref.Ref, ref.Digest}]
+		if !ok || !d.MediaType.IsImage() {
 			return fmt.Errorf("%w: %s %s is not in the bundle index", ErrMissingImage, ref.Ref, ref.Digest)
 		}
 		size, err := b.checkImage(d)
