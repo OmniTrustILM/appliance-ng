@@ -290,7 +290,7 @@ func TestBuildRejects(t *testing.T) {
 			if tc.change != nil {
 				tc.change(&m)
 			}
-			if _, err := Build(t.Context(), &m, tc.kind, tc.arch, nil, r.files, testNotes, filepath.Join(t.TempDir(), "layout")); err == nil {
+			if _, err := Build(t.Context(), &m, tc.kind, tc.arch, Inputs{Files: r.files, Notes: testNotes}, filepath.Join(t.TempDir(), "layout")); err == nil {
 				t.Error("Build: want an error")
 			}
 		})
@@ -302,7 +302,7 @@ func TestBuildAddsBuiltImages(t *testing.T) {
 	key := newKey(t)
 	installer := r.pushImage(t, r.host+"/installer:1.2.3-amd64", "amd64")
 	dir := filepath.Join(t.TempDir(), "layout")
-	md, err := Build(t.Context(), r.m, release.BundleSystem, "amd64", []string{installer.Ref + "@" + installer.Digest}, r.files, testNotes, dir)
+	md, err := Build(t.Context(), r.m, release.BundleSystem, "amd64", Inputs{Files: r.files, Notes: testNotes, Built: []string{installer.Ref + "@" + installer.Digest}}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestBuildRejectsBuiltImages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := Build(t.Context(), r.m, tc.kind, "amd64", []string{tc.ref}, r.files, testNotes, filepath.Join(t.TempDir(), "layout")); err == nil {
+			if _, err := Build(t.Context(), r.m, tc.kind, "amd64", Inputs{Files: r.files, Notes: testNotes, Built: []string{tc.ref}}, filepath.Join(t.TempDir(), "layout")); err == nil {
 				t.Error("Build: want an error")
 			}
 		})

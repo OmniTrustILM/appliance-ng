@@ -174,7 +174,7 @@ func newKey(t *testing.T) *ecdsa.PrivateKey {
 func build(t *testing.T, r *testRelease, kind, arch string, key *ecdsa.PrivateKey) (string, Metadata) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "layout")
-	md, err := Build(t.Context(), r.m, kind, arch, nil, r.files, testNotes, dir)
+	md, err := Build(t.Context(), r.m, kind, arch, Inputs{Files: r.files, Notes: testNotes}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

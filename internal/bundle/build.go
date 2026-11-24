@@ -41,11 +41,20 @@ const (
 
 var arches = []string{"amd64", "arm64"}
 
+// Inputs are what a bundle carries besides the images of release.yaml.
+type Inputs struct {
+	// Files is the repository root the manifests are read from.
+	Files fs.FS
+	// Notes are the release notes.
+	Notes []byte
+	// Built are the images built with the appliance, such as the installer and the manager, each as
+	// <ref>@sha256:<hex>; only a system bundle carries them, after the images of release.yaml.
+	Built []string
+}
+
 // Build writes the unsigned bundle of kind for arch as an OCI layout directory at out. It copies every image of the
-// bundle from its registry by the digest release.yaml pins and reads the manifests from files, the repository root.
-// built are the images built with the appliance, such as the installer and the manager, each as <ref>@sha256:<hex>;
-// only a system bundle carries them, after the images of release.yaml.
-func Build(ctx context.Context, m *release.Manifest, kind, arch string, built []string, files fs.FS, notes []byte, out string) (Metadata, error) {
+// bundle from its registry by the digest release.yaml pins and reads the manifests from in.Files.
+func Build(ctx context.Context, m *release.Manifest, kind, arch string, in Inputs, out string) (Metadata, error) {
 	paths, ok := bundleFiles[kind]
 	if !ok {
 		return Metadata{}, fmt.Errorf("unknown bundle kind %q", kind)
@@ -53,12 +62,12 @@ func Build(ctx context.Context, m *release.Manifest, kind, arch string, built []
 	if !slices.Contains(arches, arch) {
 		return Metadata{}, fmt.Errorf("unknown arch %q", arch)
 	}
-	builtImages, err := parseBuilt(kind, built)
+	builtImages, err := parseBuilt(kind, in.Built)
 	if err != nil {
 		return Metadata{}, err
 	}
 	md := newMetadata(m, kind, arch)
-	contents, err := readFiles(m, files, paths, &md)
+	contents, err := readFiles(m, in.Files, paths, &md)
 	if err != nil {
 		return Metadata{}, err
 	}
@@ -66,7 +75,7 @@ func Build(ctx context.Context, m *release.Manifest, kind, arch string, built []
 	if md.Images, images, err = fetchImages(ctx, append(m.BundleImages(kind, arch), builtImages...), arch); err != nil {
 		return Metadata{}, err
 	}
-	if err := writeLayout(out, md, contents, notes, images); err != nil {
+	if err := writeLayout(out, md, contents, in.Notes, images); err != nil {
 		return Metadata{}, fmt.Errorf("write bundle %s: %w", out, err)
 	}
 	return md, nil

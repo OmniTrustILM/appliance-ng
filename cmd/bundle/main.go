@@ -63,7 +63,7 @@ func build(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	md, err := bundle.Build(ctx, m, *kind, *arch, built, os.DirFS(*root), notes, *out)
+	md, err := bundle.Build(ctx, m, *kind, *arch, bundle.Inputs{Files: os.DirFS(*root), Notes: notes, Built: built}, *out)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
