@@ -18,10 +18,17 @@ import (
 
 var imageRefPattern = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]+)?/[^ ]+:[^ ]+$`)
 
-// Validate checks every add-on file and chart archive against its pinned hash and reports each
-// image the files or the connector catalogue use that the manifest does not list,
-// and a manager image placeholder that no add-on uses.
+// Validate checks the release version, the compatibility and the bundle of every image, every add-on file and
+// chart archive against its pinned hash, and reports each image the files or the connector catalogue use that the
+// manifest does not list, and a manager image placeholder that no add-on uses.
 func Validate(m *Manifest, addons fs.FS) []error {
+	errs, usage := validateContent(m, addons)
+	return append(errs, validateBundles(m, usage)...)
+}
+
+// validateContent checks the add-on files, charts and connectors. It also returns the images the add-ons use,
+// normalized, with the names of the add-ons using each.
+func validateContent(m *Manifest, addons fs.FS) ([]error, map[string][]string) {
 	listed := make(map[string]string, len(m.Images))
 	for _, img := range m.Images {
 		listed[normalize(img.Ref)] = img.Digest
@@ -36,18 +43,20 @@ func Validate(m *Manifest, addons fs.FS) []error {
 	if m.ManagerImage != "" {
 		manager = normalize(m.ManagerImage)
 	}
-	addonErrs, managerUsed := validateAddons(m.Addons, addons, listed, implicit, manager)
+	usage := map[string][]string{}
+	addonErrs, managerUsed := validateAddons(m.Addons, addons, listed, implicit, manager, usage)
 	errs = append(errs, addonErrs...)
 	errs = append(errs, validateCharts(m.Charts, addons)...)
 	if manager != "" && !managerUsed {
 		errs = append(errs, fmt.Errorf("manager image %s is used by no add-on", m.ManagerImage))
 	}
-	return errs
+	return errs, usage
 }
 
 // validateAddons checks each add-on file against its pinned hash and reports each image it uses that listed lacks,
-// once; implicit names the images used without a registry. It tells whether an add-on uses the manager image.
-func validateAddons(files []AddonFile, addons fs.FS, listed map[string]string, implicit map[string]bool, manager string) ([]error, bool) {
+// once; implicit names the images used without a registry. It records in usage the add-ons using each image and
+// tells whether an add-on uses the manager image.
+func validateAddons(files []AddonFile, addons fs.FS, listed map[string]string, implicit map[string]bool, manager string, usage map[string][]string) ([]error, bool) {
 	var errs []error
 	managerUsed := false
 	reported := map[string]bool{}
@@ -67,6 +76,9 @@ func validateAddons(files []AddonFile, addons fs.FS, listed map[string]string, i
 			if ref == manager {
 				managerUsed = true
 				continue
+			}
+			if !slices.Contains(usage[ref], addon.Name) {
+				usage[ref] = append(usage[ref], addon.Name)
 			}
 			if _, ok := listed[ref]; !ok && !reported[ref] {
 				reported[ref] = true
@@ -131,6 +143,11 @@ func readAddon(addons fs.FS, addon AddonFile) ([]byte, error) {
 		return nil, fmt.Errorf("addon %s (%s): sha256 is %s, manifest pins %s", addon.Name, addon.File, got, addon.SHA256)
 	}
 	return data, nil
+}
+
+// ImagesIn returns the image references used by the documents of an add-on file.
+func ImagesIn(data []byte) ([]string, error) {
+	return imagesIn(data, nil)
 }
 
 // imagesIn returns the image references used by the documents of a manifest file.

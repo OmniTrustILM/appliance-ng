@@ -1,0 +1,115 @@
+name: Platform pin
+
+# Opens a pull request that pins an ILM operator release and its ILM platform version: on demand, or daily when the
+# operator has a release newer than the pinned one. Connector catalogue changes stay manual.
+on:
+  workflow_dispatch:
+    inputs:
+      operator:
+        description: ILM operator release, such as 1.2.0; the latest release when empty.
+        type: string
+      ilm:
+        description: ILM platform version, such as 2.21.0; the operator's default version when empty.
+        type: string
+  schedule:
+    - cron: '23 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-pin
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Choose the versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATOR: ${{ inputs.operator }}
+          ILM: ${{ inputs.ilm }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          operator="${OPERATOR:-$(gh release view --repo OmniTrustILM/operator --json tagName --jq .tagName)}"
+          operator="${operator#v}"
+          semver='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$operator" =~ $semver ]] || { [ -n "$ILM" ] && ! [[ "$ILM" =~ $semver ]]; }; then
+            echo "::error::Versions must be X.Y.Z."
+            exit 1
+          fi
+          pinned="$(go run github.com/mikefarah/yq/v4@v4.54.1 '.addons[] | select(.name == "ilm-operator") | .version' release.yaml)"
+          skip=false
+          newest="$(printf '%s\n%s\n' "$operator" "${pinned#v}" | sort -V | tail -n 1)"
+          if [ "$EVENT" = schedule ] && [ "$newest" = "${pinned#v}" ]; then
+            echo "Operator $operator is not newer than the pinned $pinned."
+            skip=true
+          fi
+          {
+            echo "operator=$operator"
+            echo "ilm=$ILM"
+            echo "skip=$skip"
+          } >>"$GITHUB_OUTPUT"
+
+      # The bill of materials pin reads comes from the operator module, so the module moves to the release first.
+      - name: Pin
+        if: steps.versions.outputs.skip != 'true'
+        env:
+          OPERATOR: ${{ steps.versions.outputs.operator }}
+          ILM: ${{ steps.versions.outputs.ilm }}
+        run: |
+          go get "github.com/OmniTrustILM/operator@v$OPERATOR"
+          go mod tidy
+          go run ./cmd/release pin --operator "$OPERATOR" ${ILM:+--ilm "$ILM"}
+          go run ./cmd/release validate
+          go test . ./addons/... ./internal/release/... ./internal/bundle/...
+
+      - name: Open the pull request
+        if: steps.versions.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATOR: ${{ steps.versions.outputs.operator }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          if git diff --quiet; then
+            echo "Nothing to pin."
+            exit 0
+          fi
+          ilm="$(go run github.com/mikefarah/yq/v4@v4.54.1 '.platform.ilmVersion' release.yaml)"
+          branch="platform-pin/ilm-$ilm-operator-$OPERATOR"
+          if gh api "repos/$GITHUB_REPOSITORY/branches/$branch" --silent 2>/dev/null; then
+            echo "The branch $branch exists already."
+            exit 0
+          fi
+          title="Pin ILM $ilm with operator $OPERATOR"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898283+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git commit -s -a -m "$title"
+          gh auth setup-git
+          git push origin "$branch"
+          gh pr create --base "$BASE" --head "$branch" --title "$title" --body-file - <<EOF
+          Pins ILM operator $OPERATOR and ILM $ilm: the \`ilm-operator\` add-on, \`platform.ilmVersion\`, the platform add-on and the digests of the platform images in the operator's bill of materials.
+
+          Connector catalogue changes stay manual: check the \`connectors\` entries and their images in \`release.yaml\` against ILM $ilm.
+
+          This pull request was opened with the workflow token, so CI does not start on its own: close and reopen it to run the checks.
+          EOF

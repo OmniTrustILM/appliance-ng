@@ -1,0 +1,36 @@
+version: 0.1.0
+compatibility: { operator: ">=1.0.0 <2.0.0", minAppliance: "0.1.0" }
+talos:
+  version: v1.14.5
+  kubernetes: v1.37.1
+  imager: ghcr.io/siderolabs/imager:v1.14.5@sha256:ef33373986bb0765132f0558ea43c9f8fee2c3839f1d1a4232693b77092d7350
+platform:
+  ilmVersion: 2.19.0
+  hostName: ilm.appliance.internal
+addons:
+  - { name: cert-manager, file: cert-manager.yaml, version: "v1.20.2", source: "https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml", sha256: "1ce11cae912adecc69e6bb623435fafc9ed21505f9efff98bd71d7b80f01db1f" }
+  - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.0.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.0.0/ilm-operator.yaml", sha256: "1111111111111111111111111111111111111111111111111111111111111111" }
+  - { name: platform, file: platform.yaml, version: "2.19.0", source: "local", sha256: "2222222222222222222222222222222222222222222222222222222222222222" }
+images:
+  # Comments and the order of the entries stay as they are.
+  - { ref: "registry.k8s.io/pause:3.10.2", digest: "sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4", bundle: system }
+  - { ref: "ghcr.io/cloudnative-pg/postgresql:17", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/auth-opa-policies:1.4.1", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/auth:1.7.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/common-credential-provider:1.4.0", digest: "sha256:714778d1507dfdfed7699702742522dbf8f8c20395ac2eba788f51b2b881e9d1", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/core:2.19.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/curl:8.16.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/frontend-administrator:2.19.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/keycloak-theme:0.1.4", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/kong:3.9.1", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/opa:1.10.0-static", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/operator:1.0.0", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "hub.omnitrustregistry.com/ilm/scheduler:1.1.1", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+  - { ref: "rabbitmq:4.2.0-management", digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", bundle: platform }
+connectors:
+  - name: common-credential-provider
+    displayName: Common Credential Provider
+    image: hub.omnitrustregistry.com/ilm/common-credential-provider:1.4.0
+    digest: sha256:714778d1507dfdfed7699702742522dbf8f8c20395ac2eba788f51b2b881e9d1
+    port: 8080
+    healthPath: /v1/health/liveness

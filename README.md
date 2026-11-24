@@ -309,6 +309,70 @@ locally on macOS. The build itself is the reusable workflow `.github/workflows/i
 `ghcr.io/omnitrustilm/appliance-ng` and keeps the ISO, qcow2 and `SHA256SUMS` as artifacts for three days. The build
 needs at least 40 GB of free disk after the runner clean-up and fails with a clear message otherwise.
 
+## Releases
+
+A tag `X.Y.Z` equal to `version` in `release.yaml`, with `release-notes/X.Y.Z.md` committed, runs
+`.github/workflows/release.yaml`. It publishes the images and runs the long tests; once they pass, it pushes the system
+and platform bundles of each architecture to `ghcr.io/omnitrustilm/appliance-ng/{system,platform}:X.Y.Z-<arch>`, signs
+them, attaches an SPDX SBOM of each as an attestation and drafts a GitHub release with the notes, the SBOMs and
+`cosign.pub`. The system bundle carries the installer and manager images the run built. Signatures
+are made with the key behind `cosign.pub` and are not written to a public transparency log. A manual run with
+`dry-run` pushes the bundles under `ghcr.io/omnitrustilm/appliance-ng/dev/` as `<commit>-<arch>`, signs them with a
+throw-away key pair made in the run, keeps its public key as the `dry-run-cosign-pub-<arch>` artifact and drafts no
+release.
+
+`make bundles ARCH=amd64` builds the unsigned bundles into `out/<arch>/bundles/`; with `PUSH=1 REGISTRY=<registry>`
+it also pushes them with oras.
+
+`.github/workflows/platform-pin.yaml` runs daily and on demand. When the ILM operator has a newer release, it pins
+that release, its ILM version and the platform image digests from its bill of materials, and opens a pull request.
+`pin` reads the bill of materials from the operator module, so by hand the module moves first:
+
+```bash
+go get github.com/OmniTrustILM/operator@v<version> && go mod tidy
+go run ./cmd/release pin --operator <version> [--ilm <version>]
+```
+
+Connector catalogue changes stay manual. The pull request is opened with the workflow token, which starts no CI:
+close and reopen it to run the checks.
+
+### VM images
+
+Releases carry no ISO or qcow2. Check out the release tag and build them as described in Build:
+
+```bash
+git checkout X.Y.Z
+make images ARCH=amd64
+```
+
+### Offline update file
+
+On a machine with internet access and oras 1.4.0 or newer, this writes a bundle with its signature and SBOM into one
+file for an appliance without internet access:
+
+```bash
+oras copy -r ghcr.io/omnitrustilm/appliance-ng/system:X.Y.Z-amd64 --to-oci-layout system-X.Y.Z-amd64:X.Y.Z-amd64 \
+  && tar -C system-X.Y.Z-amd64 -cf system-X.Y.Z-amd64.tar oci-layout index.json blobs
+```
+
+The platform bundle is the same with `platform` in place of `system`.
+
+### Verifying a bundle
+
+The signatures are in no transparency log, so cosign checks them against `cosign.pub` alone:
+
+```bash
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/omnitrustilm/appliance-ng/system:X.Y.Z-amd64
+cosign verify-attestation --key cosign.pub --insecure-ignore-tlog=true --type spdxjson \
+  ghcr.io/omnitrustilm/appliance-ng/system:X.Y.Z-amd64
+```
+
+An offline file verifies without network access, with the key the Appliance Manager embeds:
+
+```bash
+go run ./cmd/bundle verify --arch amd64 system-X.Y.Z-amd64.tar
+```
+
 ## License
 
 Licensed under the Apache License 2.0. See [LICENSE](LICENSE). The OmniTrust and ILM logos in the console are not

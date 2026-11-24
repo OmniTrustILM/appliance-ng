@@ -11,18 +11,10 @@ import (
 // installer and the manager. Images of private connectors are left out: they
 // need registry credentials at install time.
 func CacheList(m *Manifest, arch string, built ...string) []string {
-	private := map[string]bool{}
-	for _, c := range m.Connectors {
-		if c.Private {
-			private[normalize(c.Image)] = true
-		}
-	}
+	private := privateImages(m)
 	var refs []string
 	for _, img := range m.Images {
-		if private[normalize(img.Ref)] {
-			continue
-		}
-		if len(img.Arches) == 0 || slices.Contains(img.Arches, arch) {
+		if !private[normalize(img.Ref)] && img.forArch(arch) {
 			refs = append(refs, img.Ref)
 		}
 	}
@@ -33,6 +25,17 @@ func CacheList(m *Manifest, arch string, built ...string) []string {
 	}
 	slices.Sort(refs)
 	return slices.Compact(refs)
+}
+
+// privateImages returns the normalized references of the private connectors' images.
+func privateImages(m *Manifest) map[string]bool {
+	private := map[string]bool{}
+	for _, c := range m.Connectors {
+		if c.Private {
+			private[normalize(c.Image)] = true
+		}
+	}
+	return private
 }
 
 // PinnedImage is the reference, with its digest, of the image the manifest pins for name, which may be short, as

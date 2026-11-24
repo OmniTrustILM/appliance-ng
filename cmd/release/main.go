@@ -1,4 +1,4 @@
-// Command release validates the release manifest and lists the images to cache.
+// Command release validates the release manifest, lists the images to cache and pins ILM operator releases.
 package main
 
 import (
@@ -18,6 +18,8 @@ func main() {
 		os.Exit(validate(os.Args[2:]))
 	case "images":
 		os.Exit(images(os.Args[2:]))
+	case "pin":
+		os.Exit(pin(os.Args[2:]))
 	default:
 		usage()
 	}
@@ -26,6 +28,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: release validate [-f release.yaml] [--addons addons]")
 	fmt.Fprintln(os.Stderr, "       release images [-f release.yaml] --arch amd64|arm64 [--installer <ref>] [--manager <ref>]")
+	fmt.Fprintln(os.Stderr, "       release pin [--root .] --operator <version> [--ilm <version>]")
 	os.Exit(2)
 }
 

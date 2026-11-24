@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm-operator-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ilm-operator-controller-manager
+  namespace: ilm-operator-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          image: hub.omnitrustregistry.com/ilm/operator:1.0.0

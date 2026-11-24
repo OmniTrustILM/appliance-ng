@@ -1,0 +1,10 @@
+# Default ILM platform.
+apiVersion: otilm.com/v1alpha1
+kind: Platform
+metadata: { name: ilm, namespace: ilm }
+spec:
+  version: "2.20.0"
+  common:
+    hostName: ilm.appliance.internal
+  database:
+    managed: { instances: 1, version: "18" }

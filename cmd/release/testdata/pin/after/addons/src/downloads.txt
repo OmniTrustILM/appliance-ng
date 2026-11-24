@@ -1,0 +1,3 @@
+# <file> <url> [<namespace>]
+cert-manager.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.20.2/cert-manager.yaml
+ilm-operator.yaml https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml
