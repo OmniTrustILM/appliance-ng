@@ -3,6 +3,8 @@ package addons
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
@@ -170,5 +172,25 @@ func TestManagerManifest(t *testing.T) {
 	}
 	if len(images) != 1 || images[0] != m.ManagerImage {
 		t.Errorf("manager.yaml images = %v, want only the placeholder %q", images, m.ManagerImage)
+	}
+}
+
+func TestChartsMatchRelease(t *testing.T) {
+	m, err := release.Load("../release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Charts) == 0 {
+		t.Fatal("release.yaml pins no chart")
+	}
+	for _, c := range m.Charts {
+		data, err := fs.ReadFile(FS, c.File)
+		if err != nil {
+			t.Fatalf("chart %s: %v", c.Name, err)
+		}
+		sum := sha256.Sum256(data)
+		if got := hex.EncodeToString(sum[:]); got != c.SHA256 {
+			t.Errorf("chart %s (%s): sha256 is %s, release.yaml pins %s", c.Name, c.File, got, c.SHA256)
+		}
 	}
 }

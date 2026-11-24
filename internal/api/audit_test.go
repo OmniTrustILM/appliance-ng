@@ -119,16 +119,36 @@ func TestGetAudit(t *testing.T) {
 	if len(got.Items) != 3 {
 		t.Errorf("audit = %d entries, want 3", len(got.Items))
 	}
-	for _, q := range []string{"limit=0", "limit=1001", "limit=x"} {
+	for _, q := range []string{"limit=0", "limit=1001", "limit=x", "before=x", "before=" + strings.Repeat("A", 64)} {
 		wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/audit?"+q, nil, s), http.StatusBadRequest)
+	}
+}
+
+func TestGetAuditPagesWithACursor(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	h.signIn()
+	h.signIn()
+
+	var first, second AuditLog
+	decode(t, h.request(http.MethodGet, "/appliance/api/v1/audit?limit=2", nil, s), &first)
+	if len(first.Items) != 2 || first.Next == nil {
+		t.Fatalf("first page = %+v, want two entries and a cursor", first)
+	}
+	h.signIn()
+	decode(t, h.request(http.MethodGet, "/appliance/api/v1/audit?limit=2&before="+*first.Next, nil, s), &second)
+	if len(second.Items) != 1 || second.Next != nil || !second.Items[0].Time.Before(first.Items[1].Time) {
+		t.Errorf("second page = %+v, want the oldest entry and no cursor", second)
 	}
 }
 
 // failingAudit is an audit log whose writes and reads fail.
 type failingAudit struct{}
 
-func (failingAudit) Write(audit.Entry) error         { return errors.New("disk full") }
-func (failingAudit) Tail(int) ([]audit.Entry, error) { return nil, errors.New("disk gone") }
+func (failingAudit) Write(audit.Entry) error { return errors.New("disk full") }
+func (failingAudit) Page(string, int) ([]audit.Entry, string, error) {
+	return nil, "", errors.New("disk gone")
+}
 
 func TestAuditFailureStillAnswers(t *testing.T) {
 	h := newHarness(t)

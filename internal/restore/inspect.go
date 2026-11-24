@@ -14,8 +14,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 
+	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
+	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
@@ -38,11 +40,13 @@ func (e ErrVersionUnavailable) Error() string {
 }
 
 // Summary describes a backup that passed Inspect. Clashes are the backup's console accounts that already exist.
+// Platform is the backup's platform, whose dependencies a fresh restore keeps unless it chooses them anew.
 type Summary struct {
 	Manifest   backup.Manifest
 	Accounts   []string
 	Clashes    []string
 	Components []string
+	Platform   v1alpha1.PlatformSpec
 }
 
 // Inspect verifies the whole backup file with id, the recovery kit's backup key, and reads what a restore would
@@ -55,11 +59,14 @@ func Inspect(ctx context.Context, file string, id age.Identity, m *release.Manif
 	if want := m.Platform.ILMVersion; bm.ILM != want {
 		return Summary{}, ErrVersionUnavailable{Have: want, Want: bm.ILM}
 	}
-	accounts, err := accounts(ctx, file, id)
+	accounts, spec, err := contents(ctx, file, id)
 	if err != nil {
 		return Summary{}, err
 	}
 	s := Summary{Manifest: bm, Accounts: accounts, Components: bm.Components}
+	if spec.Platform != nil {
+		s.Platform = *spec.Platform
+	}
 	for _, a := range accounts {
 		if slices.Contains(users, a) {
 			s.Clashes = append(s.Clashes, a)
@@ -75,27 +82,43 @@ func verify(ctx context.Context, file string, id age.Identity) (backup.Manifest,
 		return backup.Manifest{}, err
 	}
 	defer func() { _ = f.Close() }()
-	bm, err := backup.Verify(f, id)
+	bm, err := backup.VerifyEach(f, id, checkMember)
 	if err != nil {
 		return backup.Manifest{}, refusal(err)
 	}
 	return bm, nil
 }
 
-// accounts returns the sorted console account names in the backup; a backup without accounts has none.
-func accounts(ctx context.Context, file string, id age.Identity) ([]string, error) {
+// checkMember refuses, as a modified backup, a member of the CBOM store that a backup does not write, before a
+// restore changes anything.
+func checkMember(name string, r io.Reader) error {
+	err := cbom.CheckMember(name, r)
+	if errors.Is(err, cbom.ErrInvalidMember) {
+		return fmt.Errorf("%w: %w", ErrTampered, err)
+	}
+	return err
+}
+
+// contents returns the sorted console account names in the backup, none without accounts, and the spec of the
+// backup's appliance.
+func contents(ctx context.Context, file string, id age.Identity) ([]string, v1alpha1.ApplianceSpec, error) {
 	f, err := open(ctx, file)
 	if err != nil {
-		return nil, err
+		return nil, v1alpha1.ApplianceSpec{}, err
 	}
 	defer func() { _ = f.Close() }()
 	var names []string
+	var spec v1alpha1.ApplianceSpec
 	err = backup.Extract(f, id, func(name string, r io.Reader) error {
-		if name != usersMember {
+		if name != usersMember && name != applianceMember {
 			return nil
 		}
 		data, err := readCapped(r)
 		if err != nil {
+			return err
+		}
+		if name == applianceMember {
+			spec, err = applianceSpec(map[string][]byte{name: data})
 			return err
 		}
 		var secret corev1.Secret
@@ -106,9 +129,9 @@ func accounts(ctx context.Context, file string, id age.Identity) ([]string, erro
 		return err
 	})
 	if err != nil {
-		return nil, refusal(err)
+		return nil, v1alpha1.ApplianceSpec{}, refusal(err)
 	}
-	return names, nil
+	return names, spec, nil
 }
 
 func open(ctx context.Context, file string) (*os.File, error) {

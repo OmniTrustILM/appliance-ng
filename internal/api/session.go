@@ -28,7 +28,7 @@ func newDummyHash() string {
 }
 
 // PostSession signs a user in with password and TOTP code. Each request counts once against the limits of the
-// user at the peer address, of the peer address and of the user; only a fully successful sign-in takes the user's
+// user at the peer's source, of the source and of the user; only a fully successful sign-in takes the user's
 // counts back.
 func (s *Server) PostSession(ctx context.Context, req PostSessionRequestObject) (PostSessionResponseObject, error) {
 	now := s.deps.Now()

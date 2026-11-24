@@ -69,22 +69,34 @@ func (s *Server) PutWizardPlatform(ctx context.Context, req PutWizardPlatformReq
 		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: BadRequestJSONResponse{Code: "invalid", Message: "Enter the platform settings."}}, nil
 	}
 	platform, ferr := parsePlatform(req.Body.HostName, req.Body.Components, s.deps.Release)
+	var deps *dependenciesInput
+	if ferr == nil {
+		deps, ferr = parseDependencies(req.Body.Dependencies)
+	}
 	if ferr == nil {
 		var m *mailInput
 		if m, ferr = parseMail(req.Body.Mail); ferr == nil {
-			return s.savePlatform(ctx, platform, m)
+			return s.savePlatform(ctx, platform, m, deps, req.Body.Utils)
 		}
 	}
 	return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 }
 
-func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpec, m *mailInput) (PutWizardPlatformResponseObject, error) {
+func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpec, m *mailInput, deps *dependenciesInput, utils *bool) (PutWizardPlatformResponseObject, error) {
 	a, err := s.openAppliance(ctx)
 	if err != nil {
 		return wizardClosed(err)
 	}
 	if ferr := s.componentsNeed(platform.Components, a.Spec.Registries, m != nil); ferr != nil {
 		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
+	}
+	// Everything is checked before a Secret is written: the mail credentials refuse before they write.
+	plan, ferr, err := s.planDependencyCredentials(ctx, deps, a.Spec.Platform)
+	if ferr != nil {
+		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
+	}
+	if err != nil {
+		return nil, err
 	}
 	credentialsChanged, err := s.writeMailCredentials(ctx, m, a.Spec.Mail)
 	if errors.Is(err, errPasswordNeeded) {
@@ -94,6 +106,11 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 	if err != nil {
 		return nil, err
 	}
+	credentialPaths, err := s.writeCredentials(ctx, plan)
+	if err != nil {
+		s.undoCredentials(ctx, plan)
+		return nil, err
+	}
 	var paths []string
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		a, err := s.openAppliance(ctx)
@@ -101,15 +118,19 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 			return err
 		}
 		before := a.Spec.DeepCopy()
+		mergePlatform(&platform, before.Platform, deps, utils)
 		a.Spec.Platform = &platform
 		a.Spec.Mail = nil
 		if m != nil {
 			a.Spec.Mail = &m.spec
 		}
 		paths = changedPaths(before, &a.Spec, credentialsChanged)
+		paths = append(paths, credentialPaths...)
+		slices.Sort(paths)
 		return s.deps.Client.Update(ctx, a, client.FieldOwner(FieldManager))
 	})
 	if err != nil {
+		s.undoCredentials(ctx, plan)
 		return wizardClosed(err)
 	}
 	recordPaths(ctx, paths)
@@ -315,9 +336,18 @@ const pathMailSpec = "spec.mail"
 // changedPaths lists the JSON paths the wizard changed from before to after, sorted; credentials says the
 // credentials Secret changed.
 func changedPaths(before, after *v1alpha1.ApplianceSpec, credentials bool) []string {
-	paths := append(platformPaths(before.Platform, after.Platform), mailPaths(before.Mail, after.Mail, credentials)...)
+	paths := append(allPlatformPaths(before.Platform, after.Platform), mailPaths(before.Mail, after.Mail, credentials)...)
 	slices.Sort(paths)
 	return paths
+}
+
+// allPlatformPaths lists the JSON paths of the platform, its dependencies included, that changed from before to
+// after, which is set.
+func allPlatformPaths(before, after *v1alpha1.PlatformSpec) []string {
+	if before == nil {
+		return []string{"spec.platform"}
+	}
+	return append(platformPaths(before, after), dependencyPaths(before, after)...)
 }
 
 // platformPaths lists the JSON paths of the platform that changed from before to after, which is set, sorted.

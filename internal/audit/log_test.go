@@ -320,3 +320,140 @@ func TestWriteAfterAPartialWriteStartsANewLine(t *testing.T) {
 		t.Errorf("Tail = %+v, want the entries around the broken one", got)
 	}
 }
+
+// pageAll follows the cursors from the newest entry to the oldest, n entries a page.
+func pageAll(t *testing.T, l *Log, n int) []Entry {
+	t.Helper()
+	var all []Entry
+	before := ""
+	for range 100 {
+		page, next, err := l.Page(before, n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) > n {
+			t.Fatalf("page of %d entries, want at most %d", len(page), n)
+		}
+		all = append(all, page...)
+		if next == "" {
+			return all
+		}
+		before = next
+	}
+	t.Fatal("the cursors never end")
+	return nil
+}
+
+func TestAuditPageBefore(t *testing.T) {
+	l, _ := open(t)
+	line, err := encode(entry(99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.maxBytes = int64(3 * len(line))
+	write := func(from, to int) {
+		t.Helper()
+		for i := from; i < to; i++ {
+			if err := l.Write(entry(i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(0, 20)
+
+	t.Run("pages cover the log newest first without gaps or repeats", func(t *testing.T) {
+		for _, n := range []int{1, 2, 3, 4, 7, 20, 50} {
+			var want []Entry
+			for i := 19; i >= 0; i-- {
+				want = append(want, entry(i))
+			}
+			if got := pageAll(t, l, n); !reflect.DeepEqual(got, want) {
+				t.Errorf("pages of %d = %d entries, want all 20 newest first", n, len(got))
+			}
+		}
+	})
+
+	t.Run("a cursor keeps its place while entries are added and files rotate", func(t *testing.T) {
+		first, next, err := l.Page("", 5)
+		if err != nil || len(first) != 5 || next == "" {
+			t.Fatalf("Page = %d entries, next %q, %v", len(first), next, err)
+		}
+		write(20, 27)
+		second, _, err := l.Page(next, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []Entry{entry(14), entry(13), entry(12), entry(11), entry(10)}; !reflect.DeepEqual(second, want) {
+			t.Errorf("second page after new entries = %+v, want %+v", second, want)
+		}
+	})
+
+	t.Run("a cursor into a dropped file ends the pages", func(t *testing.T) {
+		_, next, err := l.Page("", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(27, 27+3*MaxFiles+3)
+		page, after, err := l.Page(next, 5)
+		if err != nil || len(page) != 0 || after != "" {
+			t.Errorf("Page of a dropped file = %d entries, next %q, %v; want none", len(page), after, err)
+		}
+	})
+
+	t.Run("a cursor past the end or inside a line reads only the whole lines before it", func(t *testing.T) {
+		_, next, err := l.Page("", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := parseCursor(next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		newest, _, err := l.Page("", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, tc := range map[string]struct {
+			offset int64
+			want   []Entry
+		}{
+			"past the end":  {c.offset + 1<<20, newest[:2]},
+			"inside a line": {c.offset + int64(len(line))/2, newest[1:3]},
+		} {
+			page, _, err := l.Page(cursor{file: c.file, offset: tc.offset}.String(), 2)
+			if err != nil || !reflect.DeepEqual(page, tc.want) {
+				t.Errorf("%s: Page = %+v, %v; want %+v", name, page, err, tc.want)
+			}
+		}
+	})
+
+	t.Run("an invalid cursor is refused", func(t *testing.T) {
+		for _, cursor := range []string{"!", "eA", "MTIz"} {
+			if _, _, err := l.Page(cursor, 5); !errors.Is(err, ErrInvalidCursor) {
+				t.Errorf("Page(%q) = %v, want ErrInvalidCursor", cursor, err)
+			}
+		}
+	})
+}
+
+func TestFileIDStableOnceATornFirstLineEnds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	if err := os.WriteFile(path, []byte(`{"user":"tor`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	torn, err := fileID(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("\n{}\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if ended, err := fileID(path); err != nil || ended != torn {
+		t.Errorf("fileID changed from %x to %x (%v) when the torn first line ended", torn, ended, err)
+	}
+}

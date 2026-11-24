@@ -3,14 +3,24 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
+)
+
+// Formats of the errors of the audit files.
+const (
+	errOpen = "open the audit file: %w"
+	errRead = "read the audit file: %w"
 )
 
 const (
@@ -75,7 +85,7 @@ func (l *Log) path(index int) string {
 func (l *Log) openFile() error {
 	f, err := os.OpenFile(l.path(0), os.O_APPEND|os.O_CREATE|os.O_RDWR, fileMode)
 	if err != nil {
-		return fmt.Errorf("open the audit file: %w", err)
+		return fmt.Errorf(errOpen, err)
 	}
 	size, err := endLine(f)
 	if err != nil {
@@ -98,7 +108,7 @@ func endLine(f *os.File) (int64, error) {
 	}
 	last := make([]byte, 1)
 	if _, err := f.ReadAt(last, size-1); err != nil {
-		return 0, fmt.Errorf("read the audit file: %w", err)
+		return 0, fmt.Errorf(errRead, err)
 	}
 	if last[0] == '\n' {
 		return size, nil
@@ -186,46 +196,154 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// Tail returns up to n of the most recent entries, newest first. Lines that do not decode, such as one torn by a
-// crash, are skipped.
+// ErrInvalidCursor is returned by Page for a cursor it did not issue.
+var ErrInvalidCursor = errors.New("the audit cursor is not valid")
+
+// Tail returns up to n of the most recent entries, newest first.
 func (l *Log) Tail(n int) ([]Entry, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	var entries []Entry
-	for i := 0; i < MaxFiles && len(entries) < n; i++ {
-		lines, err := readEntries(l.path(i))
-		if err != nil {
-			return nil, err
-		}
-		slices.Reverse(lines)
-		entries = append(entries, lines[:min(len(lines), n-len(entries))]...)
-	}
-	return entries, nil
+	entries, _, err := l.Page("", n)
+	return entries, err
 }
 
-// readEntries returns the entries of a file, oldest first; a missing file has none.
-func readEntries(path string) ([]Entry, error) {
-	f, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
+// Page returns up to n entries, newest first, that were written before the position of the cursor before, or the
+// newest ones when before is empty. next is the cursor of the following page, empty when no older entry is left. A
+// cursor names its file by the file's first line, so it keeps its place while files rotate; once its file is
+// dropped, the page is empty. Lines that do not decode, such as one torn by a crash, are skipped.
+func (l *Log) Page(before string, n int) (entries []Entry, next string, err error) {
+	from, err := optionalCursor(before)
+	if err != nil {
+		return nil, "", err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var positions []cursor
+	for i := 0; i < MaxFiles && len(entries) <= n && n > 0; i++ {
+		id, err := fileID(l.path(i))
+		if err != nil {
+			return nil, "", err
+		}
+		limit := int64(-1)
+		if from != nil {
+			if id != from.file {
+				continue
+			}
+			limit, from = from.offset, nil
+		}
+		lines, offsets, err := readEntries(l.path(i), limit)
+		if err != nil {
+			return nil, "", err
+		}
+		entries, positions = appendNewest(entries, positions, lines, offsets, id, n)
+	}
+	if len(entries) > n {
+		entries, next = entries[:n], positions[n-1].String()
+	}
+	return entries, next, nil
+}
+
+// appendNewest appends the lines of the file id, newest first, with their positions at offsets, until entries holds
+// one more than n.
+func appendNewest(entries []Entry, positions []cursor, lines []Entry, offsets []int64, id [8]byte, n int) ([]Entry, []cursor) {
+	for j := len(lines) - 1; j >= 0 && len(entries) <= n; j-- {
+		entries = append(entries, lines[j])
+		positions = append(positions, cursor{file: id, offset: offsets[j]})
+	}
+	return entries, positions
+}
+
+// cursor is the position of an entry: the identity of its file and the offset of its line.
+type cursor struct {
+	file   [8]byte
+	offset int64
+}
+
+func (c cursor) String() string {
+	b := make([]byte, 0, 16)
+	b = append(b, c.file[:]...)
+	return base64.RawURLEncoding.EncodeToString(binary.BigEndian.AppendUint64(b, uint64(c.offset)))
+}
+
+// optionalCursor parses the cursor s, nil when s is empty.
+func optionalCursor(s string) (*cursor, error) {
+	if s == "" {
 		return nil, nil
 	}
+	c, err := parseCursor(s)
 	if err != nil {
-		return nil, fmt.Errorf("open the audit file: %w", err)
+		return nil, err
+	}
+	return &c, nil
+}
+
+func parseCursor(s string) (cursor, error) {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil || len(b) != 16 {
+		return cursor{}, ErrInvalidCursor
+	}
+	c := cursor{offset: int64(binary.BigEndian.Uint64(b[8:]))}
+	copy(c.file[:], b[:8])
+	if c.offset < 0 {
+		return cursor{}, ErrInvalidCursor
+	}
+	return c, nil
+}
+
+// fileID identifies a file by the start of the SHA-256 of its first line without the newline, which neither rotation
+// nor the ending of a torn first line changes; a missing or empty file has the zero identity.
+func fileID(path string) ([8]byte, error) {
+	var id [8]byte
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return id, nil
+	}
+	if err != nil {
+		return id, fmt.Errorf(errOpen, err)
 	}
 	defer func() { _ = f.Close() }()
-	var entries []Entry
-	scanner := bufio.NewScanner(f)
+	first, err := bufio.NewReader(f).ReadSlice('\n')
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
+		return id, fmt.Errorf(errRead, err)
+	}
+	if len(first) > 0 {
+		sum := sha256.Sum256(bytes.TrimSuffix(first, []byte{'\n'}))
+		copy(id[:], sum[:])
+	}
+	return id, nil
+}
+
+// readEntries returns the entries of a file, oldest first, with the offsets of their lines; with a limit of 0 or
+// more, only the lines that end before it. A missing file has none.
+func readEntries(path string, limit int64) ([]Entry, []int64, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf(errOpen, err)
+	}
+	defer func() { _ = f.Close() }()
+	var r io.Reader = f
+	if limit >= 0 {
+		r = io.LimitReader(f, limit)
+	}
+	var (
+		entries []Entry
+		offsets []int64
+		offset  int64
+	)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64<<10), MaxBytes)
 	for scanner.Scan() {
 		var e Entry
 		if json.Unmarshal(scanner.Bytes(), &e) == nil {
-			entries = append(entries, e)
+			entries, offsets = append(entries, e), append(offsets, offset)
 		}
+		offset += int64(len(scanner.Bytes())) + 1
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read the audit file: %w", err)
+		return nil, nil, fmt.Errorf(errRead, err)
 	}
-	return entries, nil
+	return entries, offsets, nil
 }
 
 // Close closes the current file; later writes fail.

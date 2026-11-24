@@ -37,6 +37,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
 	"github.com/OmniTrustILM/appliance-ng/internal/console"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/manager"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
@@ -56,6 +57,8 @@ const (
 	backupDir = "backups"
 	// restoreDir, under the data directory, keeps the backup uploaded or fetched for a restore.
 	restoreDir = "restore"
+	// postgresImage, cached offline, runs the dumps, loads and checks of an external database.
+	postgresImage = "ghcr.io/cloudnative-pg/postgresql:18"
 )
 
 func main() {
@@ -151,6 +154,9 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err != nil {
 		return fmt.Errorf("create the Kubernetes client: %w", err)
 	}
+	if err := setupILMController(mgr, direct, cfg); err != nil {
+		return err
+	}
 	users := auth.NewSecretUserStore(direct, manager.SystemNamespace)
 	// One Talos client for the controllers and the API.
 	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
@@ -164,14 +170,15 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		return err
 	}
 
-	backups, err := newBackupRunner(ctx, mgr, direct, auditLog, rel, log, filepath.Join(data, backupDir))
+	postgres, err := rel.PinnedImage(postgresImage)
 	if err != nil {
 		return err
 	}
-	if err := addBackupSchedule(mgr, reconciler, backups); err != nil {
+	s := services{mgr: mgr, direct: direct, audit: auditLog, log: log, external: backup.ExternalDumpers(direct, cfg, postgres)}
+	backups, restorer, err := newBackupAndRestore(ctx, s, rel, reconciler, data)
+	if err != nil {
 		return err
 	}
-	restorer := newRestoreEngine(ctx, mgr, direct, backups, auditLog, log, reconciler.OperatorLock)
 
 	api := apiserver.NewServer(apiserver.Deps{
 		Client:     mgr.GetClient(),
@@ -186,21 +193,67 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Backups:    backups,
 		Restore:    restorer,
 		RestoreDir: filepath.Join(data, restoreDir),
+		CheckDatabase: func(ctx context.Context, db backup.ExternalDatabase, username, password string, ca []byte) error {
+			db.Image = postgres
+			return backup.CheckExternal(ctx, direct, cfg, db, username, password, ca)
+		},
 	})
-	cert, err := console.NewCertificate(log, mgr.GetClient())
-	if err != nil {
-		return err
-	}
-	srv := console.NewServer(log, listen, console.Routes(api.Handler()), cert)
-	if err := addRunnables(mgr, log, cert, srv); err != nil {
+	if err := addConsole(mgr, log, listen, api.Handler()); err != nil {
 		return err
 	}
 	return mgr.Start(ctx)
 }
 
+// addConsole adds the console on listen, serving the API's handler, with its certificate refresh to mgr.
+func addConsole(mgr crmanager.Manager, log *slog.Logger, listen string, handler http.Handler) error {
+	cert, err := console.NewCertificate(log, mgr.GetClient())
+	if err != nil {
+		return err
+	}
+	return addRunnables(mgr, log, cert, console.NewServer(log, listen, console.Routes(handler), cert))
+}
+
+// setupILMController sets up the controller of ILM's settings with mgr; its identity is kept through direct.
+func setupILMController(mgr crmanager.Manager, direct client.Client, cfg *rest.Config) error {
+	ilm := &manager.ILMReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		ILM:       &ilmclient.Identity{Client: direct, Forward: ilmclient.CoreForward(cfg, mgr.GetAPIReader()), Now: time.Now},
+	}
+	if err := ilm.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up the ILM controller: %w", err)
+	}
+	return nil
+}
+
+// services are what the backup runner and the restore engine share.
+type services struct {
+	mgr crmanager.Manager
+	// direct reads and writes past the cache.
+	direct   client.Client
+	audit    *audit.Log
+	log      *slog.Logger
+	external func(v1alpha1.ExternalDatabase) backup.Dumper
+}
+
+// newBackupAndRestore returns the backup runner on the data directory data, with its schedule, and the restore
+// engine.
+func newBackupAndRestore(ctx context.Context, s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data string) (*backup.Runner, *restore.Engine, error) {
+	backups, err := newBackupRunner(ctx, s, rel, filepath.Join(data, backupDir))
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := addBackupSchedule(s.mgr, reconciler, backups); err != nil {
+		return nil, nil, err
+	}
+	return backups, newRestoreEngine(ctx, s, backups, reconciler.OperatorLock), nil
+}
+
 // setupNodeControllers sets up the hand-over and the node controllers with mgr.
 func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAccess func(context.Context) (talos.Node, error)) error {
-	handover := &manager.HandoverReconciler{Client: mgr.GetClient(), Users: users, Talos: talosAccess}
+	handover := &manager.HandoverReconciler{
+		Client: mgr.GetClient(), Users: users, Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess,
+	}
 	if err := handover.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the hand-over controller: %w", err)
 	}
@@ -223,7 +276,8 @@ func addBackupSchedule(mgr crmanager.Manager, reconciler *manager.ApplianceRecon
 
 // newBackupRunner returns the backup runner on dir, after deleting the partial files a backup cut off by a crash or
 // a restart left there and clearing the backup the status still shows running.
-func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.Client, auditLog *audit.Log, rel *release.Manifest, log *slog.Logger, dir string) (*backup.Runner, error) {
+func newBackupRunner(ctx context.Context, s services, rel *release.Manifest, dir string) (*backup.Runner, error) {
+	mgr, log := s.mgr, s.log
 	if err := backup.RemoveStale(dir); err != nil {
 		return nil, fmt.Errorf("remove the partial backups: %w", err)
 	}
@@ -236,11 +290,12 @@ func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.C
 		Client:          mgr.GetClient(),
 		Reader:          mgr.GetAPIReader(),
 		Dumper:          backup.NewManagedDumper(mgr.GetAPIReader(), cfg),
-		Audit:           auditLog,
+		External:        s.external,
+		Audit:           s.audit,
 		Dir:             dir,
 		Version:         version,
 		KeyedConnectors: keyedConnectors(rel),
-		Targets:         target.Deps{Client: direct, Config: cfg, Image: busybox, Namespace: kube.SystemNamespace},
+		Targets:         target.Deps{Client: s.direct, Config: cfg, Image: busybox, Namespace: kube.SystemNamespace},
 		Log:             log,
 	})
 	if err := runner.ResetRunning(ctx); err != nil {
@@ -251,13 +306,14 @@ func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.C
 
 // newRestoreEngine returns the restore engine and, in the background, marks a restore that a restart cut off as
 // waiting for its recovery kit: the backup key it held lived only in memory.
-func newRestoreEngine(ctx context.Context, mgr crmanager.Manager, direct client.Client, backups *backup.Runner, auditLog *audit.Log, log *slog.Logger, operatorLock sync.Locker) *restore.Engine {
+func newRestoreEngine(ctx context.Context, s services, backups *backup.Runner, operatorLock sync.Locker) *restore.Engine {
 	engine := restore.New(restore.Deps{
-		Client:       direct,
-		Dumper:       backup.NewManagedDumper(mgr.GetAPIReader(), mgr.GetConfig()),
+		Client:       s.direct,
+		Dumper:       backup.NewManagedDumper(s.mgr.GetAPIReader(), s.mgr.GetConfig()),
+		External:     s.external,
 		Backups:      backups,
-		Audit:        auditLog,
-		Log:          log,
+		Audit:        s.audit,
+		Log:          s.log,
 		OperatorLock: operatorLock,
 	})
 	go engine.KeepRecovering(ctx)

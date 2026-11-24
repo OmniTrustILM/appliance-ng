@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net/http"
@@ -103,7 +104,7 @@ func (h *heldResponse) status() int {
 	return h.code
 }
 
-// GetAudit returns the newest audit entries, newest first.
+// GetAudit returns a page of the audit entries, newest first.
 func (s *Server) GetAudit(_ context.Context, req GetAuditRequestObject) (GetAuditResponseObject, error) {
 	limit := defaultAuditLimit
 	if req.Params.Limit != nil {
@@ -113,7 +114,14 @@ func (s *Server) GetAudit(_ context.Context, req GetAuditRequestObject) (GetAudi
 		return GetAudit400JSONResponse{BadRequestJSONResponse: badRequestField("limit",
 			fmt.Sprintf("The limit must be between 1 and %d.", maxAuditLimit))}, nil
 	}
-	entries, err := s.deps.Audit.Tail(limit)
+	before := ""
+	if req.Params.Before != nil {
+		before = *req.Params.Before
+	}
+	entries, next, err := s.deps.Audit.Page(before, limit)
+	if errors.Is(err, audit.ErrInvalidCursor) {
+		return GetAudit400JSONResponse{BadRequestJSONResponse: badRequestField("before", "The cursor is not valid.")}, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read the audit log: %w", err)
 	}
@@ -128,5 +136,9 @@ func (s *Server) GetAudit(_ context.Context, req GetAuditRequestObject) (GetAudi
 			items[i].Details = &e.Details
 		}
 	}
-	return GetAudit200JSONResponse{Items: items}, nil
+	page := AuditLog{Items: items}
+	if next != "" {
+		page.Next = &next
+	}
+	return GetAudit200JSONResponse(page), nil
 }

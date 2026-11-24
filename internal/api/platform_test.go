@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -58,12 +59,12 @@ func TestGetPlatform(t *testing.T) {
 	var got PlatformState
 	decode(t, rec, &got)
 	want := PlatformState{IlmVersion: "2.19.0", HostName: "ilm.example.com", Components: []PlatformComponent{
-		{Name: "common-credential-provider", Title: "Common Credential Provider"},
-		{Name: "ejbca-ng-connector", Title: "EJBCA NG Connector", Chosen: true},
-		{Name: privateComponent, Title: "External Authority Provider", Private: true, NeedsCredentials: true},
-		{Name: testMailComponent, Title: "Email Notification Provider", NeedsMail: true},
+		{Name: "common-credential-provider", Title: "Common Credential Provider", Registered: true},
+		{Name: "ejbca-ng-connector", Title: "EJBCA NG Connector", Chosen: true, Registered: true},
+		{Name: privateComponent, Title: "External Authority Provider", Private: true, NeedsCredentials: true, Registered: true},
+		{Name: testMailComponent, Title: "Email Notification Provider", NeedsMail: true, Url: ptr("http://email-notification-provider.ilm.svc.cluster.local:8080")},
 	}}
-	if got.IlmVersion != want.IlmVersion || got.HostName != want.HostName || !slices.Equal(got.Components, want.Components) {
+	if got.IlmVersion != want.IlmVersion || got.HostName != want.HostName || !reflect.DeepEqual(got.Components, want.Components) {
 		t.Errorf("platform\n got %+v\nwant %+v", got, want)
 	}
 

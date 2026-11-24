@@ -69,6 +69,7 @@ const (
 	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
 	AuditEntryActionCertificateSigned  AuditEntryAction = "certificate-signed"
 	AuditEntryActionCertificateUpload  AuditEntryAction = "certificate-upload"
+	AuditEntryActionDependencyTest     AuditEntryAction = "dependency-test"
 	AuditEntryActionKubeconfigIssue    AuditEntryAction = "kubeconfig-issue"
 	AuditEntryActionKubeconfigRevoke   AuditEntryAction = "kubeconfig-revoke"
 	AuditEntryActionMailRemove         AuditEntryAction = "mail-remove"
@@ -122,6 +123,8 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionCertificateSigned:
 		return true
 	case AuditEntryActionCertificateUpload:
+		return true
+	case AuditEntryActionDependencyTest:
 		return true
 	case AuditEntryActionKubeconfigIssue:
 		return true
@@ -296,6 +299,24 @@ func (e BackupTargetUpdateType) Valid() bool {
 	}
 }
 
+// Defines values for CBOMStorage.
+const (
+	CBOMStorageAppliance CBOMStorage = "appliance"
+	CBOMStorageS3        CBOMStorage = "s3"
+)
+
+// Valid indicates whether the value is a known member of the CBOMStorage enum.
+func (e CBOMStorage) Valid() bool {
+	switch e {
+	case CBOMStorageAppliance:
+		return true
+	case CBOMStorageS3:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CertificateInfoSource.
 const (
 	CertificateInfoSourceBuiltin CertificateInfoSource = "builtin"
@@ -329,6 +350,99 @@ func (e ConditionStatus) Valid() bool {
 	case True:
 		return true
 	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DatabaseDependencyTlsMode.
+const (
+	TLSDisable    DatabaseDependencyTlsMode = "disable"
+	TLSRequire    DatabaseDependencyTlsMode = "require"
+	TLSVerifyFull DatabaseDependencyTlsMode = "verify-full"
+)
+
+// Valid indicates whether the value is a known member of the DatabaseDependencyTlsMode enum.
+func (e DatabaseDependencyTlsMode) Valid() bool {
+	switch e {
+	case TLSDisable:
+		return true
+	case TLSRequire:
+		return true
+	case TLSVerifyFull:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DependencyMode.
+const (
+	ModeExternal DependencyMode = "external"
+	ModeManaged  DependencyMode = "managed"
+)
+
+// Valid indicates whether the value is a known member of the DependencyMode enum.
+func (e DependencyMode) Valid() bool {
+	switch e {
+	case ModeExternal:
+		return true
+	case ModeManaged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DependencyTestKind.
+const (
+	KindDatabase  DependencyTestKind = "database"
+	KindIdentity  DependencyTestKind = "identity"
+	KindMessaging DependencyTestKind = "messaging"
+)
+
+// Valid indicates whether the value is a known member of the DependencyTestKind enum.
+func (e DependencyTestKind) Valid() bool {
+	switch e {
+	case KindDatabase:
+		return true
+	case KindIdentity:
+		return true
+	case KindMessaging:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DependencyTestResultReason.
+const (
+	DependencyAuthFailed  DependencyTestResultReason = "authFailed"
+	DependencyFailed      DependencyTestResultReason = "failed"
+	DependencyInvalid     DependencyTestResultReason = "invalid"
+	DependencyNotFound    DependencyTestResultReason = "notFound"
+	DependencyTimeout     DependencyTestResultReason = "timeout"
+	DependencyUnreachable DependencyTestResultReason = "unreachable"
+	DependencyUntrusted   DependencyTestResultReason = "untrusted"
+)
+
+// Valid indicates whether the value is a known member of the DependencyTestResultReason enum.
+func (e DependencyTestResultReason) Valid() bool {
+	switch e {
+	case DependencyAuthFailed:
+		return true
+	case DependencyFailed:
+		return true
+	case DependencyInvalid:
+		return true
+	case DependencyNotFound:
+		return true
+	case DependencyTimeout:
+		return true
+	case DependencyUnreachable:
+		return true
+	case DependencyUntrusted:
 		return true
 	default:
 		return false
@@ -458,6 +572,7 @@ func (e RestoreProgressMessage) Valid() bool {
 // Defines values for RestoreProgressStep.
 const (
 	StepAppliance     RestoreProgressStep = "appliance"
+	StepCBOM          RestoreProgressStep = "cbom"
 	StepCertificate   RestoreProgressStep = "certificate"
 	StepDatabase      RestoreProgressStep = "database"
 	StepDone          RestoreProgressStep = "done"
@@ -474,6 +589,8 @@ const (
 func (e RestoreProgressStep) Valid() bool {
 	switch e {
 	case StepAppliance:
+		return true
+	case StepCBOM:
 		return true
 	case StepCertificate:
 		return true
@@ -688,6 +805,9 @@ type AuditEntryResult string
 // AuditLog defines model for AuditLog.
 type AuditLog struct {
 	Items []AuditEntry `json:"items"`
+
+	// Next The cursor of the following page; absent when no older entry is left.
+	Next *string `json:"next,omitempty"`
 }
 
 // BackupRecord defines model for BackupRecord.
@@ -817,6 +937,40 @@ type Backups struct {
 	Targets []BackupTarget `json:"targets"`
 }
 
+// CBOMRepository The CBOM repository ILM keeps CBOMs in, reachable only by ILM. Turned off, the CBOMs stored on the appliance are kept. Left out of an update, the current settings are kept.
+type CBOMRepository struct {
+	Enabled bool `json:"enabled"`
+
+	// S3 The external S3 bucket of `storage` s3; keys left out keep the stored ones for the same endpoint.
+	S3      *CBOMS3     `json:"s3,omitempty"`
+	Storage CBOMStorage `json:"storage"`
+}
+
+// CBOMS3 The external S3 bucket of `storage` s3; keys left out keep the stored ones for the same endpoint.
+type CBOMS3 struct {
+	AccessKey    *string `json:"accessKey,omitempty"`
+	AccessKeySet *bool   `json:"accessKeySet,omitempty"`
+	Bucket       string  `json:"bucket"`
+
+	// Ca The PEM CA bundle that signs the endpoint's certificate, when it is not publicly trusted.
+	Ca    *string `json:"ca,omitempty"`
+	CaSet *bool   `json:"caSet,omitempty"`
+
+	// Endpoint The https or http URL of the S3 service, without a path; without a scheme it is https.
+	Endpoint string `json:"endpoint"`
+
+	// Region Defaults to us-east-1.
+	Region *string `json:"region,omitempty"`
+
+	// RemoveCa Remove the stored CA bundle.
+	RemoveCa     *bool   `json:"removeCa,omitempty"`
+	SecretKey    *string `json:"secretKey,omitempty"`
+	SecretKeySet *bool   `json:"secretKeySet,omitempty"`
+}
+
+// CBOMStorage defines model for CBOMStorage.
+type CBOMStorage string
+
 // Catalogue defines model for Catalogue.
 type Catalogue struct {
 	Items []CatalogueItem `json:"items"`
@@ -902,6 +1056,88 @@ type DataVolume struct {
 	SizeBytes int64 `json:"sizeBytes"`
 }
 
+// DatabaseDependency The database; managed, or an external PostgreSQL database with `host`, `name` and `username`.
+type DatabaseDependency struct {
+	// Ca The PEM CA bundle that signs the server's certificate; verify-full needs it, otherwise the answer is 400 with field `ca`. Left out, the stored one is kept.
+	Ca    *string `json:"ca,omitempty"`
+	CaSet *bool   `json:"caSet,omitempty"`
+
+	// Host A host name or an IPv4 address.
+	Host *string        `json:"host,omitempty"`
+	Mode DependencyMode `json:"mode"`
+
+	// Name The database; letters, digits and `_ $ . -`, at most 63.
+	Name *string `json:"name,omitempty"`
+
+	// Password Required unless the stored one was given for the same host, port, database and user name.
+	Password    *string `json:"password,omitempty"`
+	PasswordSet *bool   `json:"passwordSet,omitempty"`
+
+	// Port Defaults to 5432.
+	Port *int `json:"port,omitempty"`
+
+	// TlsMode The sslmode of the connection; left out, the drivers' default uses TLS when the server offers it without verifying the server. ILM's core and scheduler verify the server with verify-full; its auth service and Keycloak encrypt the connection when the server offers TLS but never verify the server's certificate.
+	TlsMode  *DatabaseDependencyTlsMode `json:"tlsMode,omitempty"`
+	Username *string                    `json:"username,omitempty"`
+}
+
+// DatabaseDependencyTlsMode The sslmode of the connection; left out, the drivers' default uses TLS when the server offers it without verifying the server. ILM's core and scheduler verify the server with verify-full; its auth service and Keycloak encrypt the connection when the server offers TLS but never verify the server's certificate.
+type DatabaseDependencyTlsMode string
+
+// Dependencies defines model for Dependencies.
+type Dependencies struct {
+	// Database The database; managed, or an external PostgreSQL database with `host`, `name` and `username`.
+	Database DatabaseDependency `json:"database"`
+
+	// Identity The identity provider; the managed Keycloak, or an external OIDC provider with `issuer` and `clientId`.
+	Identity IdentityDependency `json:"identity"`
+
+	// Messaging The message broker; managed, or an external RabbitMQ broker with `host` and `username`.
+	Messaging MessagingDependency `json:"messaging"`
+}
+
+// DependenciesUpdate The dependencies to choose; one left out keeps its current choice.
+type DependenciesUpdate struct {
+	// Database The database; managed, or an external PostgreSQL database with `host`, `name` and `username`.
+	Database *DatabaseDependency `json:"database,omitempty"`
+
+	// Identity The identity provider; the managed Keycloak, or an external OIDC provider with `issuer` and `clientId`.
+	Identity *IdentityDependency `json:"identity,omitempty"`
+
+	// Messaging The message broker; managed, or an external RabbitMQ broker with `host` and `username`.
+	Messaging *MessagingDependency `json:"messaging,omitempty"`
+}
+
+// DependencyMode defines model for DependencyMode.
+type DependencyMode string
+
+// DependencyTest defines model for DependencyTest.
+type DependencyTest struct {
+	Kind DependencyTestKind `json:"kind"`
+
+	// Settings The external settings of the dependency `kind` names.
+	Settings DependencyTest_Settings `json:"settings"`
+}
+
+// DependencyTestKind defines model for DependencyTest.Kind.
+type DependencyTestKind string
+
+// DependencyTest_Settings The external settings of the dependency `kind` names.
+type DependencyTest_Settings struct {
+	union json.RawMessage
+}
+
+// DependencyTestResult defines model for DependencyTestResult.
+type DependencyTestResult struct {
+	Ok bool `json:"ok"`
+
+	// Reason A fixed reason; the error text of the dependency is never passed on. `notFound` is an issuer without a discovery document or a virtual host the broker refuses. For a database under verify-full, `authFailed` may also be a certificate that does not verify, which PostgreSQL's client reports alike: the test opens one session in the chosen mode and never sends the credentials with less verification. `untrusted` is a server certificate the CA does not sign or that does not name the host; `invalid` is an answer that is not the dependency's protocol or a discovery document that does not match the issuer.
+	Reason *DependencyTestResultReason `json:"reason,omitempty"`
+}
+
+// DependencyTestResultReason A fixed reason; the error text of the dependency is never passed on. `notFound` is an issuer without a discovery document or a virtual host the broker refuses. For a database under verify-full, `authFailed` may also be a certificate that does not verify, which PostgreSQL's client reports alike: the test opens one session in the chosen mode and never sends the credentials with less verification. `untrusted` is a server certificate the CA does not sign or that does not name the host; `invalid` is an answer that is not the dependency's protocol or a discovery document that does not match the issuer.
+type DependencyTestResultReason string
+
 // Error defines model for Error.
 type Error struct {
 	// Code A machine-readable error code.
@@ -924,6 +1160,22 @@ type HostKeyRequest struct {
 
 	// Port 22 when left out.
 	Port *int `json:"port,omitempty"`
+}
+
+// IdentityDependency The identity provider; the managed Keycloak, or an external OIDC provider with `issuer` and `clientId`.
+type IdentityDependency struct {
+	// Audiences The audiences ILM accepts in the provider's tokens, at most 16 without spaces. Without any, ILM accepts every token the issuer signs, whatever client it was issued for.
+	Audiences *[]string `json:"audiences,omitempty"`
+	ClientId  *string   `json:"clientId,omitempty"`
+
+	// ClientSecret Required unless the stored one was given for the same issuer and client ID.
+	ClientSecret    *string `json:"clientSecret,omitempty"`
+	ClientSecretSet *bool   `json:"clientSecretSet,omitempty"`
+
+	// Issuer The issuer URL, starting with https://.
+	Issuer *string        `json:"issuer,omitempty"`
+	Mode   DependencyMode `json:"mode"`
+	Scopes *[]string      `json:"scopes,omitempty"`
 }
 
 // KubeconfigRequest defines model for KubeconfigRequest.
@@ -1002,6 +1254,31 @@ type MailTestFailure struct {
 // MailTestFailureStage The stage that failed.
 type MailTestFailureStage string
 
+// MessagingDependency The message broker; managed, or an external RabbitMQ broker with `host` and `username`.
+type MessagingDependency struct {
+	// Ca The PEM CA bundle that signs the broker's certificate; `tls` needs it, otherwise the answer is 400 with field `ca`. Left out, the stored one is kept.
+	Ca    *string `json:"ca,omitempty"`
+	CaSet *bool   `json:"caSet,omitempty"`
+
+	// Host A host name or an IPv4 address.
+	Host *string        `json:"host,omitempty"`
+	Mode DependencyMode `json:"mode"`
+
+	// Password Required unless the stored one was given for the same host, port, virtual host and user name.
+	Password    *string `json:"password,omitempty"`
+	PasswordSet *bool   `json:"passwordSet,omitempty"`
+
+	// Port Defaults to 5672, or 5671 with `tls`.
+	Port *int `json:"port,omitempty"`
+
+	// Tls Connect with AMQPS to `port`, verifying the broker against `ca`.
+	Tls      *bool   `json:"tls,omitempty"`
+	Username *string `json:"username,omitempty"`
+
+	// VirtualHost Defaults to /.
+	VirtualHost *string `json:"virtualHost,omitempty"`
+}
+
 // NFSSettings defines model for NFSSettings.
 type NFSSettings struct {
 	Export string  `json:"export"`
@@ -1042,31 +1319,59 @@ type PlatformComponent struct {
 	NeedsMail bool `json:"needsMail"`
 
 	// Private Whether the component's image comes from a registry that needs credentials.
-	Private bool   `json:"private"`
-	Title   string `json:"title"`
+	Private bool `json:"private"`
+
+	// Registered Whether ILM registers the component by itself once it runs. False for a component that speaks only
+	// interface v1, which is registered by hand in ILM with `url`.
+	Registered bool   `json:"registered"`
+	Title      string `json:"title"`
+
+	// Url The in-cluster address to register a component that is not registered by itself with.
+	Url *string `json:"url,omitempty"`
 }
 
 // PlatformSettings defines model for PlatformSettings.
 type PlatformSettings struct {
 	Components []string `json:"components"`
-	HostName   string   `json:"hostName"`
-	Mail       *Mail    `json:"mail,omitempty"`
+
+	// Dependencies The dependencies to choose; one left out keeps its current choice.
+	Dependencies *DependenciesUpdate `json:"dependencies,omitempty"`
+	HostName     string              `json:"hostName"`
+	Mail         *Mail               `json:"mail,omitempty"`
+
+	// Utils Install the utils service; left out keeps the current choice.
+	Utils *bool `json:"utils,omitempty"`
 }
 
 // PlatformState defines model for PlatformState.
 type PlatformState struct {
-	Components []PlatformComponent `json:"components"`
-	HostName   string              `json:"hostName"`
-	IlmVersion string              `json:"ilmVersion"`
+	// Cbom The CBOM repository ILM keeps CBOMs in, reachable only by ILM. Turned off, the CBOMs stored on the appliance are kept. Left out of an update, the current settings are kept.
+	Cbom         CBOMRepository      `json:"cbom"`
+	Components   []PlatformComponent `json:"components"`
+	Dependencies Dependencies        `json:"dependencies"`
+	HostName     string              `json:"hostName"`
+	IlmVersion   string              `json:"ilmVersion"`
+
+	// SetupComplete Once setup is complete a dependency no longer switches between managed and external.
+	SetupComplete bool `json:"setupComplete"`
+	Utils         bool `json:"utils"`
 }
 
 // PlatformUpdate defines model for PlatformUpdate.
 type PlatformUpdate struct {
-	Components []string `json:"components"`
-	HostName   string   `json:"hostName"`
+	// Cbom The CBOM repository ILM keeps CBOMs in, reachable only by ILM. Turned off, the CBOMs stored on the appliance are kept. Left out of an update, the current settings are kept.
+	Cbom       *CBOMRepository `json:"cbom,omitempty"`
+	Components []string        `json:"components"`
+
+	// Dependencies The dependencies to choose; one left out keeps its current choice.
+	Dependencies *DependenciesUpdate `json:"dependencies,omitempty"`
+	HostName     string              `json:"hostName"`
 
 	// IlmVersion Optional; must be the installed version, which cannot be changed.
 	IlmVersion *string `json:"ilmVersion,omitempty"`
+
+	// Utils Install the utils service; left out keeps the current choice.
+	Utils *bool `json:"utils,omitempty"`
 }
 
 // Proxy defines model for Proxy.
@@ -1233,6 +1538,9 @@ type RestoreStart struct {
 	// Confirm Must be true; what the appliance holds now is replaced by the backup.
 	Confirm bool `json:"confirm"`
 
+	// Dependencies The dependencies to choose; one left out keeps its current choice.
+	Dependencies *DependenciesUpdate `json:"dependencies,omitempty"`
+
 	// IlmHostName The ILM host name to set on a fresh restore; left out, the backup's is kept. A restore in place takes only the backup's.
 	IlmHostName *string `json:"ilmHostName,omitempty"`
 
@@ -1265,6 +1573,7 @@ type RestoreSummary struct {
 	Components       []string               `json:"components"`
 	Database         RestoreSummaryDatabase `json:"database"`
 	DatabaseIncluded bool                   `json:"databaseIncluded"`
+	Dependencies     Dependencies           `json:"dependencies"`
 
 	// HostName The node host name the backup's manifest names; the manifest is not proof of where the backup comes from.
 	HostName string `json:"hostName"`
@@ -1469,6 +1778,9 @@ type Unauthorized = Error
 
 // GetAuditParams defines parameters for GetAudit.
 type GetAuditParams struct {
+	// Before The `next` cursor of the previous page; the page starts at the entry written before that page's last one. A cursor whose entries the rotation of the log dropped gives an empty page.
+	Before *string `form:"before,omitempty" json:"before,omitempty"`
+
 	// Limit The maximum number of entries.
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
@@ -1540,6 +1852,9 @@ type PutPlatformJSONRequestBody = PlatformUpdate
 // PostPlatformAdminCredentialJSONRequestBody defines body for PostPlatformAdminCredential for application/json ContentType.
 type PostPlatformAdminCredentialJSONRequestBody = AdminCredentialRequest
 
+// PostDependencyTestJSONRequestBody defines body for PostDependencyTest for application/json ContentType.
+type PostDependencyTestJSONRequestBody = DependencyTest
+
 // PostRecoveryKitJSONRequestBody defines body for PostRecoveryKit for application/json ContentType.
 type PostRecoveryKitJSONRequestBody = RecoveryKitRequest
 
@@ -1588,6 +1903,94 @@ type PostTrustPreviewJSONRequestBody = TrustUpload
 // PutWizardPlatformJSONRequestBody defines body for PutWizardPlatform for application/json ContentType.
 type PutWizardPlatformJSONRequestBody = PlatformSettings
 
+// AsDatabaseDependency returns the union data inside the DependencyTest_Settings as a DatabaseDependency
+func (t DependencyTest_Settings) AsDatabaseDependency() (DatabaseDependency, error) {
+	var body DatabaseDependency
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromDatabaseDependency overwrites any union data inside the DependencyTest_Settings as the provided DatabaseDependency
+func (t *DependencyTest_Settings) FromDatabaseDependency(v DatabaseDependency) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeDatabaseDependency performs a merge with any union data inside the DependencyTest_Settings, using the provided DatabaseDependency
+func (t *DependencyTest_Settings) MergeDatabaseDependency(v DatabaseDependency) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMessagingDependency returns the union data inside the DependencyTest_Settings as a MessagingDependency
+func (t DependencyTest_Settings) AsMessagingDependency() (MessagingDependency, error) {
+	var body MessagingDependency
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMessagingDependency overwrites any union data inside the DependencyTest_Settings as the provided MessagingDependency
+func (t *DependencyTest_Settings) FromMessagingDependency(v MessagingDependency) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMessagingDependency performs a merge with any union data inside the DependencyTest_Settings, using the provided MessagingDependency
+func (t *DependencyTest_Settings) MergeMessagingDependency(v MessagingDependency) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsIdentityDependency returns the union data inside the DependencyTest_Settings as a IdentityDependency
+func (t DependencyTest_Settings) AsIdentityDependency() (IdentityDependency, error) {
+	var body IdentityDependency
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromIdentityDependency overwrites any union data inside the DependencyTest_Settings as the provided IdentityDependency
+func (t *DependencyTest_Settings) FromIdentityDependency(v IdentityDependency) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeIdentityDependency performs a merge with any union data inside the DependencyTest_Settings, using the provided IdentityDependency
+func (t *DependencyTest_Settings) MergeIdentityDependency(v IdentityDependency) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t DependencyTest_Settings) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *DependencyTest_Settings) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetAccess The issued kubeconfigs and the talosconfigs that have not expired
@@ -1605,7 +2008,7 @@ type ServerInterface interface {
 	// GetAppliance The configuration of the appliance, without secret values
 	// (GET /appliance)
 	GetAppliance(w http.ResponseWriter, r *http.Request)
-	// GetAudit The most recent audit entries, newest first
+	// GetAudit The audit entries, newest first, a page at a time
 	// (GET /audit)
 	GetAudit(w http.ResponseWriter, r *http.Request, params GetAuditParams)
 	// GetBackups The local backups and the backup targets
@@ -1677,6 +2080,9 @@ type ServerInterface interface {
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
 	// (POST /platform/admin-credential)
 	PostPlatformAdminCredential(w http.ResponseWriter, r *http.Request)
+	// PostDependencyTest Test the connection to an external dependency
+	// (POST /platform/dependencies/test)
+	PostDependencyTest(w http.ResponseWriter, r *http.Request)
 	// GetRecoveryKit Whether the recovery kit is issued and confirmed
 	// (GET /recovery-kit)
 	GetRecoveryKit(w http.ResponseWriter, r *http.Request)
@@ -1859,6 +2265,19 @@ func (siw *ServerInterfaceWrapper) GetAudit(w http.ResponseWriter, r *http.Reque
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetAuditParams
+
+	// ------------- Optional query parameter "before" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before", r.URL.Query(), &params.Before, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before", Err: err})
+		}
+		return
+	}
 
 	// ------------- Optional query parameter "limit" -------------
 
@@ -2284,6 +2703,20 @@ func (siw *ServerInterfaceWrapper) PostPlatformAdminCredential(w http.ResponseWr
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostPlatformAdminCredential(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostDependencyTest operation middleware
+func (siw *ServerInterfaceWrapper) PostDependencyTest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostDependencyTest(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2940,6 +3373,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/registries/{host}", wrapper.PutRegistry)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/platform", wrapper.GetPlatform)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/platform", wrapper.PutPlatform)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/platform/dependencies/test", wrapper.PostDependencyTest)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/mail", wrapper.DeleteMail)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/mail", wrapper.GetMail)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/mail", wrapper.PutMail)
@@ -4961,6 +5395,84 @@ func (response PostPlatformAdminCredential410JSONResponse) VisitPostPlatformAdmi
 	return err
 }
 
+type PostDependencyTestRequestObject struct {
+	Body *PostDependencyTestJSONRequestBody
+}
+
+type PostDependencyTestResponseObject interface {
+	VisitPostDependencyTestResponse(w http.ResponseWriter) error
+}
+
+type PostDependencyTest200JSONResponse DependencyTestResult
+
+func (response PostDependencyTest200JSONResponse) VisitPostDependencyTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostDependencyTest400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostDependencyTest400JSONResponse) VisitPostDependencyTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostDependencyTest401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostDependencyTest401JSONResponse) VisitPostDependencyTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostDependencyTest403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostDependencyTest403JSONResponse) VisitPostDependencyTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostDependencyTest409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostDependencyTest409JSONResponse) VisitPostDependencyTestResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetRecoveryKitRequestObject struct {
 }
 
@@ -6900,7 +7412,7 @@ type StrictServerInterface interface {
 	// GetAppliance The configuration of the appliance, without secret values
 	// (GET /appliance)
 	GetAppliance(ctx context.Context, request GetApplianceRequestObject) (GetApplianceResponseObject, error)
-	// GetAudit The most recent audit entries, newest first
+	// GetAudit The audit entries, newest first, a page at a time
 	// (GET /audit)
 	GetAudit(ctx context.Context, request GetAuditRequestObject) (GetAuditResponseObject, error)
 	// GetBackups The local backups and the backup targets
@@ -6972,6 +7484,9 @@ type StrictServerInterface interface {
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
 	// (POST /platform/admin-credential)
 	PostPlatformAdminCredential(ctx context.Context, request PostPlatformAdminCredentialRequestObject) (PostPlatformAdminCredentialResponseObject, error)
+	// PostDependencyTest Test the connection to an external dependency
+	// (POST /platform/dependencies/test)
+	PostDependencyTest(ctx context.Context, request PostDependencyTestRequestObject) (PostDependencyTestResponseObject, error)
 	// GetRecoveryKit Whether the recovery kit is issued and confirmed
 	// (GET /recovery-kit)
 	GetRecoveryKit(ctx context.Context, request GetRecoveryKitRequestObject) (GetRecoveryKitResponseObject, error)
@@ -7876,6 +8391,37 @@ func (sh *strictHandler) PostPlatformAdminCredential(w http.ResponseWriter, r *h
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PostPlatformAdminCredentialResponseObject); ok {
 		if err := validResponse.VisitPostPlatformAdminCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostDependencyTest operation middleware
+func (sh *strictHandler) PostDependencyTest(w http.ResponseWriter, r *http.Request) {
+	var request PostDependencyTestRequestObject
+
+	var body PostDependencyTestJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostDependencyTest(ctx, request.(PostDependencyTestRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostDependencyTest")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostDependencyTestResponseObject); ok {
+		if err := validResponse.VisitPostDependencyTestResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

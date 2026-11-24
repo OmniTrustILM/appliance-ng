@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,15 +40,7 @@ const (
 
 // ilmMarker creates the marker group, or checks it and the Keycloak client after a restore.
 func ilmMarker(ctx context.Context, o options) error {
-	password, err := readSecret(o.credentialPasswordFile)
-	if err != nil {
-		return err
-	}
-	pfx, err := os.ReadFile(o.credential)
-	if err != nil {
-		return err
-	}
-	cert, err := credentialCertificate(pfx, password)
+	cert, password, err := readCredential(o)
 	if err != nil {
 		return err
 	}
@@ -96,6 +89,21 @@ func checkAfterRestore(ctx context.Context, ui *http.Client, o options, password
 	}
 	step("manager logs")
 	return cl.checkManager(ctx, k.Kubeconfig, secret, password)
+}
+
+// readCredential reads the administrator credential kept in o.credential and the password in
+// o.credentialPasswordFile, and returns it as a TLS client certificate with the password.
+func readCredential(o options) (tls.Certificate, string, error) {
+	password, err := readSecret(o.credentialPasswordFile)
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	pfx, err := os.ReadFile(o.credential)
+	if err != nil {
+		return tls.Certificate{}, "", err
+	}
+	cert, err := credentialCertificate(pfx, password)
+	return cert, password, err
 }
 
 // createMarker creates the marker group unless it exists.

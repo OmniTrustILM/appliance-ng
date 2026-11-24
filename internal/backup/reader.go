@@ -238,6 +238,16 @@ func Verify(r io.Reader, id age.Identity) (Manifest, error) {
 	})
 }
 
+// VerifyEach is Verify that also hands every member except the manifest to check, in archive order with chunks
+// joined; check may read as much of the member as it wants. The first error of check ends the walk.
+func VerifyEach(r io.Reader, id age.Identity, check func(name string, r io.Reader) error) (Manifest, error) {
+	d, err := newDecoder(r, id)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return d.walk(func(h *tar.Header) error { return d.extractMember(h, check) })
+}
+
 // Extract decrypts the archive and calls fn once per logical member, in archive order, with one reader over the
 // member's content (chunks joined). It streams, so fn may already have run for earlier members when a damaged archive
 // is detected: run Verify first. Extract still fails with ErrTampered or ErrTruncated when the archive does not match

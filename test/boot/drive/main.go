@@ -23,16 +23,20 @@
 //	drive ilm-marker --create|--check --url <console> --host-name <fqdn> --credential <p12>
 //	            --credential-password-file <file> --ui-url <url> --ui-addr <host:port>
 //	            [--kit <file> --passphrase-file <file> --kube-addr <host:port> --client-secret-out <file>]
+//	drive cbom --create|--check --url <console> --user <user> --password <password> --seed-file <file>
+//	            --host-name <fqdn> --credential <p12> --credential-password-file <file> --ui-url <url>
+//	            --ui-addr <host:port>
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
 // gateway and DNS servers of the flags or else of DHCP, then applies; --mode restore sets the appliance up to restore
 // a backup instead of running wizard part 2. part2 signs in to the Appliance Manager and answers wizard part 2 with
 // the host name and the component, if any.
-// check signs in and checks that the setup is complete, the built-in certificate is served and the audit log holds
-// the sign-in and the wizard. With --connector it downloads the ILM administrator's credential and checks, through
-// the ILM Core API at --ui-url reached at --ui-addr, that the connector registered. With --credential it keeps the
-// credential there, mode 0600, encrypted with the password in --credential-password-file.
+// check signs in and checks that the setup is complete, the manager applied its ILM settings through its own ILM
+// identity, the built-in certificate is served and the audit log holds the sign-in and the wizard. With --connector
+// it downloads the ILM administrator's credential and checks, through the ILM Core API at --ui-url reached at
+// --ui-addr, that the connector registered. With --credential it keeps the credential there, mode 0600, encrypted
+// with the password in --credential-password-file.
 // kit signs in and issues the recovery kit, unless one is issued already (a browser test did), and confirms it. The
 // kit goes to --out, mode 0600. It opens the kit with the passphrase in --passphrase-file, checks that its backup key
 // is the appliance's, that its kubeconfig and talosconfig reach the cluster and the node at --kube-addr and --apid,
@@ -48,9 +52,8 @@
 // waits until both hold exactly the new backup under --dir. It downloads the backup and opens it with the key of the
 // kit in --kit: the database must be included and managed, and the host name in appliance.yaml the one of
 // --host-name. It prints names, sizes and counts, never a secret or a dump's content.
-// api signs in to the Appliance Manager like part2, sends one request with the JSON body, if any, and prints the
-// JSON answer as it is. The caller chooses a path whose answer holds no secret: not the ILM administrator's
-// credential or a TOTP enrolment.
+// api signs in to the Appliance Manager like part2, sends one request with the JSON body, if any, and prints its
+// method and path only, never the answer.
 // restore signs in to an appliance set up to restore, uploads the backup in --backup, checks it with the kit in --kit
 // and starts a restore that sets the ILM host name --ilm-host, resuming it with the kit when it waits for it. Once it
 // is done it checks that the status records the restore test, issues the kit again from --kit with the same
@@ -60,6 +63,10 @@
 // is there, reads the ILM client's secret with the kubeconfig of the kit in --kit, checks that the Keycloak token
 // endpoint of the ILM accepts it and refuses another one, and that no manager log holds it or the credential's
 // password; with --client-secret-out it keeps the secret there, mode 0600, for the boot test's leak check.
+// cbom signs in and reaches the ILM like ilm-marker. --create turns the CBOM repository on with its store on the
+// appliance, waits until the CBOMRepositoryApplied and ILMSettingsApplied conditions are True and uploads a CBOM
+// through ILM. --check waits for both conditions and checks that ILM lists that CBOM and reads its content from the
+// repository.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 and check wait until the console serves a
@@ -176,6 +183,7 @@ func main() {
 	run, ok := map[string]func(context.Context, options) error{
 		cmdPart1: part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
 		cmdBackup: backupNow, "serve-targets": serveTargets, cmdRestore: restoreBackup, "ilm-marker": ilmMarker,
+		cmdCBOM: cbomCommand,
 	}[cmd]
 	if !ok {
 		usage()
@@ -199,7 +207,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore --url <console> [flags]")
-	fmt.Fprintln(os.Stderr, "       drive ilm-marker --create|--check --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "       drive ilm-marker|cbom --create|--check --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
 	os.Exit(2)
@@ -256,6 +264,10 @@ func (o options) validateCommand(cmd string) error {
 		return errors.New("--kit, --passphrase-file, --dir, --guest-host, --sftp-fingerprint, --sftp-password-file and --s3-secret-file are required")
 	case cmd == cmdRestore && (o.backupFile == "" || o.kitFile == "" || o.passphraseFile == "" || o.ilmHost == "" || o.out == ""):
 		return errors.New("--backup, --kit, --passphrase-file, --ilm-host and --out are required")
+	case cmd == cmdCBOM && (o.credential == "" || o.uiURL == "" || o.uiAddr == ""):
+		return errors.New("--credential, --credential-password-file, --ui-url and --ui-addr are required")
+	case cmd == cmdCBOM && o.create == o.check:
+		return errors.New("one of --create and --check is required")
 	}
 	return nil
 }
@@ -386,7 +398,7 @@ func check(ctx context.Context, o options) error {
 	step("status")
 	var st struct {
 		Setup      string
-		Conditions []struct{ Type, Status string }
+		Conditions []condition
 	}
 	if err := c.call(ctx, http.MethodGet, "/appliance/api/v1/status", nil, &st); err != nil {
 		return err
@@ -399,11 +411,15 @@ func check(ctx context.Context, o options) error {
 		return fmt.Errorf("setup is %q, want complete", st.Setup)
 	}
 	for _, want := range []string{"HandoverComplete", "AddonsReady", "PlatformReady", "CertificateReady"} {
-		if !slices.ContainsFunc(st.Conditions, func(c struct{ Type, Status string }) bool {
+		if !slices.ContainsFunc(st.Conditions, func(c condition) bool {
 			return c.Type == want && c.Status == "True"
 		}) {
 			return fmt.Errorf("condition %s is not True", want)
 		}
+	}
+	step("ILM settings")
+	if err := waitUntil(ctx, registerTimeout, func() error { return c.conditionsTrue(ctx, conditionILMSettings) }); err != nil {
+		return err
 	}
 	step("audit log")
 	if err := c.checkAudit(ctx); err != nil {
@@ -429,7 +445,7 @@ func check(ctx context.Context, o options) error {
 	return waitUntil(ctx, registerTimeout, func() error { return connectorRegistered(ctx, ui, o.uiURL, o.connector) })
 }
 
-// apiCall signs in to the Appliance Manager, sends the request of o and prints the answer.
+// apiCall signs in to the Appliance Manager and sends the request of o.
 func apiCall(ctx context.Context, o options) error {
 	c, err := managerClient(ctx, o)
 	if err != nil {
@@ -438,19 +454,17 @@ func apiCall(ctx context.Context, o options) error {
 	if err := c.signIn(ctx, o); err != nil {
 		return err
 	}
+	return c.send(ctx, o)
+}
+
+// send sends the request of o and prints its step name, never the answer, which may hold a secret.
+func (c *client) send(ctx context.Context, o options) error {
 	step(o.method + " " + o.path)
 	var body any
 	if o.body != "" {
 		body = json.RawMessage(o.body)
 	}
-	var answer []byte
-	if err := c.call(ctx, o.method, o.path, body, &answer); err != nil {
-		return err
-	}
-	if len(answer) > 0 {
-		fmt.Println(string(answer))
-	}
-	return nil
+	return c.call(ctx, o.method, o.path, body, nil)
 }
 
 // keptCredential downloads the ILM administrator's credential, under the password in o.credentialPasswordFile or a

@@ -21,6 +21,7 @@ func TestRestoreStatusPhases(t *testing.T) {
 		"stop":            {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepStop}, true, true, true, v1alpha1.RestoreStepStop},
 		"ilmSecrets":      {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepILMSecrets}, true, true, true, v1alpha1.RestoreStepILMSecrets},
 		"database":        {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepDatabase}, true, true, true, v1alpha1.RestoreStepDatabase},
+		"cbom":            {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepCBOM}, true, true, true, v1alpha1.RestoreStepCBOM},
 		"start":           {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepStart}, true, false, true, v1alpha1.RestoreStepStart},
 		"certificate":     {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepCertificate}, true, false, false, v1alpha1.RestoreStepCertificate},
 		"done":            {&v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepDone}, false, false, false, v1alpha1.RestoreStepDone},

@@ -268,3 +268,25 @@ func TestTrustBuiltinCARefuses(t *testing.T) {
 		t.Error("trustBuiltinCA without a console passed")
 	}
 }
+
+func TestDriveAPIPrintsNoAnswers(t *testing.T) {
+	const answer = `{"seed":"ANSWER-MARKER"}`
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Method + " " + r.URL.Path
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	o := options{method: http.MethodPut, path: "/appliance/api/v1/node", body: `{"dns":["192.0.2.53"]}`}
+	var err error
+	out := captureStdout(t, func() { err = newClient(srv.URL, nil, "").send(context.Background(), o) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "PUT /appliance/api/v1/node" {
+		t.Errorf("request %q, want PUT /appliance/api/v1/node", got)
+	}
+	if strings.Contains(out, "ANSWER-MARKER") || strings.TrimSpace(out) != "drive: PUT /appliance/api/v1/node" {
+		t.Errorf("output %q, want the step name only", out)
+	}
+}

@@ -23,8 +23,8 @@ func TestServersAreSplitByTag(t *testing.T) {
 	if len(setup) != 9 {
 		t.Errorf("setup operations = %v, want 9", setup)
 	}
-	if len(manager) != 56 {
-		t.Errorf("manager operations = %v, want 56", manager)
+	if len(manager) != 57 {
+		t.Errorf("manager operations = %v, want 57", manager)
 	}
 	for _, m := range setup {
 		if !strings.Contains(m, "Setup") {

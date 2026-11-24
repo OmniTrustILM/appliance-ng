@@ -13,8 +13,8 @@
 # With E2E=1 the Playwright tests in test/e2e answer both wizard parts in Chromium instead of drive, and change
 # settings in the console after the checks above, issuing the recovery kit that sign-in asks for; run npm ci and npx
 # playwright install chromium in test/e2e first.
-# With RESTORE=1 a second VM restores the first one's backup under another ILM host name; see test/boot/drive for its
-# checks. The leak check then also covers the second VM's serial log, the credential's password and the ILM client's
+# With RESTORE=1 the first VM also turns the CBOM repository on and stores a CBOM through ILM before the backup, and a
+# second VM restores the first one's backup under another ILM host name; see test/boot/drive for its checks. The leak check then also covers the second VM's serial log, the credential's password and the ILM client's
 # secret.
 # Prints "PASS <seconds to ready>" (with RESTORE=1 "PASS <seconds> restored <seconds>") or "FAIL <reason>"; exits 0
 # or 1. The VMs are always stopped.
@@ -216,6 +216,13 @@ drive_marker() { # drive_marker <--create|--check>: creates or checks the ILM gr
   "$drive" ilm-marker "$action" "${args[@]}" >&2 || fail "drive ilm-marker $action failed"
 }
 
+drive_cbom() { # drive_cbom <--create|--check>: turns the CBOM repository on and stores a CBOM, or checks it is there
+  local action="$1"
+  "$drive" cbom "$action" --url "$CONSOLE_URL" --user "$admin" --password "$password" --seed-file "$seed_file" \
+    --host-name "$host" --credential "$p12_file" --credential-password-file "$p12_password_file" \
+    --ui-url "https://$host:10443" --ui-addr "$UI_ADDR" >&2 || fail "drive cbom $action failed"
+}
+
 # serve_targets starts the SFTP and S3 servers on the host and sets targets_fingerprint to the SFTP host key's.
 serve_targets() {
   local _
@@ -324,7 +331,7 @@ ui_answers() { # ui_answers: waits until the ILM UI of the VM under test answers
 }
 
 # restore_test stops the first VM, sets up the second one on a new disk to restore and restores the first VM's
-# backup onto it, then checks the first VM's credential and Keycloak on it.
+# backup onto it, then checks the first VM's credential, Keycloak and the CBOM on it.
 restore_test() {
   local backups=("$targets_dir"/sftp/*.ilmbackup)
   [[ ${#backups[@]} -eq 1 && -f "${backups[0]}" ]] || fail "the SFTP target holds no single backup to restore"
@@ -343,6 +350,7 @@ restore_test() {
   restored=$ready
   ui_answers
   drive_marker --check
+  drive_cbom --check
   client_secret="$(cat "$client_secret_file")" || fail "drive ilm-marker kept no client secret"
 }
 
@@ -377,7 +385,10 @@ if [[ "$E2E" == 1 ]]; then
 fi
 # With E2E=1 the browser issued the kit; drive then only checks it.
 drive_wizard kit
-if [[ "$RESTORE" == 1 ]]; then drive_marker --create; fi
+if [[ "$RESTORE" == 1 ]]; then
+  drive_marker --create
+  drive_cbom --create
+fi
 serve_targets
 drive_wizard backup "$targets_fingerprint"
 drive_wizard access

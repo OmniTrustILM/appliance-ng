@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
@@ -1127,5 +1129,63 @@ func TestRunnerBusy(t *testing.T) {
 	}
 	if f.runner.Busy() {
 		t.Error("busy after the backup ended")
+	}
+}
+
+func TestBackupOfAnExternalDatabase(t *testing.T) {
+	f := newFixture(t)
+	secret(t, kube.SystemNamespace, "appliance-database", map[string][]byte{"username": []byte("ilm"), "password": []byte("pw")})
+	a := getAppliance(t)
+	a.Spec.Platform.Database = &v1alpha1.ExternalDatabase{Host: "db.example.com", Port: 5433, Name: "ilmdb", CredentialsRef: "appliance-database"}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	external := &fakeDumper{data: testDump}
+	var chosen v1alpha1.ExternalDatabase
+	f.runner.deps.External = func(db v1alpha1.ExternalDatabase) Dumper {
+		chosen = db
+		return external
+	}
+
+	rec := mustRun(t, f, RunManual, nil)
+
+	if f.dumper.calls != 0 || external.calls != 1 || chosen != *a.Spec.Platform.Database {
+		t.Errorf("managed dumps %d, external dumps %d of %+v", f.dumper.calls, external.calls, chosen)
+	}
+	data, err := os.ReadFile(filepath.Join(f.dir, rec.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := Verify(bytes.NewReader(data), f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Database != "external" || !m.DatabaseIncluded {
+		t.Errorf("manifest database %q included %v", m.Database, m.DatabaseIncluded)
+	}
+}
+
+func TestExternalDumpers(t *testing.T) {
+	ca := &v1alpha1.SecretKeyRef{Name: "appliance-database", Key: "ca.crt"}
+	d := ExternalDumpers(testClient, &rest.Config{}, "registry.example.com/postgresql:18")(v1alpha1.ExternalDatabase{
+		Host: "db.example.com", Port: 5433, Name: "ilmdb", CredentialsRef: "appliance-database", TLSMode: "verify-full", CA: ca,
+	})
+	want := ExternalDatabase{Host: "db.example.com", Port: 5433, Name: "ilmdb", CredentialsSecret: "appliance-database",
+		TLSMode: "verify-full", CA: ca, Image: "registry.example.com/postgresql:18"}
+	if e, ok := d.(*externalDumper); !ok || !reflect.DeepEqual(e.db, want) {
+		t.Errorf("dumper %+v, want the external one of %+v", d, want)
+	}
+}
+
+func TestBackupOfAnExternalDatabaseNeedsItsDumper(t *testing.T) {
+	f := newFixture(t)
+	secret(t, kube.SystemNamespace, "appliance-database", map[string][]byte{"username": []byte("ilm"), "password": []byte("pw")})
+	a := getAppliance(t)
+	a.Spec.Platform.Database = &v1alpha1.ExternalDatabase{Host: "db.example.com", Port: 5432, Name: "ilm", CredentialsRef: "appliance-database"}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.runner.Run(context.Background(), RunManual, nil); err == nil {
+		t.Error("backed up an external database without its dumper")
 	}
 }

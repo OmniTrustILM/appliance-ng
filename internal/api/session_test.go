@@ -125,7 +125,11 @@ func TestSignInLockedFromOnePeerOnly(t *testing.T) {
 	}
 	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
 	rec := h.requestFrom("192.0.2.11:40000", http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
+	wantStatus(t, rec, http.StatusUnauthorized) // the user's short delay holds at every address
+	h.now = h.now.Add(2 * time.Second)
+	rec = h.requestFrom("192.0.2.11:40000", http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil)
 	wantStatus(t, rec, http.StatusOK)
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/session", signInBody(testUser, testPassword, h.code()), nil), http.StatusUnauthorized)
 }
 
 func TestSignInRateLimitedPerPeer(t *testing.T) {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SubmitEvent } from 'react';
+import { useEffect, useId, useRef, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
 import { Alert } from '../components/Alert';
 import { Button } from '../components/Button';
@@ -22,6 +22,7 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
   const [error, setError] = useState<string>();
   const [serverTime, setServerTime] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const secretId = useId();
 
   // Every enrolment discards the seed of the one before, so a mount asks for one only, also when StrictMode runs the
   // effect twice.
@@ -75,8 +76,16 @@ export function TotpPage({ onDone, onExpired }: Readonly<{ onDone: () => void; o
             </ol>
             {enrolment && (
               <>
-                <p className="mb-1.5 text-sm font-medium">Secret</p>
-                <p className="mb-[18px] select-all break-all rounded-md bg-surface-sunken px-3 py-2.5 font-mono text-sm">{enrolment.seed}</p>
+                <label htmlFor={secretId} className="mb-1.5 block text-sm font-medium">Secret</label>
+                <input
+                  id={secretId}
+                  readOnly
+                  value={enrolment.seed}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onFocus={(event) => event.currentTarget.select()}
+                  className="mb-[18px] block w-full rounded-md border-0 bg-surface-sunken px-3 py-2.5 font-mono text-sm"
+                />
               </>
             )}
             <Field

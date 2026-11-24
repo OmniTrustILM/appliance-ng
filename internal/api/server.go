@@ -46,7 +46,8 @@ const (
 // AuditStore records the changes made through the API.
 type AuditStore interface {
 	Write(e audit.Entry) error
-	Tail(n int) ([]audit.Entry, error)
+	// Page returns up to n entries, newest first, written before the cursor before, and the cursor of the next page.
+	Page(before string, n int) (entries []audit.Entry, next string, err error)
 }
 
 // BackupRunner takes backups, serves the local ones and reaches the targets.
@@ -93,6 +94,9 @@ type Deps struct {
 	Restore Restorer
 	// RestoreDir keeps the backup uploaded or fetched for a restore.
 	RestoreDir string
+	// CheckDatabase opens a session on an external database as username with password, verifying the server
+	// against the PEM ca when set, as backup.CheckExternal does; without it a database test fails.
+	CheckDatabase func(ctx context.Context, db backup.ExternalDatabase, username, password string, ca []byte) error
 }
 
 // Server serves the manager's API under auth.APIBase.
@@ -122,6 +126,10 @@ type Server struct {
 	inspected *inspection
 	// checkSpace is storage.Check; tests replace it.
 	checkSpace func(path string, expected uint64) error
+	// identityClient returns the HTTP client that reaches identity providers; tests replace it.
+	identityClient func(ctx context.Context, a *v1alpha1.Appliance) (*http.Client, error)
+	// openBroker is dialBroker; tests replace it.
+	openBroker func(ctx context.Context, mq v1alpha1.ExternalMessaging, username, password string, ca []byte) error
 }
 
 // NewServer returns the API server on deps.
@@ -129,7 +137,7 @@ func NewServer(deps Deps) *Server {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Server{
+	s := &Server{
 		deps:          deps,
 		sessions:      auth.NewSessions(deps.Now).WithUserCheck(accountExists(deps.Users)),
 		limiter:       auth.SignInLimiter(),
@@ -139,6 +147,8 @@ func NewServer(deps Deps) *Server {
 		sendMail:      mail.SendTest,
 		checkSpace:    storage.Check,
 	}
+	s.identityClient, s.openBroker = s.identityHTTPClient, dialBroker
+	return s
 }
 
 // accountExists returns the check that keeps a session only while its user is a console account. A failed read
@@ -191,6 +201,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPut, registriesPath+"/{host}"), change(AuditEntryActionRegistrySet))
 	mux.Handle(route(http.MethodDelete, registriesPath+"/{host}"), change(AuditEntryActionRegistryRemove))
 	mux.Handle(route(http.MethodPut, platformPath), change(AuditEntryActionPlatformSettings))
+	mux.Handle(route(http.MethodPost, platformPath+"/dependencies/test"), withWriteDeadline(dependencyTestTimeout+answerMargin, change(AuditEntryActionDependencyTest)))
 	mux.Handle(route(http.MethodPut, mailPath), change(AuditEntryActionMailSettings))
 	mux.Handle(route(http.MethodDelete, mailPath), change(AuditEntryActionMailRemove))
 	mux.Handle(route(http.MethodPost, mailPath+"/test"), change(AuditEntryActionMailTest))

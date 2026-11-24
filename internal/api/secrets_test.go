@@ -17,6 +17,7 @@ import (
 	eventsv1 "k8s.io/api/events/v1"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/mail"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
@@ -40,6 +41,7 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 	put := h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail}, s)
 	wantStatus(t, put, http.StatusAccepted)
 	answers.Write(put.Body.Bytes())
+	dependencyAnswers(t, h, s, mail, &answers)
 
 	cred := newAdminCredential(t, pkcs1)
 	createAdminSecret(t, cred)
@@ -52,6 +54,7 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 	backupKey := recoverySecretAnswers(t, h, s, &answers)
 	sftpKey := backupTargetAnswers(t, h, s, &answers)
 	restoreKey := restoreSecretAnswers(t, h, s, &answers)
+	cbomAnswers(t, h, s, &answers)
 
 	for _, path := range []string{
 		"/appliance/api/v1/appliance", "/appliance/api/v1/status", "/appliance/api/v1/audit", "/appliance/api/v1/session", "/appliance/api/v1/catalogue", pathCertificate,
@@ -95,6 +98,14 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 		"restore backup key":  restoreKey,
 		"restore S3 secret":   restoreS3Secret,
 		"restore SFTP pw":     restoreSFTPPass,
+		"database password":   databasePassword,
+		"next database pw":    databaseNext,
+		"messaging password":  messagingPassword,
+		"identity secret":     identitySecret,
+		"restore database pw": restoreDBPassword,
+		"restore IdP secret":  restoreIDPSecret,
+		"CBOM access key":     cbomAccessKey,
+		"CBOM secret key":     cbomSecretKey,
 	}
 	for where, data := range map[string]string{
 		"API answers":   answers.String(),
@@ -111,6 +122,34 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 	}
 	if !strings.Contains(h.logs.String(), "sign") {
 		t.Error("the log is empty; the test would not notice a leak")
+	}
+}
+
+// dependencyAnswers chooses external dependencies with credentials in the wizard, refuses a new server without its
+// password, and tests each dependency with a failure that repeats the secret, adding the answers to answers.
+func dependencyAnswers(t *testing.T, h *harness, s *session, mail *Mail, answers *bytes.Buffer) {
+	t.Helper()
+	body := PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail, Dependencies: externalDependencies()}
+	put := h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s)
+	wantStatus(t, put, http.StatusAccepted)
+	answers.Write(put.Body.Bytes())
+	body.Dependencies = &DependenciesUpdate{Database: externalDatabaseBody("db2.example.com", nil)}
+	answers.Write(h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s).Body.Bytes())
+
+	h.srv.deps.CheckDatabase = func(_ context.Context, _ backup.ExternalDatabase, _, password string, _ []byte) error {
+		return errors.New("FATAL: password authentication failed: " + password)
+	}
+	h.srv.identityClient = func(context.Context, *v1alpha1.Appliance) (*http.Client, error) {
+		return nil, errors.New("no client for " + identitySecret)
+	}
+	for kind, settings := range map[DependencyTestKind]any{
+		KindDatabase:  externalDatabaseBody("db.example.com", ptr(databaseNext)),
+		KindMessaging: MessagingDependency{Mode: ModeExternal, Host: ptr("127.0.0.1"), Port: ptr(1), Username: ptr("u"), Password: ptr(messagingPassword)},
+		KindIdentity:  IdentityDependency{Mode: ModeExternal, Issuer: ptr("https://idp.example.com"), ClientId: ptr("c"), ClientSecret: ptr(identitySecret)},
+	} {
+		rec := h.request(http.MethodPost, pathDependencyTest, dependencyTest(t, kind, settings), s)
+		wantStatus(t, rec, http.StatusOK)
+		answers.Write(rec.Body.Bytes())
 	}
 }
 
@@ -270,4 +309,20 @@ func readDir(t *testing.T, dir string) string {
 		t.Fatal("the audit log is empty")
 	}
 	return out.String()
+}
+
+// cbomAnswers chooses an external CBOM store with its keys, refuses one without a bucket, and adds the answers to
+// answers.
+func cbomAnswers(t *testing.T, h *harness, s *session, answers *bytes.Buffer) {
+	t.Helper()
+	refused := externalCBOM(ptr(cbomAccessKey), ptr(cbomSecretKey), nil)
+	refused.S3.Bucket = ""
+	for status, c := range map[int]CBOMRepository{
+		http.StatusAccepted:   externalCBOM(ptr(cbomAccessKey), ptr(cbomSecretKey), nil),
+		http.StatusBadRequest: refused,
+	} {
+		rec := h.request(http.MethodPut, pathPlatform, cbomUpdate(c), s)
+		wantStatus(t, rec, status)
+		answers.Write(rec.Body.Bytes())
+	}
 }

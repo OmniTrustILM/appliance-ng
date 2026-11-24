@@ -1,0 +1,232 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: cbom-s3
+    app.kubernetes.io/part-of: cbom-repository
+  name: cbom-s3
+  namespace: ilm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cbom-s3
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cbom-s3
+        app.kubernetes.io/part-of: cbom-repository
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - --port
+        - :7070
+        - --health
+        - /health
+        - --region
+        - us-east-1
+        - posix
+        - /data
+        env:
+        - name: ROOT_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              key: access_key
+              name: cbom-s3-credentials
+        - name: ROOT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              key: secret_key
+              name: cbom-s3-credentials
+        image: docker.io/versity/versitygw:v1.11.0@sha256:8319a530d08d537426e2f855bae5280709795dc73a3f0c347973ef915d6343c5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: s3
+          periodSeconds: 20
+        name: versitygw
+        ports:
+        - containerPort: 7070
+          name: s3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: s3
+          periodSeconds: 10
+        resources:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: /data
+          name: data
+      enableServiceLinks: false
+      initContainers:
+      - command:
+        - mkdir
+        - -p
+        - /data/cbom-repo
+        image: docker.io/versity/versitygw:v1.11.0@sha256:8319a530d08d537426e2f855bae5280709795dc73a3f0c347973ef915d6343c5
+        name: bucket
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: /data
+          name: data
+      securityContext:
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: cbom-s3-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/name: cbom-s3
+    app.kubernetes.io/part-of: cbom-repository
+  name: cbom-s3
+  namespace: ilm
+spec:
+  ports:
+  - name: s3
+    port: 7070
+    targetPort: s3
+  selector:
+    app.kubernetes.io/name: cbom-s3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/instance: cbom-repository
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: cbom-repository
+    app.kubernetes.io/version: 1.2.0
+    helm.sh/chart: cbom-repository-1.2.0
+  name: cbom-repository-deployment
+  namespace: ilm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: cbom-repository
+      app.kubernetes.io/instance: cbom-repository
+      app.kubernetes.io/name: cbom-repository
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: cbom-repository
+        app.kubernetes.io/instance: cbom-repository
+        app.kubernetes.io/name: cbom-repository
+    spec:
+      containers:
+      - env:
+        - name: APP_S3_ENDPOINT
+          value: http://cbom-s3:7070
+        - name: APP_S3_REGION
+          value: us-east-1
+        - name: APP_S3_BUCKET
+          value: cbom-repo
+        - name: APP_S3_USE_PATH_STYLE
+          value: "true"
+        - name: APP_S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              key: access_key
+              name: cbom-s3-credentials
+        - name: APP_S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              key: secret_key
+              name: cbom-s3-credentials
+        - name: APP_HTTP_PORT
+          value: "8080"
+        - name: APP_HTTP_CORS_ALLOWED_ORIGINS
+          value: https://ilm.example.com
+        - name: APP_LOG_LEVEL
+          value: INFO
+        image: hub.omnitrustregistry.com/ilm/cbom-repository@sha256:97e6510e2a024b873b9f9ef25dc1f061cc96f5c5685c91601214ca307d4e8e6b
+        imagePullPolicy: IfNotPresent
+        name: cbom-repository
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /api/v1/health/readiness
+            port: 8080
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        startupProbe:
+          failureThreshold: 45
+          httpGet:
+            path: /api/v1/health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/instance: cbom-repository
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: cbom-repository
+    app.kubernetes.io/version: 1.2.0
+    helm.sh/chart: cbom-repository-1.2.0
+  name: cbom-repository-service
+  namespace: ilm
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+  selector:
+    app.kubernetes.io/component: cbom-repository
+    app.kubernetes.io/instance: cbom-repository
+    app.kubernetes.io/name: cbom-repository
+  type: ClusterIP

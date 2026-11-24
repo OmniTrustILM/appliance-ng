@@ -1,9 +1,9 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../../setup/test-utils';
 import { AuditPage } from './AuditPage';
-import { pageOf, type AuditEntry } from './useAuditPage';
+import type { AuditEntry } from './useAuditPages';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -17,18 +17,27 @@ function entry(i: number): AuditEntry {
   };
 }
 
-/** Answers like the API: the newest `limit` of the entries; each read counts, and `later` answers from the second read on. */
-function stubAudit(total: number, later?: number) {
-  const make = (n: number) => Array.from({ length: n }, (_, i) => entry(i));
-  const limits: number[] = [];
+/**
+ * Answers like the API: the entries newest first, `limit` at a time, before the entry the cursor names. The cursor is
+ * the number of the last entry of the page; entries added with `add` are newer and do not move it. Each query is kept.
+ */
+function stubAudit(total: number) {
+  let newest = total;
+  const queries: string[] = [];
   const { mock } = stubApi({});
   mock.mockImplementation(async (request: Request) => {
-    const limit = Number(new URL(request.url).searchParams.get('limit') ?? 100);
-    limits.push(limit);
-    const entries = make(limits.length > 1 && later !== undefined ? later : total);
-    return new Response(JSON.stringify({ items: entries.slice(0, limit) }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const params = new URL(request.url).searchParams;
+    queries.push(params.toString());
+    const limit = Number(params.get('limit') ?? 100);
+    const before = params.get('before');
+    const from = before === null ? newest - 1 : Number(before) - 1;
+    const numbers = Array.from({ length: Math.max(Math.min(limit, from + 1), 0) }, (_, i) => from - i);
+    const items = numbers.map((n) => entry(total - 1 - n));
+    const last = numbers.at(-1);
+    const next = last !== undefined && last > 0 ? String(last) : undefined;
+    return new Response(JSON.stringify({ items, next }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   });
-  return limits;
+  return { queries, add: (n: number) => { newest += n; } };
 }
 
 function rows() {
@@ -61,50 +70,79 @@ describe('AuditPage', () => {
     expect(screen.queryByRole('button', { name: 'Previous' })).toBeDisabled();
   });
 
-  it('pages through one snapshot without reading again', async () => {
-    const limits = stubAudit(60);
+  it('pages by cursor from the server', async () => {
+    const { queries } = stubAudit(60);
     render(<AuditPage />);
     await screen.findByText('Page 1');
     expect(rows()).toHaveLength(25);
     expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(screen.getByText('Page 2')).toBeInTheDocument();
+    await screen.findByText('Page 2');
     expect(within(rows()[0]).getByText(new Date(entry(25).time).toLocaleString())).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 3');
     expect(rows()).toHaveLength(10);
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
 
     await userEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    await screen.findByText('Page 2');
     expect(within(rows()[0]).getByText(new Date(entry(25).time).toLocaleString())).toBeInTheDocument();
-    expect(limits).toEqual([1000]);
+    expect(queries).toEqual(['limit=25', 'limit=25&before=35', 'limit=25&before=10', 'limit=25&before=35']);
   });
 
-  it('keeps the pages stable when entries are added while paging, until refreshed', async () => {
-    const limits = stubAudit(60, 70);
+  it('keeps the following pages in place when entries are added while paging', async () => {
+    const { add } = stubAudit(60);
     render(<AuditPage />);
     await screen.findByText('Page 1');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 2');
     const second = rows().map((row) => row.textContent);
+    add(5);
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 3');
     await userEvent.click(screen.getByRole('button', { name: 'Previous' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 2');
     expect(rows().map((row) => row.textContent)).toEqual(second);
-    expect(limits).toHaveLength(1);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(limits).toHaveLength(2));
-    await screen.findByText('Page 1');
-    expect(rows()).toHaveLength(25);
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(rows()).toHaveLength(20);
   });
 
-  it('pages a full snapshot to its end', () => {
-    const page = pageOf(Array.from({ length: 1000 }, (_, i) => entry(i)), 39);
-    expect(page.entries).toHaveLength(25);
-    expect(page.hasNext).toBe(false);
+  it('starts again at the newest entries on refresh', async () => {
+    const { queries } = stubAudit(60);
+    render(<AuditPage />);
+    await screen.findByText('Page 1');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    await screen.findByText('Page 2');
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await screen.findByText('Page 1');
+    expect(queries.at(-1)).toBe('limit=25');
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+  });
+
+  it('stays on the page and reports a next page that cannot be read', async () => {
+    stubAudit(60);
+    render(<AuditPage />);
+    await screen.findByText('Page 1');
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError('offline'));
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
+    expect(screen.getByText('Page 1')).toBeInTheDocument();
+    expect(rows()).toHaveLength(25);
+  });
+
+  it('says so when a later page comes back empty', async () => {
+    const { mock } = stubApi({});
+    mock.mockImplementation(async (request: Request) => {
+      const later = new URL(request.url).searchParams.has('before');
+      const page = later ? { items: [] } : { items: Array.from({ length: 25 }, (_, i) => entry(i)), next: 'gone' };
+      return new Response(JSON.stringify(page), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    render(<AuditPage />);
+    await screen.findByText('Page 1');
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(await screen.findByText('No older entries are left.')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeEnabled();
   });
 
   it('says so when there are no entries', async () => {
@@ -126,7 +164,7 @@ describe('AuditPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('The audit log cannot be read.');
   });
 
-  it('keeps the snapshot and reports a refresh that fails', async () => {
+  it('keeps the page and reports a refresh that fails', async () => {
     stubAudit(60);
     render(<AuditPage />);
     await screen.findByText('Page 1');

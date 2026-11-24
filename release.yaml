@@ -24,8 +24,11 @@ addons:
   - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "e6abf0691d5bde2a7b70ccb72cd99b603403d95164b6d28f4fb32e75e140bfd6" }
   - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
   - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "285f95e4430587e27891a5fe49d7d480f220cde49151e563466dfbde37efd4e6" }
-  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "d6e176ad3a99b135c4cc84a2cd41279c46bd19c52f5cd3d3cec32448ba330498" }
+  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "dc9cb943ca9c1d896149f4d58bd1cf1641dc5bf9c8f69a02059c9f0aec553a66" }
   - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "c85bb9f48bb14f757bbe0666bd98d0b203e718dc4965ff3065c28a63b2d16231" }
+# Helm charts the manager renders itself; the file is relative to addons/.
+charts:
+  - { name: cbom-repository, file: charts/cbom-repository-1.2.0.tgz, version: "1.2.0", source: "oci://hub.omnitrustregistry.com/ilm-helm/cbom-repository:1.2.0", sha256: "a49a0c85614ae64f3dc2a8e2c6abe74071aedd66bd49a07c37fa25e8c8a2cd8e" }
 images:
   - { ref: "ghcr.io/siderolabs/installer-base:v1.14.5", digest: "sha256:1644fe7ddfe3deb4b81487c3c7e49fce830eca862b608b32f577b866c8d36b48" }
   - { ref: "registry.k8s.io/coredns/coredns:v1.14.7", digest: "sha256:7efd3c635b03efd68c4e8398fc45f0d993d0e9ab016f72c1cefb0fd6d01aa286" }
@@ -48,6 +51,7 @@ images:
   - { ref: "hub.omnitrustregistry.com/ilm-private/timestamp-formatting-connector:1.1.0", digest: "sha256:b918f7999b3d1678efbc2202832c77460a64cfa0f0efcb79e3e8f79f061333b6" }
   - { ref: "hub.omnitrustregistry.com/ilm/auth-opa-policies:1.4.1", digest: "sha256:660837afc161ef17d49df46258a2c2fdb96c595c9ae05b51bc156d58d6c41113" }
   - { ref: "hub.omnitrustregistry.com/ilm/auth:1.8.0", digest: "sha256:bf04907457632cbcfa20dc334b9d2f514f0a449661e8624739173abe885b60d1" }
+  - { ref: "hub.omnitrustregistry.com/ilm/cbom-repository:1.2.0", digest: "sha256:97e6510e2a024b873b9f9ef25dc1f061cc96f5c5685c91601214ca307d4e8e6b" }
   - { ref: "hub.omnitrustregistry.com/ilm/common-credential-provider:1.4.0", digest: "sha256:714778d1507dfdfed7699702742522dbf8f8c20395ac2eba788f51b2b881e9d1" }
   - { ref: "hub.omnitrustregistry.com/ilm/core:2.20.0", digest: "sha256:2051fd87d8cdbd060eaa9a016e40460702f71f1973c9a50bf30e9d76c4b54bba" }
   - { ref: "hub.omnitrustregistry.com/ilm/ct-logs-discovery-provider:1.0.3", digest: "sha256:0a925812037ff790d8c3fe49e3f901076f6dc3ab5355b57c5a29a77a2c43ddac" }
@@ -74,6 +78,7 @@ images:
   - { ref: "quay.io/keycloak/keycloak-operator:26.8.1", digest: "sha256:4c88e4e9a9d488efd6487ab602974d3cb762ff2ee6f173b2716df418bfe33e53" }
   - { ref: "quay.io/keycloak/keycloak:26.8.1", digest: "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332" }
   - { ref: "rabbitmq:4.3.1-management", digest: "sha256:8734b9e9cd03d12b2e1d973415fc4c5c941c5eca351b4bd63f721782b1bf7c8b" }
+  - { ref: "docker.io/versity/versitygw:v1.11.0", digest: "sha256:8319a530d08d537426e2f855bae5280709795dc73a3f0c347973ef915d6343c5" }
   - { ref: "docker.io/traefik:v3.7.17", digest: "sha256:f4bb143d1135a579b630ed491e17ec50f6f7c9c6a30585ff3d385471d2a86f5a" }
   - { ref: "rancher/local-path-provisioner:v0.0.33", digest: "sha256:1c269eb2c304572eb315348fcdd488ad588541f7784352c54267d22b50f6efd1" }
   - { ref: "docker.io/library/busybox:latest", digest: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4" }
@@ -123,6 +128,7 @@ connectors:
     database: env
     schema: hvault
   - name: x509-compliance-provider
+    interface: v1
     displayName: X.509 Compliance Provider
     image: hub.omnitrustregistry.com/ilm/x509-compliance-provider:1.3.1
     digest: sha256:9ac8a1debb9168a9e2e860c1759edb6730b10fcbc933c9b6d9ce4930fa317e8e
@@ -176,6 +182,7 @@ connectors:
     env: { PORT: "8080" }
     database: jdbc
   - name: email-notification-provider
+    interface: v1
     displayName: Email Notification Provider
     image: hub.omnitrustregistry.com/ilm/email-notification-provider:1.3.0
     digest: sha256:d13f77dc9656ec65c26583c55d10f5cf22a453f225c88905262c8dfb7a3880ce

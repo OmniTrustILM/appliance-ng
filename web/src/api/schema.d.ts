@@ -268,7 +268,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The most recent audit entries, newest first */
+        /**
+         * The audit entries, newest first, a page at a time
+         * @description Without `before`, the page starts at the newest entry. The `next` cursor of a page asks for the entries written before its last one; new entries do not shift the pages that follow a cursor.
+         */
         get: operations["getAudit"];
         put?: never;
         post?: never;
@@ -627,9 +630,37 @@ export interface paths {
          *     component needs credentials for the registry of its image, and a component that sends mail needs the mail
          *     settings; otherwise the request is answered with 400 and field `components`, naming the component. While an
          *     uploaded certificate is in use, a new host name it does not cover is answered with 400 and field `hostName`.
+         *     Once setup is complete a dependency cannot switch between managed and external, which moves its data: the
+         *     answer is 400 with field `dependencies.<kind>.mode`, and the switch is done by a backup, a fresh appliance
+         *     with the new choice and a restore. The connection details and credentials of an external one stay editable.
          */
         put: operations["putPlatform"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/platform/dependencies/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the connection to an external dependency
+         * @description Checks the settings entered for an external dependency; nothing is saved. A database is checked by a
+         *     session that runs `SELECT 1` from a short-lived pod, a message broker by an authenticated AMQP 0-9-1
+         *     connection to its virtual host, an identity provider by its discovery document, whose `issuer` must match
+         *     and which must name `jwks_uri`. Without `password` the stored one is used while the server, its TLS
+         *     setting and the user name are unchanged; otherwise the answer is 400 with field `settings.password`. A failure is reported with a
+         *     fixed reason.
+         */
+        post: operations["postDependencyTest"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1333,6 +1364,9 @@ export interface components {
             hostName: string;
             components: string[];
             mail?: components["schemas"]["Mail"];
+            dependencies?: components["schemas"]["DependenciesUpdate"];
+            /** @description Install the utils service; left out keeps the current choice. */
+            utils?: boolean;
         };
         Registry: {
             host: string;
@@ -1375,7 +1409,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -1447,6 +1481,8 @@ export interface components {
         };
         AuditLog: {
             items: components["schemas"]["AuditEntry"][];
+            /** @description The cursor of the following page; absent when no older entry is left. */
+            next?: string;
         };
         NodeUpdate: {
             /** @description Optional; the node host name is fixed at setup. A value other than the current host name is answered with 400. */
@@ -1584,6 +1620,13 @@ export interface components {
         PlatformComponent: {
             name: string;
             title: string;
+            /**
+             * @description Whether ILM registers the component by itself once it runs. False for a component that speaks only
+             *     interface v1, which is registered by hand in ILM with `url`.
+             */
+            registered: boolean;
+            /** @description The in-cluster address to register a component that is not registered by itself with. */
+            url?: string;
             /** @description Whether the component's image comes from a registry that needs credentials. */
             private: boolean;
             chosen: boolean;
@@ -1596,12 +1639,138 @@ export interface components {
             ilmVersion: string;
             hostName: string;
             components: components["schemas"]["PlatformComponent"][];
+            dependencies: components["schemas"]["Dependencies"];
+            utils: boolean;
+            cbom: components["schemas"]["CBOMRepository"];
+            /** @description Once setup is complete a dependency no longer switches between managed and external. */
+            setupComplete: boolean;
         };
         PlatformUpdate: {
             hostName: string;
             components: string[];
             /** @description Optional; must be the installed version, which cannot be changed. */
             ilmVersion?: string;
+            dependencies?: components["schemas"]["DependenciesUpdate"];
+            /** @description Install the utils service; left out keeps the current choice. */
+            utils?: boolean;
+            cbom?: components["schemas"]["CBOMRepository"];
+        };
+        /** @enum {string} */
+        CBOMStorage: "appliance" | "s3";
+        /** @description The CBOM repository ILM keeps CBOMs in, reachable only by ILM. Turned off, the CBOMs stored on the appliance are kept. Left out of an update, the current settings are kept. */
+        CBOMRepository: {
+            enabled: boolean;
+            storage: components["schemas"]["CBOMStorage"];
+            s3?: components["schemas"]["CBOMS3"];
+        };
+        /** @description The external S3 bucket of `storage` s3; keys left out keep the stored ones for the same endpoint. */
+        CBOMS3: {
+            /** @description The https or http URL of the S3 service, without a path; without a scheme it is https. */
+            endpoint: string;
+            bucket: string;
+            /** @description Defaults to us-east-1. */
+            region?: string;
+            /** Format: password */
+            accessKey?: string;
+            /** Format: password */
+            secretKey?: string;
+            /** @description The PEM CA bundle that signs the endpoint's certificate, when it is not publicly trusted. */
+            ca?: string;
+            /** @description Remove the stored CA bundle. */
+            removeCa?: boolean;
+            readonly accessKeySet?: boolean;
+            readonly secretKeySet?: boolean;
+            readonly caSet?: boolean;
+        };
+        /** @enum {string} */
+        DependencyMode: "managed" | "external";
+        /** @description The database; managed, or an external PostgreSQL database with `host`, `name` and `username`. */
+        DatabaseDependency: {
+            mode: components["schemas"]["DependencyMode"];
+            /** @description A host name or an IPv4 address. */
+            host?: string;
+            /** @description Defaults to 5432. */
+            port?: number;
+            /** @description The database; letters, digits and `_ $ . -`, at most 63. */
+            name?: string;
+            username?: string;
+            /**
+             * Format: password
+             * @description Required unless the stored one was given for the same host, port, database and user name.
+             */
+            password?: string;
+            readonly passwordSet?: boolean;
+            /**
+             * @description The sslmode of the connection; left out, the drivers' default uses TLS when the server offers it without verifying the server. ILM's core and scheduler verify the server with verify-full; its auth service and Keycloak encrypt the connection when the server offers TLS but never verify the server's certificate.
+             * @enum {string}
+             */
+            tlsMode?: "disable" | "require" | "verify-full";
+            /** @description The PEM CA bundle that signs the server's certificate; verify-full needs it, otherwise the answer is 400 with field `ca`. Left out, the stored one is kept. */
+            ca?: string;
+            readonly caSet?: boolean;
+        };
+        /** @description The message broker; managed, or an external RabbitMQ broker with `host` and `username`. */
+        MessagingDependency: {
+            mode: components["schemas"]["DependencyMode"];
+            /** @description A host name or an IPv4 address. */
+            host?: string;
+            /** @description Defaults to 5672, or 5671 with `tls`. */
+            port?: number;
+            /** @description Defaults to /. */
+            virtualHost?: string;
+            username?: string;
+            /**
+             * Format: password
+             * @description Required unless the stored one was given for the same host, port, virtual host and user name.
+             */
+            password?: string;
+            readonly passwordSet?: boolean;
+            /** @description Connect with AMQPS to `port`, verifying the broker against `ca`. */
+            tls?: boolean;
+            /** @description The PEM CA bundle that signs the broker's certificate; `tls` needs it, otherwise the answer is 400 with field `ca`. Left out, the stored one is kept. */
+            ca?: string;
+            readonly caSet?: boolean;
+        };
+        /** @description The identity provider; the managed Keycloak, or an external OIDC provider with `issuer` and `clientId`. */
+        IdentityDependency: {
+            mode: components["schemas"]["DependencyMode"];
+            /** @description The issuer URL, starting with https://. */
+            issuer?: string;
+            clientId?: string;
+            scopes?: string[];
+            /** @description The audiences ILM accepts in the provider's tokens, at most 16 without spaces. Without any, ILM accepts every token the issuer signs, whatever client it was issued for. */
+            audiences?: string[];
+            /**
+             * Format: password
+             * @description Required unless the stored one was given for the same issuer and client ID.
+             */
+            clientSecret?: string;
+            readonly clientSecretSet?: boolean;
+        };
+        Dependencies: {
+            database: components["schemas"]["DatabaseDependency"];
+            messaging: components["schemas"]["MessagingDependency"];
+            identity: components["schemas"]["IdentityDependency"];
+        };
+        /** @description The dependencies to choose; one left out keeps its current choice. */
+        DependenciesUpdate: {
+            database?: components["schemas"]["DatabaseDependency"];
+            messaging?: components["schemas"]["MessagingDependency"];
+            identity?: components["schemas"]["IdentityDependency"];
+        };
+        DependencyTest: {
+            /** @enum {string} */
+            kind: "database" | "messaging" | "identity";
+            /** @description The external settings of the dependency `kind` names. */
+            settings: components["schemas"]["DatabaseDependency"] | components["schemas"]["MessagingDependency"] | components["schemas"]["IdentityDependency"];
+        };
+        DependencyTestResult: {
+            ok: boolean;
+            /**
+             * @description A fixed reason; the error text of the dependency is never passed on. `notFound` is an issuer without a discovery document or a virtual host the broker refuses. For a database under verify-full, `authFailed` may also be a certificate that does not verify, which PostgreSQL's client reports alike: the test opens one session in the chosen mode and never sends the credentials with less verification. `untrusted` is a server certificate the CA does not sign or that does not name the host; `invalid` is an answer that is not the dependency's protocol or a discovery document that does not match the issuer.
+             * @enum {string}
+             */
+            reason?: "unreachable" | "timeout" | "authFailed" | "notFound" | "untrusted" | "invalid" | "failed";
         };
         MailState: {
             mail?: components["schemas"]["MailSettings"];
@@ -1770,7 +1939,7 @@ export interface components {
              * @description The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
              * @enum {string}
              */
-            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "start" | "keycloak" | "certificate" | "done" | "waitingForKit";
+            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "cbom" | "start" | "keycloak" | "certificate" | "done" | "waitingForKit";
             /** @description The step a restore waiting for its kit resumes at. */
             pausedStep?: string;
             /**
@@ -1853,6 +2022,8 @@ export interface components {
             /** @description The accounts that exist here too; the backup's account replaces this appliance's. */
             clashes: string[];
             components: string[];
+            /** @description The backup's dependencies, which a fresh restore keeps unless it chooses them anew; nothing is stored for them on this appliance yet, so no password, client secret or CA is reported set. */
+            dependencies: components["schemas"]["Dependencies"];
         };
         RestoreStart: {
             /** @description The `inspection` of the summary being confirmed. */
@@ -1861,6 +2032,8 @@ export interface components {
             inPlace: boolean;
             /** @description The ILM host name to set on a fresh restore; left out, the backup's is kept. A restore in place takes only the backup's. */
             ilmHostName?: string;
+            /** @description The dependencies a fresh restore chooses instead of the backup's; one left out keeps the backup's. Its credentials are always entered. A restore in place keeps the current dependencies and refuses this with 400. */
+            dependencies?: components["schemas"]["DependenciesUpdate"];
             /** @description Must be true; what the appliance holds now is replaced by the backup. */
             confirm: boolean;
         };
@@ -2387,6 +2560,8 @@ export interface operations {
     getAudit: {
         parameters: {
             query?: {
+                /** @description The `next` cursor of the previous page; the page starts at the entry written before that page's last one. A cursor whose entries the rotation of the log dropped gives an empty page. */
+                before?: string;
                 /** @description The maximum number of entries. */
                 limit?: number;
             };
@@ -2901,6 +3076,34 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postDependencyTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DependencyTest"];
+            };
+        };
+        responses: {
+            /** @description The result of the test. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DependencyTestResult"];
+                };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];

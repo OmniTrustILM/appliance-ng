@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -771,5 +772,29 @@ func TestStreamedMemberChunked(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
 		t.Errorf("temp directory gained %d entries", len(entries))
+	}
+}
+
+func TestVerifyEachHandsEveryMemberToTheCheck(t *testing.T) {
+	id := newIdentity(t)
+	data := sampleArchive(t, id)
+	want, err := Verify(bytes.NewReader(data), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	got, err := VerifyEach(bytes.NewReader(data), id, func(name string, _ io.Reader) error {
+		names = append(names, name)
+		return nil
+	})
+	if err != nil || !reflect.DeepEqual(got.Members, want.Members) || len(names) == 0 {
+		t.Fatalf("VerifyEach = %+v, %v with %v; want the manifest of Verify", got, err, names)
+	}
+	boom := errors.New("refused")
+	if _, err := VerifyEach(bytes.NewReader(data), id, func(string, io.Reader) error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the check's", err)
+	}
+	if _, err := VerifyEach(bytes.NewReader(data), newIdentity(t), func(string, io.Reader) error { return nil }); err == nil {
+		t.Fatal("another key verified the archive")
 	}
 }

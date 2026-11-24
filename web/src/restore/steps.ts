@@ -10,13 +10,14 @@ const labels: Record<Exclude<Step, 'done' | 'waitingForKit'>, string> = {
   stop: 'Stop ILM',
   ilmSecrets: "Write ILM's secrets",
   database: 'Load the database',
+  cbom: 'Write the stored CBOMs',
   start: 'Start ILM',
   keycloak: 'Move sign-in to the ILM host name',
   certificate: 'Issue the certificate',
 };
 
-const fresh: Step[] = ['secrets', 'appliance', 'platform', 'stop', 'ilmSecrets', 'database', 'start', 'keycloak', 'certificate'];
-const inPlace: Step[] = ['secrets', 'appliance', 'stop', 'ilmSecrets', 'database', 'start'];
+const fresh: Step[] = ['secrets', 'appliance', 'platform', 'stop', 'ilmSecrets', 'database', 'cbom', 'start', 'keycloak', 'certificate'];
+const inPlace: Step[] = ['secrets', 'appliance', 'stop', 'ilmSecrets', 'database', 'cbom', 'start'];
 
 /** The steps of a restore, in order, with their labels. */
 export function stepsOf(progress: Progress) {

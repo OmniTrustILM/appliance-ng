@@ -15,6 +15,7 @@ const (
 	RestoreStepStop        = "stop"
 	RestoreStepILMSecrets  = "ilmSecrets"
 	RestoreStepDatabase    = "database"
+	RestoreStepCBOM        = "cbom"
 	RestoreStepStart       = "start"
 	RestoreStepKeycloak    = "keycloak"
 	RestoreStepCertificate = "certificate"
@@ -44,11 +45,11 @@ type RestoreStatus struct {
 	// ILMHostName is the ILM host name the restore sets; empty keeps the backup's.
 	// +optional
 	ILMHostName string `json:"ilmHostName,omitempty"`
-	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;start;keycloak;certificate;done;waitingForKit
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate;done;waitingForKit
 	Step string `json:"step"`
 	// PausedStep is the step a restore waiting for the kit resumes at.
 	// +optional
-	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;start;keycloak;certificate
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate
 	PausedStep string `json:"pausedStep,omitempty"`
 	// Message is the fixed reason a restore failed at Step; set only on failure.
 	// +optional
@@ -58,6 +59,9 @@ type RestoreStatus struct {
 	// does not cover.
 	// +optional
 	Warning string `json:"warning,omitempty"`
+	// Dependencies replaces the backup's choice of the dependencies it names on a fresh restore.
+	// +optional
+	Dependencies *RestoreDependencies `json:"dependencies,omitempty"`
 	// +optional
 	StartedAt metav1.Time `json:"startedAt,omitempty"`
 	// StartedBy is the console account that started the restore; a restore in place keeps it among the backup's
@@ -85,11 +89,38 @@ func (r *RestoreStatus) CurrentStep() string {
 
 // HoldsOperator tells whether the ILM operator must stay at zero replicas: from stop until the restore starts it.
 func (r *RestoreStatus) HoldsOperator() bool {
-	return r.Active() && slices.Contains([]string{RestoreStepStop, RestoreStepILMSecrets, RestoreStepDatabase}, r.CurrentStep())
+	return r.Active() && slices.Contains([]string{RestoreStepStop, RestoreStepILMSecrets, RestoreStepDatabase, RestoreStepCBOM}, r.CurrentStep())
 }
 
 // PausesPlatform tells whether the Platform must not be applied: from stop until the started operator reports it
 // ready.
 func (r *RestoreStatus) PausesPlatform() bool {
 	return r.HoldsOperator() || (r.Active() && r.CurrentStep() == RestoreStepStart)
+}
+
+// Dependencies of the platform that a restore can choose anew.
+const (
+	DependencyDatabase  = "database"
+	DependencyMessaging = "messaging"
+	DependencyIdentity  = "identity"
+)
+
+// RestoreDependencies are the dependencies a fresh restore chooses instead of the backup's: each one Replace names
+// is external when its block is set and managed otherwise.
+type RestoreDependencies struct {
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:items:Enum=database;messaging;identity
+	Replace []string `json:"replace,omitempty"`
+	// +optional
+	Database *ExternalDatabase `json:"database,omitempty"`
+	// +optional
+	Messaging *ExternalMessaging `json:"messaging,omitempty"`
+	// +optional
+	Identity *ExternalIdentity `json:"identity,omitempty"`
+}
+
+// Replaces tells whether d replaces the backup's choice of the dependency kind.
+func (d *RestoreDependencies) Replaces(kind string) bool {
+	return d != nil && slices.Contains(d.Replace, kind)
 }

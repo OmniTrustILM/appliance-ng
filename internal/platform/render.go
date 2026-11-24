@@ -4,6 +4,7 @@ package platform
 
 import (
 	"fmt"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,19 +74,98 @@ const (
 // SecretNames names the Secrets already written in the ilm namespace; empty means not present.
 type SecretNames struct {
 	TLS, Trust, PullSecret, Mail string
+	// Database and Messaging hold the credentials of the external database and broker.
+	Database, Messaging string
+	// DatabaseCA holds the PEM CA of the external database under v1alpha1.CAKey, MessagingCA the broker's CA as a
+	// PKCS#12 trust store under TrustStoreKey.
+	DatabaseCA, MessagingCA string
+}
+
+// Where ILM's components find the CAs of an external database and broker: the Secrets are mounted as directories.
+const (
+	DatabaseCADir      = "/etc/ilm/db-ca"
+	BrokerCADir        = "/etc/ilm/broker-ca"
+	TrustStoreKey      = "truststore.p12"
+	TrustStorePassword = "ilm-broker-trust-store" // NOSONAR: protects a trust store of public CA certificates, not a secret
+)
+
+// database is where ILM and the connectors find the platform database, the Secret with its credentials and how they
+// connect: tlsMode is the sslmode, empty for the drivers' default, and caSecret the copy of the CA, empty for none.
+type database struct {
+	host     string
+	port     int32
+	name     string
+	secret   string
+	tlsMode  string
+	caSecret string
+}
+
+// managedDatabase is the database the operator manages.
+var managedDatabase = database{host: databaseHost, port: databasePort, name: databaseName, secret: databaseSecret}
+
+// databaseOf is the database ps chooses; the copies of an external one's credentials and CA must exist.
+func databaseOf(ps *v1alpha1.PlatformSpec, secrets SecretNames) (database, error) {
+	if ps == nil || ps.Database == nil {
+		return managedDatabase, nil
+	}
+	ext := ps.Database
+	if secrets.Database == "" {
+		return database{}, fmt.Errorf("the external database's credentials have not been copied to namespace %s yet", Namespace)
+	}
+	db := database{host: ext.Host, port: ext.Port, name: ext.Name, secret: secrets.Database, tlsMode: ext.TLSMode}
+	if ext.CA != nil {
+		if secrets.DatabaseCA == "" {
+			return database{}, fmt.Errorf("the external database's CA has not been copied to namespace %s yet", Namespace)
+		}
+		db.caSecret = secrets.DatabaseCA
+	}
+	return db, nil
+}
+
+// jdbcURL is the pgjdbc URL of db with its TLS mode and CA file.
+func (db database) jdbcURL() string {
+	url := fmt.Sprintf("jdbc:postgresql://%s:%d/%s?characterEncoding=UTF-8", db.host, db.port, db.name)
+	if db.tlsMode != "" {
+		url += "&sslmode=" + db.tlsMode
+	}
+	if db.caSecret != "" {
+		url += "&sslrootcert=" + db.caFile()
+	}
+	return url
+}
+
+func (db database) caFile() string {
+	return DatabaseCADir + "/" + v1alpha1.CAKey
+}
+
+// caVolumes mounts the CA of db, none without one.
+func (db database) caVolumes() []otilm.SecretRef {
+	if db.caSecret == "" {
+		return nil
+	}
+	return []otilm.SecretRef{volumeSecret(db.caSecret, DatabaseCADir)}
+}
+
+// volumeSecret mounts the Secret name as the directory path.
+func volumeSecret(name, path string) otilm.SecretRef {
+	return otilm.SecretRef{Name: name, Type: otilm.RefTypeVolume, MountPath: ptr(path)}
 }
 
 // Render returns the Platform and, in the order of the Appliance's components, the
 // Connectors for a on the node at nodeIP, which the no-proxy list holds; empty when unknown.
 func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, nodeIP string) (*otilm.Platform, []otilm.Connector, error) {
 	proxy := outboundProxy(a.Spec.Proxy, nodeIP)
-	p, err := renderPlatform(a, m, secrets, proxy)
+	db, err := databaseOf(a.Spec.Platform, secrets)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := renderPlatform(a, m, secrets, proxy, db)
 	if err != nil {
 		return nil, nil, err
 	}
 	var components []string
-	if a.Spec.Platform != nil {
-		components = a.Spec.Platform.Components
+	if ps := a.Spec.Platform; ps != nil {
+		components = ps.Components
 	}
 	connectors := make([]otilm.Connector, 0, len(components))
 	for _, name := range components {
@@ -93,7 +173,7 @@ func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, nod
 		if i < 0 {
 			return nil, nil, fmt.Errorf("component %s is not in the connector catalogue", name)
 		}
-		c, err := renderConnector(m.Connectors[i], proxy, a.Spec.Mail, secrets)
+		c, err := renderConnector(m.Connectors[i], db, proxy, a.Spec.Mail, secrets)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -112,7 +192,7 @@ func outboundProxy(p *v1alpha1.ProxySpec, nodeIP string) *v1alpha1.ProxySpec {
 	return &v1alpha1.ProxySpec{HTTP: px.HTTP, HTTPS: px.HTTPS, NoProxy: nodeconfig.NoProxy(nodeIP, px.NoProxy)}
 }
 
-func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, proxy *v1alpha1.ProxySpec) (*otilm.Platform, error) {
+func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, proxy *v1alpha1.ProxySpec, db database) (*otilm.Platform, error) {
 	version, hostName := m.Platform.ILMVersion, firstSet(a.Spec.Node.HostName, m.Platform.HostName)
 	if ps := a.Spec.Platform; ps != nil {
 		version = firstSet(ps.ILMVersion, version)
@@ -134,8 +214,71 @@ func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNa
 	if secrets.PullSecret != "" {
 		p.Spec.Common.Image.PullSecrets = []string{secrets.PullSecret}
 	}
+	if ps := a.Spec.Platform; ps != nil {
+		if err := dependencies(&p.Spec, ps, secrets, db); err != nil {
+			return nil, err
+		}
+	}
 	return p, nil
 }
+
+// dependencies points spec at the external database db, broker and identity provider ps chooses, and switches utils
+// on when ps asks for it. The credentials of the broker, and its trust store, must be copied into the platform
+// namespace.
+func dependencies(spec *otilm.PlatformSpec, ps *v1alpha1.PlatformSpec, secrets SecretNames, db database) error {
+	if ps.Database != nil {
+		spec.Database = otilm.DatabaseSpec{Mode: modeExternal, Host: db.host, Port: db.port, Name: db.name,
+			Credentials: &otilm.CredentialsRef{SecretRef: db.secret}}
+		// Core and scheduler read SPRING_DATASOURCE_URL before the operator's JDBC_URL, whose name the operator's
+		// apply refuses to see twice.
+		if db.tlsMode != "" || db.caSecret != "" {
+			addToCoreAndScheduler(spec, otilm.EnvVar{Name: "SPRING_DATASOURCE_URL", Value: db.jdbcURL()}, db.caVolumes())
+		}
+	}
+	if mq := ps.Messaging; mq != nil {
+		if secrets.Messaging == "" {
+			return fmt.Errorf("the external messaging's credentials have not been copied to namespace %s yet", Namespace)
+		}
+		spec.Messaging = otilm.MessagingSpec{Mode: modeExternal, BrokerType: brokerType, Host: mq.Host, Port: mq.Port,
+			VirtualHost: mq.VirtualHost, Credentials: &otilm.CredentialsRef{SecretRef: secrets.Messaging}}
+		if mq.TLS {
+			if secrets.MessagingCA == "" {
+				return fmt.Errorf("the external messaging's trust store has not been copied to namespace %s yet", Namespace)
+			}
+			addToCoreAndScheduler(spec, otilm.EnvVar{Name: "BROKER_URL", Value: brokerURL(mq)},
+				[]otilm.SecretRef{volumeSecret(secrets.MessagingCA, BrokerCADir)})
+		}
+	}
+	if ps.Identity != nil {
+		// The manager writes the OAuth2 provider into ILM; the operator installs no Keycloak.
+		spec.Keycloak = &otilm.KeycloakSpec{Mode: modeExternal}
+	}
+	spec.Utils.Enabled = ps.Utils
+	return nil
+}
+
+// addToCoreAndScheduler gives core and scheduler, the components that connect to the database and the broker, the
+// variable v and the Secrets refs.
+func addToCoreAndScheduler(spec *otilm.PlatformSpec, v otilm.EnvVar, refs []otilm.SecretRef) {
+	for _, c := range []*otilm.ComponentSpec{&spec.Core.ComponentSpec, &spec.Scheduler.ComponentSpec} {
+		c.Env = append(c.Env, v)
+		c.SecretRefs = append(c.SecretRefs, refs...)
+	}
+}
+
+// brokerURL is the AMQPS URL of mq with the mounted trust store; the virtual host is added from the operator's
+// BROKER_VIRTUAL_HOST. Core logs the URL, so it holds nothing secret.
+func brokerURL(mq *v1alpha1.ExternalMessaging) string {
+	return "amqps://" + net.JoinHostPort(mq.Host, strconv.Itoa(int(mq.Port))) +
+		"?transport.trustStoreLocation=" + BrokerCADir + "/" + TrustStoreKey + "&transport.trustStoreType=PKCS12" +
+		"&transport.trustStorePassword=" + TrustStorePassword
+}
+
+// The operator's mode of a dependency the appliance does not run, and the broker the appliance's messaging is.
+const (
+	modeExternal = "external"
+	brokerType   = "rabbitmq"
+)
 
 // Unstructured returns p for a server-side apply. Without a trust Secret the trustedCertificates field is left out,
 // so that the apply gives up the field instead of setting it to null, which the Platform's schema refuses.
@@ -202,7 +345,7 @@ func defaultPlatform(version, hostName string) *otilm.Platform {
 			},
 			Messaging: otilm.MessagingSpec{
 				Mode:       "managed",
-				BrokerType: "rabbitmq",
+				BrokerType: brokerType,
 				Managed:    &otilm.ManagedMessagingSpec{Replicas: 1, Version: "4.3.1", Storage: otilm.StorageSpec{Size: "2Gi"}},
 			},
 			Keycloak: &otilm.KeycloakSpec{Mode: "managed", Realm: "ilm", Managed: &otilm.ManagedKeycloakSpec{Instances: 1}},
@@ -232,7 +375,7 @@ func defaultPlatform(version, hostName string) *otilm.Platform {
 	}
 }
 
-func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, mail *v1alpha1.MailSpec, secrets SecretNames) (otilm.Connector, error) {
+func renderConnector(c release.Connector, db database, proxy *v1alpha1.ProxySpec, mail *v1alpha1.MailSpec, secrets SecretNames) (otilm.Connector, error) {
 	image := otilm.ImageSpec{}
 	image.Repository, image.Tag = splitTag(c.Image)
 	if c.Private {
@@ -248,22 +391,27 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, mail *v1alp
 	var refs []otilm.SecretRef
 	switch c.Database {
 	case release.DatabaseJDBC:
-		env = append(env, otilm.EnvVar{
-			Name:  "JDBC_URL",
-			Value: fmt.Sprintf("jdbc:postgresql://%s:%d/%s?characterEncoding=UTF-8", databaseHost, databasePort, databaseName),
-		})
+		env = append(env, otilm.EnvVar{Name: "JDBC_URL", Value: db.jdbcURL()})
 		if c.Schema != "" {
 			env = append(env, otilm.EnvVar{Name: "DB_SCHEMA", Value: c.Schema})
 		}
-		refs = append(refs, envSecret(databaseSecret, usernameKey, "JDBC_USERNAME", passwordKey, "JDBC_PASSWORD"))
+		refs = append(refs, envSecret(db.secret, usernameKey, "JDBC_USERNAME", passwordKey, "JDBC_PASSWORD"))
 	case release.DatabaseEnv:
 		env = append(env,
-			otilm.EnvVar{Name: "DATABASE_HOST", Value: databaseHost},
-			otilm.EnvVar{Name: "DATABASE_PORT", Value: strconv.Itoa(databasePort)},
-			otilm.EnvVar{Name: "DATABASE_NAME", Value: databaseName},
+			otilm.EnvVar{Name: "DATABASE_HOST", Value: db.host},
+			otilm.EnvVar{Name: "DATABASE_PORT", Value: strconv.Itoa(int(db.port))},
+			otilm.EnvVar{Name: "DATABASE_NAME", Value: db.name},
 			otilm.EnvVar{Name: "DATABASE_SCHEMA", Value: c.Schema},
 		)
-		refs = append(refs, envSecret(databaseSecret, usernameKey, "DATABASE_USER", passwordKey, "DATABASE_PASSWORD"))
+		// libpq reads its TLS settings from the environment.
+		env = appendSet(env, "PGSSLMODE", db.tlsMode)
+		if db.caSecret != "" {
+			env = append(env, otilm.EnvVar{Name: "PGSSLROOTCERT", Value: db.caFile()})
+		}
+		refs = append(refs, envSecret(db.secret, usernameKey, "DATABASE_USER", passwordKey, "DATABASE_PASSWORD"))
+	}
+	if c.Database != "" {
+		refs = append(refs, db.caVolumes()...)
 	}
 	settingsEnv, settingsRefs := settings(c, proxy, mail, secrets)
 	env, refs = append(env, settingsEnv...), append(refs, settingsRefs...)
@@ -275,7 +423,7 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, mail *v1alp
 		refs = append(refs, envSecret(c.Name+"-keys", pairs...))
 	}
 
-	return otilm.Connector{
+	connector := otilm.Connector{
 		TypeMeta:   metav1.TypeMeta{APIVersion: otilm.GroupVersion.String(), Kind: "Connector"},
 		ObjectMeta: metav1.ObjectMeta{Name: c.Name, Namespace: Namespace},
 		Spec: otilm.ConnectorSpec{
@@ -286,13 +434,22 @@ func renderConnector(c release.Connector, proxy *v1alpha1.ProxySpec, mail *v1alp
 			SecretRefs: refs,
 			// The operator mounts the root file system read-only; Java connectors need a writable /tmp to start.
 			Volumes: []otilm.VolumeSpec{{Name: "tmp", MountPath: "/tmp"}},
-			Registration: &otilm.RegistrationSpec{
-				PlatformURL: CoreAPIURL,
-				Name:        c.DisplayName,
-				AuthType:    otilm.AuthTypeNone,
-			},
 		},
-	}, nil
+	}
+	if !c.V1Only() {
+		connector.Spec.Registration = &otilm.RegistrationSpec{
+			PlatformURL: CoreAPIURL,
+			Name:        c.DisplayName,
+			AuthType:    otilm.AuthTypeNone,
+		}
+	}
+	return connector, nil
+}
+
+// ConnectorURL is the in-cluster base URL of the Service operator v1.1.0 creates for the connector c, which a
+// connector that is not registered automatically is registered with in ILM.
+func ConnectorURL(c release.Connector) string {
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", c.Name, Namespace, c.Port)
 }
 
 // settings returns the environment and Secret references of the Appliance areas the connector reads: the proxy,

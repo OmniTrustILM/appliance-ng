@@ -87,6 +87,19 @@ func setConnectorPhase(t *testing.T, name string, phase otilm.ConnectorPhase) {
 	}
 }
 
+// setConnectorRegistration sets the registration the operator reports for the connector name.
+func setConnectorRegistration(t *testing.T, name string, status otilm.RegistrationStatusValue) {
+	t.Helper()
+	c := &otilm.Connector{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: name}, c); err != nil {
+		t.Fatal(err)
+	}
+	c.Status.Registration = &otilm.RegistrationStatus{Status: status}
+	if err := testClient.Status().Update(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func wantConnectorsReady(t *testing.T, status metav1.ConditionStatus, reason string, names ...string) {
 	t.Helper()
 	c := condition(t, getAppliance(t), v1alpha1.ConditionConnectorsReady)
@@ -111,6 +124,7 @@ func TestConnectorsReady(t *testing.T) {
 	wantConnectorsReady(t, metav1.ConditionFalse, reasonProgressing, crypto, compliance)
 
 	setConnectorPhase(t, crypto, otilm.ConnectorPhaseRunning)
+	setConnectorRegistration(t, crypto, otilm.RegistrationStatusConnected)
 	setConnectorPhase(t, compliance, otilm.ConnectorPhaseFailed)
 	runReconcile(t, r)
 	wantConnectorsReady(t, metav1.ConditionFalse, reasonFailed, compliance)
@@ -127,12 +141,61 @@ func TestConnectorsReady(t *testing.T) {
 	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
 }
 
+func TestConnectorsReadyV1RunningOnly(t *testing.T) {
+	const compliance = "x509-compliance-provider"
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec(compliance)})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	c := &otilm.Connector{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: compliance}, c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Spec.Registration != nil {
+		t.Fatalf("v1 connector has registration %+v", c.Spec.Registration)
+	}
+
+	setConnectorPhase(t, compliance, otilm.ConnectorPhaseRunning)
+	runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
+}
+
+func TestConnectorsReadyV2NeedsRegistration(t *testing.T) {
+	const crypto = "software-cryptography-provider"
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec(crypto)})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	setConnectorPhase(t, crypto, otilm.ConnectorPhaseRunning)
+	runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionFalse, reasonProgressing, crypto)
+
+	setConnectorRegistration(t, crypto, otilm.RegistrationStatusOffline)
+	runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionFalse, reasonProgressing, crypto)
+
+	setConnectorRegistration(t, crypto, otilm.RegistrationStatusWaitingForApproval)
+	runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
+
+	setConnectorRegistration(t, crypto, otilm.RegistrationStatusFailed)
+	runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionFalse, reasonFailed, crypto)
+
+	setConnectorRegistration(t, crypto, otilm.RegistrationStatusConnected)
+	runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
+}
+
 func TestConnectorReady(t *testing.T) {
 	running := otilm.Connector{ObjectMeta: metav1.ObjectMeta{Generation: 2}, Status: otilm.ConnectorStatus{Phase: otilm.ConnectorPhaseRunning, ObservedGeneration: 1}}
 	if connectorReady(&running) {
 		t.Error("a connector whose generation the operator has not observed is ready")
 	}
 	running.Status.ObservedGeneration = 2
+	registered := running.DeepCopy()
+	registered.Spec.Registration = &otilm.RegistrationSpec{}
+	if connectorReady(registered) {
+		t.Error("a running connector that is not registered yet is ready")
+	}
 	if !connectorReady(&running) {
 		t.Error("a running connector of the observed generation is not ready")
 	}

@@ -50,6 +50,11 @@ func fullAppliance() *v1alpha1.Appliance {
 	a.Spec.Trust = &v1alpha1.SecretKeyRef{Name: "trust-bundle", Key: "ca.crt"}
 	a.Spec.Registries = []v1alpha1.RegistrySpec{{Host: "registry.example.com", CredentialsRef: "registry-creds"}, {Host: "open.example.com"}}
 	a.Spec.Mail = &v1alpha1.MailSpec{Host: "mail.example.com", CredentialsRef: "mail-creds"}
+	a.Spec.Platform = &v1alpha1.PlatformSpec{
+		Database:  &v1alpha1.ExternalDatabase{Host: "db.example.com", Port: 5432, Name: "ilm", CredentialsRef: "db-creds"},
+		Messaging: &v1alpha1.ExternalMessaging{Host: "mq.example.com", Port: 5672, CredentialsRef: "mq-creds"},
+		Identity:  &v1alpha1.ExternalIdentity{Issuer: "https://idp.example.com", ClientID: "ilm", CredentialsRef: "idp-creds"},
+	}
 	a.Spec.Backup = &v1alpha1.BackupSpec{Targets: []v1alpha1.BackupTarget{
 		{Name: "s3", Type: v1alpha1.BackupTypeS3, CredentialsRef: "target-s3", S3: &v1alpha1.S3Target{CA: &v1alpha1.SecretKeyRef{Name: "target-ca", Key: "ca.crt"}}},
 		{Name: "nfs", Type: v1alpha1.BackupTypeNFS},
@@ -60,7 +65,7 @@ func fullAppliance() *v1alpha1.Appliance {
 
 func TestCollectSecretsList(t *testing.T) {
 	for _, name := range []string{"tls-upload", "trust-bundle", "registry-creds", "mail-creds", "target-s3", "target-ca",
-		"appliance-users", "appliance-users-key", "appliance-backup-recipient", "unrelated"} {
+		"db-creds", "mq-creds", "idp-creds", "appliance-users", "appliance-users-key", "appliance-backup-recipient", "appliance-ilm-identity", "unrelated"} {
 		secret(t, "appliance-system", name, map[string][]byte{"k": []byte("v")})
 	}
 	secret(t, "cert-manager", "appliance-root-ca", map[string][]byte{"tls.key": []byte("v")})
@@ -77,8 +82,9 @@ func TestCollectSecretsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"appliance-system/appliance-backup-recipient", "appliance-system/appliance-users", "appliance-system/appliance-users-key",
-		"appliance-system/mail-creds", "appliance-system/registry-creds", "appliance-system/target-ca",
+		"appliance-system/appliance-backup-recipient", "appliance-system/appliance-ilm-identity", "appliance-system/appliance-users",
+		"appliance-system/appliance-users-key",
+		"appliance-system/db-creds", "appliance-system/idp-creds", "appliance-system/mail-creds", "appliance-system/mq-creds", "appliance-system/registry-creds", "appliance-system/target-ca",
 		"appliance-system/target-s3", "appliance-system/tls-upload", "appliance-system/trust-bundle",
 		"cert-manager/appliance-root-ca",
 		"ilm/admin-ca-keypair", "ilm/admin-certificate-secret", "ilm/ca-keypair", "ilm/ilm-keycloak-initial-admin",
@@ -187,6 +193,7 @@ func TestRestorable(t *testing.T) {
 	a := fullAppliance()
 	for _, ref := range []string{
 		"appliance-system/appliance-backup-recipient", "appliance-system/appliance-users", "appliance-system/appliance-users-key",
+		"appliance-system/appliance-ilm-identity",
 		"appliance-system/mail-creds", "appliance-system/target-ca", "appliance-system/tls-upload",
 		"cert-manager/appliance-root-ca", "ilm/admin-ca-keypair", "ilm/ilm-oidc-client", "ilm/any-connector-keys",
 	} {

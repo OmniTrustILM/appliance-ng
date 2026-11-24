@@ -14,6 +14,7 @@ type UploadFormProps = Readonly<{
 }>;
 
 const refusal = 'The current certificate stays in use.';
+const unconfirmed = 'It is not known whether the certificate was stored. Reload the page to see the certificate in use.';
 
 /** Uploads a certificate, with its private key or alone, and a chain; a refusal names the problem. */
 export function UploadForm({ withKey, submitLabel, send, onStored }: UploadFormProps) {
@@ -34,9 +35,11 @@ export function UploadForm({ withKey, submitLabel, send, onStored }: UploadFormP
     setError(undefined);
     const result = await attempt(() => send(form));
     setBusy(false);
-    if (!result) return setError(`${unreachable} ${refusal}`);
-    if (result.response.ok) return onStored();
-    setError(`${result.error?.message ?? 'The appliance could not process the request.'} ${refusal}`);
+    if (result?.response.ok) return onStored();
+    // Without an answer, or with a server error, the upload may have been stored all the same.
+    const reason = result ? (result.error?.message ?? 'The appliance could not process the request.') : unreachable;
+    const uncertain = !result || result.response.status >= 500;
+    setError(`${reason} ${uncertain ? unconfirmed : refusal}`);
   }
 
   return (

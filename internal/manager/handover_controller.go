@@ -17,6 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,10 +48,12 @@ var ErrNoTalosAccess = errors.New("no Talos API access yet")
 
 // HandoverReconciler imports the answers of wizard part 1 from the hand-over Secret, once: it creates the Appliance
 // and the administrator, removes the hand-over file from the machine configuration, marks the hand-over complete
-// and deletes the Secret. Each step is skipped when it is already done, so a crash at any point resumes.
+// and deletes the Secret. Each step is skipped when it is already done, so a crash at any point resumes. A Secret
+// without a valid hand-over file is deleted with an Event.
 type HandoverReconciler struct {
-	Client client.Client
-	Users  auth.UserStore
+	Client   client.Client
+	Users    auth.UserStore
+	Recorder events.EventRecorder
 	// Talos returns the Talos API of the node, or ErrNoTalosAccess while there is none yet.
 	Talos func(context.Context) (talos.Node, error)
 }
@@ -75,11 +78,9 @@ func (r *HandoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err := r.Client.Get(ctx, req.NamespacedName, secret); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	answers, ok := parseHandover(secret)
-	if !ok {
-		// Nothing changes until the Secret does, which the watch reports.
-		logger.Error(nil, "the hand-over Secret holds no valid hand-over file", "secret", req.String())
-		return ctrl.Result{}, nil
+	answers, invalid := parseHandover(secret)
+	if invalid != "" {
+		return ctrl.Result{}, r.deleteInvalid(ctx, secret, invalid)
 	}
 
 	a, err := r.ensureAppliance(ctx, answers)
@@ -97,6 +98,23 @@ func (r *HandoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	logger.Info("hand-over complete")
 	return ctrl.Result{}, nil
+}
+
+// deleteInvalid deletes a hand-over Secret that holds no valid hand-over file: it cannot be imported, and it may hold
+// a password hash and a TOTP seed. The log and the Event name the fixed reason only, never the content, and only
+// when this reconcile deleted the Secret.
+func (r *HandoverReconciler) deleteInvalid(ctx context.Context, secret *corev1.Secret, reason string) error {
+	err := r.Client.Delete(ctx, secret, client.Preconditions{UID: &secret.UID})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("delete the invalid hand-over Secret: %w", err)
+	}
+	log.FromContext(ctx).Error(nil, "deleted the hand-over Secret, which holds no valid hand-over file", "reason", reason)
+	r.Recorder.Eventf(secret, nil, corev1.EventTypeWarning, "InvalidHandover", "Delete",
+		"deleted the hand-over Secret, which holds no valid hand-over file: %s", reason)
+	return nil
 }
 
 // importAnswers creates the administrator, removes the hand-over file and marks the hand-over complete. A failed
@@ -142,17 +160,31 @@ func (r *HandoverReconciler) ensureRestoreSetup(ctx context.Context, a *v1alpha1
 	return nil
 }
 
-// parseHandover decodes and checks the hand-over file of the Secret. Decoding errors may quote the content, so they
-// are dropped.
-func parseHandover(s *corev1.Secret) (*wizard.HandoverFile, bool) {
-	f := &wizard.HandoverFile{}
+// Reasons a hand-over file is refused; fixed texts, so they quote nothing of the file.
+const (
+	invalidNotJSON = "it is not JSON"
+	invalidVersion = "its version is not supported"
+	invalidMode    = "its mode is not known"
+	invalidMissing = "answers are missing"
+)
+
+// parseHandover decodes and checks the hand-over file of the Secret and returns it, or the reason it is refused.
+// Decoding errors may quote the content, so they are dropped.
+func parseHandover(s *corev1.Secret) (f *wizard.HandoverFile, invalid string) {
+	f = &wizard.HandoverFile{}
 	if err := json.Unmarshal(s.Data[wizard.HandoverSecretKey], f); err != nil {
-		return nil, false
+		return nil, invalidNotJSON
 	}
+	switch {
+	case f.Version != wizard.HandoverVersion:
+		return nil, invalidVersion
+	case f.Mode != "" && f.Mode != wizard.ModeNew && f.Mode != wizard.ModeRestore:
+		return nil, invalidMode
 	// An empty seed would be a TOTP key everyone knows, so an account without a hash and a seed is refused.
-	knownMode := f.Mode == "" || f.Mode == wizard.ModeNew || f.Mode == wizard.ModeRestore
-	return f, f.Version == wizard.HandoverVersion && knownMode && f.Node.HostName != "" && f.Admin.User != "" &&
-		f.Admin.PasswordHash != "" && f.Admin.TOTPSeed != ""
+	case f.Node.HostName == "" || f.Admin.User == "" || f.Admin.PasswordHash == "" || f.Admin.TOTPSeed == "":
+		return nil, invalidMissing
+	}
+	return f, ""
 }
 
 // ensureAppliance creates the Appliance from the answers unless one exists, which is never changed.

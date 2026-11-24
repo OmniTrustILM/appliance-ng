@@ -4,8 +4,12 @@ package manager
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,11 +20,13 @@ import (
 	"time"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -34,6 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/access"
@@ -66,6 +73,23 @@ const (
 	PullSecretName = "appliance-registry-credentials"
 	// MailSecretName holds the SMTP credentials of the mail server.
 	MailSecretName = "appliance-mail"
+	// DatabaseSecretName and MessagingSecretName hold the credentials of the external database and broker.
+	DatabaseSecretName  = "appliance-database"
+	MessagingSecretName = "appliance-messaging"
+	// DatabaseCASecretName holds the PEM CA of the external database, MessagingCASecretName the broker's CA as a
+	// PKCS#12 trust store.
+	DatabaseCASecretName  = "appliance-database-ca"
+	MessagingCASecretName = "appliance-messaging-ca"
+)
+
+// The auth Deployment of ILM and the Secret operator v1.1.0 writes its database connection string to. The operator
+// does not restart auth when the Secret changes, so the manager records the Secret's version on auth's pod template.
+const (
+	authDeployment   = "auth"
+	authDBSecret     = "auth-db"
+	authDBAnnotation = "appliance.otilm.com/auth-db-version"
+	// caHashAnnotation records the SHA-256 of the CA a trust store copy was built from.
+	caHashAnnotation = "appliance.otilm.com/ca-sha256"
 )
 
 // Keys of a registry credentials Secret in the system namespace.
@@ -264,6 +288,20 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 	if a.Spec.Platform == nil {
 		return requeue(certificate), nil
 	}
+	// The CBOM repository runs apart from the operator, also while a restore writes the stored CBOMs back; its failure
+	// does not hold up the platform.
+	cbomErr := r.reconcileCBOM(ctx, a)
+	setCBOMCondition(a, cbomErr)
+	result, err := r.reconcileOperated(ctx, a, certificate)
+	if err = errors.Join(err, cbomErr); err != nil {
+		return ctrl.Result{}, err
+	}
+	return result, nil
+}
+
+// reconcileOperated applies what the ILM operator runs, unless a restore pauses it, and reports the platform's
+// readiness.
+func (r *ApplianceReconciler) reconcileOperated(ctx context.Context, a *v1alpha1.Appliance, certificate time.Duration) (ctrl.Result, error) {
 	if a.Status.Restore.PausesPlatform() {
 		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonRestoring, "a restore has stopped the ILM operator")
 		return ctrl.Result{RequeueAfter: addonsRequeue}, nil
@@ -392,17 +430,14 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	if err != nil {
 		return false, "", err
 	}
-	observed := make([]otilm.Connector, len(connectors))
-	for i := range connectors {
-		appliedConnector, err := r.apply(ctx, a, &connectors[i])
-		if err != nil {
-			return false, "", err
-		}
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(appliedConnector.Object, &observed[i]); err != nil {
-			return false, "", fmt.Errorf("read the applied connector %s: %w", connectors[i].Name, err)
-		}
+	observed, err := r.applyConnectors(ctx, a, connectors)
+	if err != nil {
+		return false, "", err
 	}
 	if err := r.deleteRemovedConnectors(ctx, a, connectors); err != nil {
+		return false, "", err
+	}
+	if err := r.restartAuth(ctx, a); err != nil {
 		return false, "", err
 	}
 	setConnectorsCondition(a, observed)
@@ -413,6 +448,21 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	keepKnown(&a.Status.Versions.ILM, current.Status.ObservedVersion)
 	ready, message := platformReady(current)
 	return ready, message, nil
+}
+
+// applyConnectors applies connectors and returns them as applied.
+func (r *ApplianceReconciler) applyConnectors(ctx context.Context, a *v1alpha1.Appliance, connectors []otilm.Connector) ([]otilm.Connector, error) {
+	observed := make([]otilm.Connector, len(connectors))
+	for i := range connectors {
+		applied, err := r.apply(ctx, a, &connectors[i])
+		if err != nil {
+			return nil, err
+		}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, &observed[i]); err != nil {
+			return nil, fmt.Errorf("read the applied connector %s: %w", connectors[i].Name, err)
+		}
+	}
+	return observed, nil
 }
 
 // deleteRemovedConnectors deletes the Connectors the Appliance controls that are no longer among its components.
@@ -438,36 +488,214 @@ func (r *ApplianceReconciler) deleteRemovedConnectors(ctx context.Context, a *v1
 }
 
 // copySecrets copies the certificate and key of the TLS Secret, the referenced key of the trust Secret, the
-// registry credentials and the mail credentials the spec references into the platform namespace, and returns the
-// names of the copies. The copy of trust, registry or mail credentials the spec no longer references is deleted.
+// registry credentials, the mail credentials and the credentials of the external database and broker the spec
+// references into the platform namespace, and returns the names of the copies. A copy the spec no longer references
+// is deleted.
 func (r *ApplianceReconciler) copySecrets(ctx context.Context, a *v1alpha1.Appliance) (platform.SecretNames, error) {
 	var names platform.SecretNames
-	src, err := r.tlsSecret(ctx, a)
-	if err != nil {
+	var err error
+	if names.TLS, err = r.copyTLS(ctx, a); err != nil {
 		return names, err
-	}
-	if src != nil {
-		if src.Type != corev1.SecretTypeTLS {
-			return names, fmt.Errorf("secret %s/%s has type %q, want %s", SystemNamespace, src.Name, src.Type, corev1.SecretTypeTLS)
-		}
-		pair := map[string][]byte{corev1.TLSCertKey: src.Data[corev1.TLSCertKey], corev1.TLSPrivateKeyKey: src.Data[corev1.TLSPrivateKeyKey]}
-		if err := r.applySecret(ctx, a, TLSSecretName, corev1.SecretTypeTLS, pair); err != nil {
-			return names, err
-		}
-		names.TLS = TLSSecretName
 	}
 	if names.Trust, err = r.copyTrust(ctx, a); err != nil {
 		return names, err
 	}
-	pull, err := r.copyRegistryCredentials(ctx, a)
-	if err != nil {
+	if names.PullSecret, err = r.copyRegistryCredentials(ctx, a); err != nil {
 		return names, err
 	}
-	names.PullSecret = pull
 	if names.Mail, err = r.copyMailCredentials(ctx, a); err != nil {
 		return names, err
 	}
-	return names, nil
+	return names, r.copyDependencySecrets(ctx, a, &names)
+}
+
+// copyTLS copies the certificate and key of the TLS Secret and returns the copy's name, empty without one.
+func (r *ApplianceReconciler) copyTLS(ctx context.Context, a *v1alpha1.Appliance) (string, error) {
+	src, err := r.tlsSecret(ctx, a)
+	if err != nil || src == nil {
+		return "", err
+	}
+	if src.Type != corev1.SecretTypeTLS {
+		return "", fmt.Errorf("secret %s/%s has type %q, want %s", SystemNamespace, src.Name, src.Type, corev1.SecretTypeTLS)
+	}
+	pair := map[string][]byte{corev1.TLSCertKey: src.Data[corev1.TLSCertKey], corev1.TLSPrivateKeyKey: src.Data[corev1.TLSPrivateKeyKey]}
+	if err := r.applySecret(ctx, a, TLSSecretName, corev1.SecretTypeTLS, pair); err != nil {
+		return "", err
+	}
+	return TLSSecretName, nil
+}
+
+// copyDependencySecrets copies the credentials and CAs of the external database and broker into the platform
+// namespace and records the names of the copies in names.
+func (r *ApplianceReconciler) copyDependencySecrets(ctx context.Context, a *v1alpha1.Appliance, names *platform.SecretNames) error {
+	var database, messaging string
+	var databaseCA, messagingCA *v1alpha1.SecretKeyRef
+	if p := a.Spec.Platform; p != nil && p.Database != nil {
+		database, databaseCA = p.Database.CredentialsRef, p.Database.CA
+	}
+	if p := a.Spec.Platform; p != nil && p.Messaging != nil {
+		messaging = p.Messaging.CredentialsRef
+		if p.Messaging.TLS {
+			messagingCA = p.Messaging.CA
+		}
+	}
+	var err error
+	if names.Database, err = r.copyCredentials(ctx, a, database, DatabaseSecretName); err != nil {
+		return err
+	}
+	if names.Messaging, err = r.copyCredentials(ctx, a, messaging, MessagingSecretName); err != nil {
+		return err
+	}
+	if names.DatabaseCA, err = r.copyDatabaseCA(ctx, a, databaseCA); err != nil {
+		return err
+	}
+	names.MessagingCA, err = r.copyTrustStore(ctx, a, messagingCA)
+	return err
+}
+
+// copyDatabaseCA copies the PEM CA ref names into the platform namespace and returns the copy's name, or deletes the
+// copy and returns "" without one.
+func (r *ApplianceReconciler) copyDatabaseCA(ctx context.Context, a *v1alpha1.Appliance, ref *v1alpha1.SecretKeyRef) (string, error) {
+	if ref == nil {
+		return "", r.deleteCopy(ctx, DatabaseCASecretName)
+	}
+	ca, err := caOf(ctx, r.Client, ref)
+	if err != nil {
+		return "", err
+	}
+	if err := r.applySecret(ctx, a, DatabaseCASecretName, corev1.SecretTypeOpaque, map[string][]byte{v1alpha1.CAKey: ca}); err != nil {
+		return "", err
+	}
+	return DatabaseCASecretName, nil
+}
+
+// copyTrustStore writes the PEM CA ref names as a PKCS#12 trust store into the platform namespace and returns the
+// copy's name, or deletes the copy and returns "" without one. A trust store is built again only for another CA:
+// each build differs, and the pods that mount it would see a changed file.
+func (r *ApplianceReconciler) copyTrustStore(ctx context.Context, a *v1alpha1.Appliance, ref *v1alpha1.SecretKeyRef) (string, error) {
+	if ref == nil {
+		return "", r.deleteCopy(ctx, MessagingCASecretName)
+	}
+	ca, err := caOf(ctx, r.Client, ref)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(ca)
+	hash := hex.EncodeToString(sum[:])
+	current := &corev1.Secret{}
+	err = r.APIReader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: MessagingCASecretName}, current)
+	if client.IgnoreNotFound(err) != nil {
+		return "", fmt.Errorf(errReadSecret, platform.Namespace, MessagingCASecretName, err)
+	}
+	store := current.Data[platform.TrustStoreKey]
+	if err != nil || current.Annotations[caHashAnnotation] != hash || len(store) == 0 {
+		if store, err = trustStore(ca); err != nil {
+			return "", fmt.Errorf("secret %s/%s: %w", SystemNamespace, ref.Name, err)
+		}
+	}
+	s := &corev1.Secret{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: MessagingCASecretName, Annotations: map[string]string{caHashAnnotation: hash}},
+		Type:       corev1.SecretTypeOpaque,
+		Data:       map[string][]byte{platform.TrustStoreKey: store},
+	}
+	if _, err := r.apply(ctx, a, s); err != nil {
+		return "", err
+	}
+	return MessagingCASecretName, nil
+}
+
+// caOf reads the PEM CA ref names in the system namespace.
+func caOf(ctx context.Context, c client.Reader, ref *v1alpha1.SecretKeyRef) ([]byte, error) {
+	src, err := systemSecret(ctx, c, ref.Name)
+	if err != nil {
+		return nil, err
+	}
+	return secretValue(src, ref.Key)
+}
+
+// trustStore encodes the certificates of the PEM bundle ca as a PKCS#12 trust store, which Java reads.
+func trustStore(ca []byte) ([]byte, error) {
+	var certs []*x509.Certificate
+	for rest := ca; ; {
+		var block *pem.Block
+		if block, rest = pem.Decode(rest); block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse the CA: %w", err)
+		}
+		certs = append(certs, cert)
+	}
+	if len(certs) == 0 {
+		return nil, errors.New("the CA holds no certificate")
+	}
+	store, err := pkcs12.Modern.EncodeTrustStore(certs, platform.TrustStorePassword)
+	if err != nil {
+		return nil, fmt.Errorf("encode the trust store: %w", err)
+	}
+	return store, nil
+}
+
+// restartAuth restarts ILM's auth service once the connection string of an external database changed, by
+// recording the version of the operator's auth-db Secret on its pod template. Without the Secret or the Deployment,
+// or with the managed database, there is nothing to restart.
+func (r *ApplianceReconciler) restartAuth(ctx context.Context, a *v1alpha1.Appliance) error {
+	if a.Spec.Platform == nil || a.Spec.Platform.Database == nil {
+		return nil
+	}
+	secret := &metav1.PartialObjectMetadata{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}}
+	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: authDBSecret}, secret)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf(errReadSecret, platform.Namespace, authDBSecret, err)
+	}
+	auth := &appsv1.Deployment{}
+	err = r.APIReader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: authDeployment}, auth)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read deployment %s/%s: %w", platform.Namespace, authDeployment, err)
+	}
+	version := secret.ResourceVersion
+	if auth.Spec.Template.Annotations[authDBAnnotation] == version {
+		return nil
+	}
+	patch := fmt.Appendf(nil, `{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`, authDBAnnotation, version)
+	if err := r.Client.Patch(ctx, auth, client.RawPatch(types.MergePatchType, patch), client.FieldOwner(fieldManager)); err != nil {
+		return fmt.Errorf("restart deployment %s/%s: %w", platform.Namespace, authDeployment, err)
+	}
+	log.FromContext(ctx).Info("restarted auth for the changed database connection", "deployment", platform.Namespace+"/"+authDeployment)
+	return nil
+}
+
+// copyCredentials copies the user name and password of the Secret ref in the system namespace to the copy name in
+// the platform namespace and returns name, or deletes the copy and returns "" when ref is empty.
+func (r *ApplianceReconciler) copyCredentials(ctx context.Context, a *v1alpha1.Appliance, ref, name string) (string, error) {
+	if ref == "" {
+		return "", r.deleteCopy(ctx, name)
+	}
+	src, err := systemSecret(ctx, r.Client, ref)
+	if err != nil {
+		return "", err
+	}
+	data := map[string][]byte{}
+	for _, key := range []string{v1alpha1.CredentialsUsernameKey, v1alpha1.CredentialsPasswordKey} {
+		if data[key], err = secretValue(src, key); err != nil {
+			return "", err
+		}
+	}
+	if err := r.applySecret(ctx, a, name, corev1.SecretTypeOpaque, data); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // tlsSecret returns the Secret the spec references for TLS, or the built-in certificate's Secret once cert-manager
@@ -482,7 +710,7 @@ func (r *ApplianceReconciler) tlsSecret(ctx context.Context, a *v1alpha1.Applian
 	case apierrors.IsNotFound(err):
 		return nil, nil
 	case err != nil:
-		return nil, fmt.Errorf("read secret %s/%s: %w", certs.Namespace, certs.SecretName, err)
+		return nil, fmt.Errorf(errReadSecret, certs.Namespace, certs.SecretName, err)
 	case len(s.Data[corev1.TLSCertKey]) == 0 || len(s.Data[corev1.TLSPrivateKeyKey]) == 0:
 		return nil, nil
 	}
@@ -633,7 +861,7 @@ func (r *ApplianceReconciler) secretExists(ctx context.Context, namespace, name 
 	case apierrors.IsNotFound(err):
 		return false, nil
 	case err != nil:
-		return false, fmt.Errorf("read secret %s/%s: %w", namespace, name, err)
+		return false, fmt.Errorf(errReadSecret, namespace, name, err)
 	}
 	return true, nil
 }

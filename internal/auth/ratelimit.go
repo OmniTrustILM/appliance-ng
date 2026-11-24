@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +22,14 @@ const (
 	maxUserKey = 64
 )
 
-// Limiter limits sign-in attempts per user and source IP, per source IP and,
-// with a short delay only, per user. Blocks never span addresses, so that no
-// peer can lock a user out of the other addresses. Allow counts an attempt as
-// a failure the moment it lets it through, so concurrent requests cannot pass
-// before earlier ones have failed; Succeed takes the attempts back. It is safe
-// for concurrent use.
+// Limiter limits sign-in attempts per user and source, per source and, with a
+// short delay only, per user. A source is an IPv4 address or an IPv6 /64, the
+// smallest network a host usually gets. Blocks never span sources, so that no
+// peer can lock a user out of the other sources; the delay does, so that
+// rotating sources does not escape it. Allow counts an attempt as a failure
+// the moment it lets it through, so concurrent requests cannot pass before
+// earlier ones have failed; Succeed takes the attempts back. It is safe for
+// concurrent use.
 type Limiter struct {
 	mu    sync.Mutex
 	pairs map[pairKey]*counter
@@ -34,7 +37,7 @@ type Limiter struct {
 	users map[string]*counter
 }
 
-// pairKey identifies the attempts of one user from one source IP.
+// pairKey identifies the attempts of one user from one source.
 type pairKey struct {
 	user, ip string
 }
@@ -45,11 +48,8 @@ type counter struct {
 	blockedUntil time.Time
 }
 
-// SignInLimiter returns a limiter that blocks a user at a source IP for 15
-// minutes after 5 unsuccessful attempts from that IP within 15 minutes, and a
-// source IP for 15 minutes after 20 attempts within 15 minutes. Once a user
-// has 5 unsuccessful attempts within 15 minutes from any source, a source that
-// has failed for the user must wait 2 seconds after the user's last attempt.
+// SignInLimiter returns a limiter with the limits of the constants above: a block of a user at a source, a block of
+// a source, and a delay on every attempt of a user who failed often from any sources.
 func SignInLimiter() *Limiter {
 	return &Limiter{pairs: map[pairKey]*counter{}, ips: map[string]*counter{}, users: map[string]*counter{}}
 }
@@ -60,12 +60,9 @@ func SignInLimiter() *Limiter {
 func (l *Limiter) Allow(user, ip string, now time.Time) (ok bool, retryAfter time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	name := limiterKey(user)
-	p, i, u := counterFor(l.pairs, pairKey{name, ip}, now), counterFor(l.ips, ip, now), counterFor(l.users, name, now)
-	retryAfter = max(p.remaining(now), i.remaining(now))
-	if p.failing(now) {
-		retryAfter = max(retryAfter, u.delay(now))
-	}
+	name, source := limiterKey(user), sourceKey(ip)
+	p, i, u := counterFor(l.pairs, pairKey{name, source}, now), counterFor(l.ips, source, now), counterFor(l.users, name, now)
+	retryAfter = max(p.remaining(now), i.remaining(now), u.delay(now))
 	if retryAfter > 0 {
 		return false, retryAfter
 	}
@@ -75,14 +72,14 @@ func (l *Limiter) Allow(user, ip string, now time.Time) (ok bool, retryAfter tim
 	return true, 0
 }
 
-// Succeed clears the attempts and any block of user, both from ip and from any
-// source. Call it only after both the password and the TOTP code of the
-// attempt were accepted. The attempts of the source IP stay.
+// Succeed clears the attempts and any block of user, both from the source of ip
+// and from any source. Call it only after both the password and the TOTP code
+// of the attempt were accepted. The attempts of the source stay.
 func (l *Limiter) Succeed(user, ip string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	name := limiterKey(user)
-	delete(l.pairs, pairKey{name, ip})
+	delete(l.pairs, pairKey{name, sourceKey(ip)})
 	delete(l.users, name)
 }
 
@@ -92,6 +89,21 @@ func limiterKey(user string) string {
 		return strings.Clone(user[:maxUserKey])
 	}
 	return user
+}
+
+// sourceKey is the counter key of the source of ip: the IPv4 address, also when
+// mapped into IPv6, or the IPv6 /64. Anything else is used as it is.
+func sourceKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, _ := addr.Prefix(64) // never fails for an IPv6 address without a zone
+	return prefix.String()
 }
 
 // counterFor returns the counter of key, creating it, and drops idle entries
@@ -145,12 +157,6 @@ func (c *counter) delay(now time.Time) time.Duration {
 		return 0
 	}
 	return max(c.attempts[len(c.attempts)-1].Add(userDelay).Sub(now), 0)
-}
-
-// failing reports whether c holds an attempt within the window at now.
-func (c *counter) failing(now time.Time) bool {
-	c.drop(now)
-	return len(c.attempts) > 0
 }
 
 // drop forgets the attempts older than the window.

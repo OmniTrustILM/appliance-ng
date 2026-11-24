@@ -11,6 +11,9 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/nodeconfig"
 )
 
+// errReadSecret is the format of a failed read of the Secret namespace/name.
+const errReadSecret = "read secret %s/%s: %w"
+
 // trustBundle returns the CA bundle spec.trust references, or nil without one.
 func trustBundle(ctx context.Context, c client.Reader, a *v1alpha1.Appliance) ([]byte, error) {
 	ref := a.Spec.Trust
@@ -74,7 +77,7 @@ func secretValue(s *corev1.Secret, key string) ([]byte, error) {
 func systemSecret(ctx context.Context, c client.Reader, name string) (*corev1.Secret, error) {
 	s := &corev1.Secret{}
 	if err := c.Get(ctx, client.ObjectKey{Namespace: SystemNamespace, Name: name}, s); err != nil {
-		return nil, fmt.Errorf("read secret %s/%s: %w", SystemNamespace, name, err)
+		return nil, fmt.Errorf(errReadSecret, SystemNamespace, name, err)
 	}
 	return s, nil
 }

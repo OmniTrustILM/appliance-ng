@@ -55,12 +55,12 @@ const (
 var (
 	freshSteps = []string{
 		v1alpha1.RestoreStepSecrets, v1alpha1.RestoreStepAppliance, v1alpha1.RestoreStepPlatform, v1alpha1.RestoreStepStop,
-		v1alpha1.RestoreStepILMSecrets, v1alpha1.RestoreStepDatabase, v1alpha1.RestoreStepStart, v1alpha1.RestoreStepKeycloak,
-		v1alpha1.RestoreStepCertificate,
+		v1alpha1.RestoreStepILMSecrets, v1alpha1.RestoreStepDatabase, v1alpha1.RestoreStepCBOM, v1alpha1.RestoreStepStart,
+		v1alpha1.RestoreStepKeycloak, v1alpha1.RestoreStepCertificate,
 	}
 	inPlaceSteps = []string{
 		v1alpha1.RestoreStepSecrets, v1alpha1.RestoreStepAppliance, v1alpha1.RestoreStepStop, v1alpha1.RestoreStepILMSecrets,
-		v1alpha1.RestoreStepDatabase, v1alpha1.RestoreStepStart,
+		v1alpha1.RestoreStepDatabase, v1alpha1.RestoreStepCBOM, v1alpha1.RestoreStepStart,
 	}
 )
 
@@ -72,6 +72,8 @@ type Options struct {
 	ILMHostName string
 	// User is the console account that starts the restore.
 	User string
+	// Dependencies replaces the backup's choice of the dependencies it names on a fresh restore; nil keeps them.
+	Dependencies *v1alpha1.RestoreDependencies
 }
 
 // BackupRunner admits a restore apart from the backups: Exclusive runs admit while no backup runs or passes its
@@ -88,11 +90,13 @@ type AuditWriter interface {
 // Deps is what the Engine needs.
 type Deps struct {
 	// Client reads past the cache and writes: the Appliance, Secrets, Deployments and the operator's kinds.
-	Client  client.Client
-	Dumper  backup.Dumper
-	Backups BackupRunner
-	Audit   AuditWriter
-	Log     *slog.Logger
+	Client client.Client
+	// Dumper loads the managed database; External makes the dumper of an external one.
+	Dumper   backup.Dumper
+	External func(v1alpha1.ExternalDatabase) backup.Dumper
+	Backups  BackupRunner
+	Audit    AuditWriter
+	Log      *slog.Logger
 	// OperatorLock, when set, is held while the ILM operator is scaled; the add-on pass holds it while it applies the
 	// operator's Deployment.
 	OperatorLock sync.Locker
@@ -100,6 +104,8 @@ type Deps struct {
 	KeycloakURL string
 	// HTTPClient calls Keycloak; nil is a client that never uses a proxy.
 	HTTPClient *http.Client
+	// CBOMStore is the host:port of the CBOM repository's store on the appliance; empty is its Service's cluster IP.
+	CBOMStore string
 }
 
 // Engine restores a backup onto the appliance, one restore at a time and step by step. Each step is recorded in the
@@ -141,6 +147,7 @@ func New(deps Deps) *Engine {
 		v1alpha1.RestoreStepStop:        e.stop,
 		v1alpha1.RestoreStepILMSecrets:  e.restoreILMSecrets,
 		v1alpha1.RestoreStepDatabase:    e.restoreDatabase,
+		v1alpha1.RestoreStepCBOM:        e.restoreCBOM,
 		v1alpha1.RestoreStepStart:       e.start,
 		v1alpha1.RestoreStepKeycloak:    e.rehostKeycloak,
 		v1alpha1.RestoreStepCertificate: e.restoreCertificate,
@@ -280,7 +287,8 @@ func (e *Engine) admit(ctx context.Context, file string, id age.Identity, opts O
 		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) {
 			st.Restore = &v1alpha1.RestoreStatus{
 				Backup: filepath.Base(file), File: file, InPlace: opts.InPlace, ILMHostName: opts.ILMHostName,
-				Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.NewTime(e.now()), StartedBy: opts.User,
+				Dependencies: opts.Dependencies, Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.NewTime(e.now()),
+				StartedBy: opts.User,
 			}
 		})
 	})

@@ -14,6 +14,7 @@ type Previewed = { pem: string; items: TrustedCertificate[] };
 type Sent = { response: Response; error?: { message: string } };
 
 const refusal = 'Nothing was added.';
+const unconfirmed = 'It is not known whether the certificates were added. Reload the page to see the trusted certificates.';
 
 function Preview({ items }: Readonly<{ items: TrustedCertificate[] }>) {
   const added = items.filter((ca) => ca.new);
@@ -53,29 +54,31 @@ export function AddCaForm({ onAdded }: Readonly<{ onAdded: () => void }>) {
     setError(undefined);
   }
 
+  /** Reads a chosen file into the bundle unless another file was chosen or the text edited in the meantime. */
   async function pick(picked: File | undefined) {
     setFile(picked);
+    const edit = ++edits.current;
     if (!picked) return;
     const text = await attempt(() => picked.text());
+    if (edit !== edits.current) return;
     change(text ?? '');
     if (text === undefined) setError('The file could not be read.');
   }
 
-  /** Runs a request; a failure is shown with the note that nothing was added and gives undefined. */
-  async function run<R extends Sent>(call: () => Promise<R>): Promise<R | undefined> {
+  /**
+   * Runs a request and gives undefined for a failure, which is shown with what it means for the trusted certificates:
+   * nothing was added, or, for an add without an answer or with a server error, that this is not known.
+   */
+  async function run<R extends Sent>(call: () => Promise<R>, adds = false): Promise<R | undefined> {
     setBusy(true);
     setError(undefined);
     const result = await attempt(call);
     setBusy(false);
-    if (!result) {
-      setError(`${unreachable} ${refusal}`);
-      return undefined;
-    }
-    if (!result.response.ok) {
-      setError(`${result.error?.message ?? 'The appliance could not process the request.'} ${refusal}`);
-      return undefined;
-    }
-    return result;
+    if (result?.response.ok) return result;
+    const reason = result ? (result.error?.message ?? 'The appliance could not process the request.') : unreachable;
+    const uncertain = adds && (!result || result.response.status >= 500);
+    setError(`${reason} ${uncertain ? unconfirmed : refusal}`);
+    return undefined;
   }
 
   async function previewUpload() {
@@ -86,7 +89,7 @@ export function AddCaForm({ onAdded }: Readonly<{ onAdded: () => void }>) {
   }
 
   async function addUpload(previewed: Previewed) {
-    if (await run(() => api.POST('/trust', { body: { pem: previewed.pem } }))) {
+    if (await run(() => api.POST('/trust', { body: { pem: previewed.pem } }), true)) {
       setPem('');
       setFile(undefined);
       setPreview(undefined);

@@ -4,7 +4,7 @@ package addons
 
 import "embed"
 
-// FS is the embedded add-on filesystem.
+// FS is the embedded add-on filesystem, with the Helm chart archives the manager renders under charts/.
 //
-//go:embed *.yaml
+//go:embed *.yaml charts/*.tgz
 var FS embed.FS

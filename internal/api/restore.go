@@ -54,7 +54,9 @@ var (
 		"Enter a fully qualified host name, such as ilm.example.com, not an IP address.")
 	answerRenameInPlace = refusedField(codeInvalid, fieldILMHost,
 		"A restore in place keeps the backup's ILM host name; restore onto a fresh appliance to use another one.")
-	answerBadSource = refusedField(codeInvalid, partSource, "Choose an uploaded or a local backup.")
+	answerBadSource           = refusedField(codeInvalid, partSource, "Choose an uploaded or a local backup.")
+	answerDependenciesInPlace = refusedField(codeInvalid, "dependencies",
+		"A restore in place keeps the current dependencies; restore onto a fresh appliance to choose others.")
 	answerNoBackup  = refused(http.StatusNotFound, codeNotFound, "There is no backup of that name to restore.")
 	answerFreshOnly = refused(http.StatusConflict, codeSetup,
 		"Backups are uploaded or fetched only on a fresh appliance that waits for a restore; restore a local backup in place from the Backups page.")
@@ -261,6 +263,14 @@ func (s *Server) inspect(ctx context.Context, name string, local bool, parts map
 	return restoreAnswer{status: http.StatusOK, body: summaryOf(in, a.Spec.Node.HostName)}, nil
 }
 
+// orField is the refusal of the request field of ferr, or no answer without one.
+func orField(ferr *fieldError) restoreAnswer {
+	if ferr == nil {
+		return restoreAnswer{}
+	}
+	return refusedField(codeInvalid, ferr.field, ferr.message)
+}
+
 // orFailure is the refusal a, or no answer when a call failed instead.
 func orFailure(a *restoreAnswer) restoreAnswer {
 	if a == nil {
@@ -327,6 +337,7 @@ func summaryOf(in *inspection, nodeHost string) RestoreSummary {
 		Inspection: in.ref, Backup: in.name, InPlace: in.local, Time: m.Time.UTC(), HostName: m.HostName, IlmHostName: m.ILMHostName, NodeHostName: nodeHost,
 		Ilm: m.ILM, Operator: m.Operator, Appliance: m.Appliance, Database: RestoreSummaryDatabase(m.Database),
 		DatabaseIncluded: m.DatabaseIncluded, Accounts: nonNil(sum.Accounts), Clashes: nonNil(sum.Clashes), Components: nonNil(sum.Components),
+		Dependencies: dependencyChoices(&sum.Platform),
 	}
 }
 
@@ -370,6 +381,16 @@ func (s *Server) PostRestoreStart(ctx context.Context, req PostRestoreStartReque
 		return answered(ctx, details, answerUnconfirmed), nil
 	}
 	details["inPlace"] = strconv.FormatBool(req.Body.InPlace)
+	if d := req.Body.Dependencies; d != nil {
+		var kinds []string
+		for kind, given := range map[string]bool{v1alpha1.DependencyDatabase: d.Database != nil, v1alpha1.DependencyMessaging: d.Messaging != nil, v1alpha1.DependencyIdentity: d.Identity != nil} {
+			if given {
+				kinds = append(kinds, kind)
+			}
+		}
+		slices.Sort(kinds)
+		details["dependencies"] = strings.Join(kinds, ",")
+	}
 	if in == nil {
 		return answered(ctx, details, answerNotInspected), nil
 	}
@@ -385,18 +406,9 @@ func (s *Server) PostRestoreStart(ctx context.Context, req PostRestoreStartReque
 }
 
 func (s *Server) startRestore(ctx context.Context, in *inspection, body *RestoreStart) (restoreAnswer, error) {
-	if body.InPlace != in.local {
-		return answerNotLocal, nil
-	}
-	host := strings.ToLower(strings.TrimSpace(deref(body.IlmHostName)))
-	if host != "" && !hostname.IsFQDN(host) {
-		return answerBadILMHost, nil
-	}
-	if host == in.summary.Manifest.ILMHostName {
-		host = ""
-	}
-	if host != "" && in.local {
-		return answerRenameInPlace, nil
+	host, deps, answer := restoreChoices(in, body)
+	if answer.status != 0 {
+		return answer, nil
 	}
 	if in.local {
 		a, err := s.appliance(ctx)
@@ -407,8 +419,20 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 			return versionUnavailable(running, in.summary.Manifest.ILM), nil
 		}
 	}
-	user := requestFrom(ctx).user
-	err := s.deps.Restore.Start(ctx, in.file, in.id, restore.Options{InPlace: in.local, ILMHostName: host, User: user})
+	opts := restore.Options{InPlace: in.local, ILMHostName: host, User: requestFrom(ctx).user}
+	plan, answer, err := s.writeRestoreCredentials(ctx, deps)
+	if answer.status != 0 || err != nil {
+		return answer, err
+	}
+	if plan != nil {
+		opts.Dependencies = &v1alpha1.RestoreDependencies{
+			Replace: deps.given, Database: deps.spec.Database, Messaging: deps.spec.Messaging, Identity: deps.spec.Identity,
+		}
+	}
+	err = s.deps.Restore.Start(ctx, in.file, in.id, opts)
+	if err != nil && plan != nil {
+		s.undoCredentials(ctx, plan)
+	}
 	if answer, ok := restoreRefusal(err); ok {
 		return answer, nil
 	}
@@ -416,8 +440,60 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 		return restoreAnswer{}, restoreFailed("start the restore", err)
 	}
 	s.forgetInspection()
-	s.deps.Log.Info("restore started from the console", "backup", in.name, "inPlace", in.local, "user", user)
+	s.deps.Log.Info("restore started from the console", "backup", in.name, "inPlace", in.local, "user", opts.User)
 	return restoreAnswer{status: http.StatusAccepted}, nil
+}
+
+// restoreChoices reads the ILM host name, empty to keep the backup's, and the dependencies chosen anew of a start of
+// the restore of in, or the answer that refuses them.
+func restoreChoices(in *inspection, body *RestoreStart) (string, *dependenciesInput, restoreAnswer) {
+	if body.InPlace != in.local {
+		return "", nil, answerNotLocal
+	}
+	host := strings.ToLower(strings.TrimSpace(deref(body.IlmHostName)))
+	if host != "" && !hostname.IsFQDN(host) {
+		return "", nil, answerBadILMHost
+	}
+	if host == in.summary.Manifest.ILMHostName {
+		host = ""
+	}
+	if host != "" && in.local {
+		return "", nil, answerRenameInPlace
+	}
+	deps, ferr := parseDependencies(body.Dependencies)
+	switch {
+	case ferr != nil:
+		return "", nil, refusedField(codeInvalid, ferr.field, ferr.message)
+	case in.local && len(deps.given) > 0:
+		return "", nil, answerDependenciesInPlace
+	}
+	return host, deps, restoreAnswer{}
+}
+
+// writeRestoreCredentials writes the credentials of the dependencies a fresh restore chooses anew and returns the
+// plan that puts them back, nil when none is chosen. None is stored for the backup's dependencies yet. They are all
+// checked before any is written, and never while a restore runs, whose credentials they would replace.
+func (s *Server) writeRestoreCredentials(ctx context.Context, deps *dependenciesInput) (*credentialsPlan, restoreAnswer, error) {
+	if len(deps.given) == 0 {
+		return nil, restoreAnswer{}, nil
+	}
+	a, err := s.appliance(ctx)
+	if err != nil {
+		return nil, restoreAnswer{}, err
+	}
+	if a.Status.Restore.Active() {
+		answer, _ := restoreRefusal(restore.ErrBusy)
+		return nil, answer, nil
+	}
+	plan, ferr, err := s.planDependencyCredentials(ctx, deps, nil)
+	if ferr != nil || err != nil {
+		return nil, orField(ferr), err
+	}
+	if _, err := s.writeCredentials(ctx, plan); err != nil {
+		s.undoCredentials(ctx, plan)
+		return nil, restoreAnswer{}, err
+	}
+	return plan, restoreAnswer{}, nil
 }
 
 // PostRestoreResume resumes the restore that waits for its kit, or one that failed, with the uploaded kit.

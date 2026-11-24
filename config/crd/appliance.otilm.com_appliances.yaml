@@ -263,15 +263,208 @@ spec:
               platform:
                 description: PlatformSpec selects the ILM platform to install.
                 properties:
+                  cbom:
+                    description: CBOM installs the CBOM repository ILM keeps CBOMs
+                      in.
+                    properties:
+                      credentialsRef:
+                        description: |-
+                          CredentialsRef names the Secret in the appliance namespace holding accessKey and secretKey of the external
+                          bucket.
+                        type: string
+                      enabled:
+                        type: boolean
+                      s3:
+                        description: S3 is the external bucket; its Prefix is not
+                          used.
+                        properties:
+                          bucket:
+                            type: string
+                          ca:
+                            description: CA references the Secret key holding the
+                              PEM CA bundle that signs the endpoint certificate.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          endpoint:
+                            type: string
+                          prefix:
+                            type: string
+                          region:
+                            type: string
+                        required:
+                        - bucket
+                        - endpoint
+                        type: object
+                      storage:
+                        description: 'Storage is the S3 store of the CBOMs: one on
+                          the appliance''s data volume, or an external one.'
+                        enum:
+                        - appliance
+                        - s3
+                        type: string
+                    required:
+                    - storage
+                    type: object
+                    x-kubernetes-validations:
+                    - message: cbom s3 and credentialsRef must be set exactly when
+                        storage is s3
+                      rule: 'self.storage == ''s3'' ? has(self.s3) && has(self.credentialsRef)
+                        && size(self.credentialsRef) > 0 : !has(self.s3) && (!has(self.credentialsRef)
+                        || size(self.credentialsRef) == 0)'
                   components:
                     items:
                       type: string
                     type: array
                     x-kubernetes-list-type: set
+                  database:
+                    description: Database is the external database ILM uses; unset
+                      is the managed one.
+                    properties:
+                      ca:
+                        description: CA references the PEM CA bundle that signs the
+                          server's certificate; verify-full needs it.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      credentialsRef:
+                        description: CredentialsRef names the Secret in the appliance
+                          namespace holding the user name and the password.
+                        minLength: 1
+                        type: string
+                      host:
+                        description: Host is a host name or an IPv4 address.
+                        pattern: ^[a-zA-Z0-9._-]{1,253}$
+                        type: string
+                      name:
+                        description: Name is the database; its characters are safe
+                          in a JDBC URL.
+                        pattern: ^[A-Za-z0-9_$.-]{1,63}$
+                        type: string
+                      port:
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      tlsMode:
+                        description: |-
+                          TLSMode is the sslmode of the connection; empty leaves the drivers' default, which uses TLS when the server
+                          offers it without verifying the server.
+                        enum:
+                        - disable
+                        - require
+                        - verify-full
+                        type: string
+                    required:
+                    - credentialsRef
+                    - host
+                    - name
+                    - port
+                    type: object
+                    x-kubernetes-validations:
+                    - message: database.ca is required when tlsMode is verify-full
+                      rule: '!has(self.tlsMode) || self.tlsMode != ''verify-full''
+                        || has(self.ca)'
                   hostName:
                     type: string
+                  identity:
+                    description: Identity is the external OIDC provider ILM signs
+                      users in with; unset is the managed Keycloak.
+                    properties:
+                      audiences:
+                        description: Audiences are the audiences ILM accepts in the
+                          provider's tokens; none accepts any token of the issuer.
+                        items:
+                          maxLength: 255
+                          type: string
+                        maxItems: 16
+                        type: array
+                      clientId:
+                        maxLength: 255
+                        minLength: 1
+                        type: string
+                      credentialsRef:
+                        description: CredentialsRef names the Secret in the appliance
+                          namespace holding the client secret.
+                        minLength: 1
+                        type: string
+                      issuer:
+                        maxLength: 2048
+                        pattern: ^https://
+                        type: string
+                      scopes:
+                        items:
+                          maxLength: 255
+                          type: string
+                        maxItems: 32
+                        type: array
+                    required:
+                    - clientId
+                    - credentialsRef
+                    - issuer
+                    type: object
                   ilmVersion:
                     type: string
+                  messaging:
+                    description: Messaging is the external message broker ILM uses;
+                      unset is the managed one.
+                    properties:
+                      ca:
+                        description: CA references the PEM CA bundle that signs the
+                          broker's certificate; TLS needs it.
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                        required:
+                        - key
+                        - name
+                        type: object
+                      credentialsRef:
+                        description: CredentialsRef names the Secret in the appliance
+                          namespace holding the user name and the password.
+                        minLength: 1
+                        type: string
+                      host:
+                        description: Host is a host name or an IPv4 address.
+                        pattern: ^[a-zA-Z0-9._-]{1,253}$
+                        type: string
+                      port:
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      tls:
+                        description: TLS connects with AMQPS to Port, verifying the
+                          server against CA.
+                        type: boolean
+                      virtualHost:
+                        maxLength: 255
+                        type: string
+                    required:
+                    - credentialsRef
+                    - host
+                    - port
+                    type: object
+                    x-kubernetes-validations:
+                    - message: messaging.ca is required exactly when tls is set
+                      rule: (has(self.tls) && self.tls) == has(self.ca)
+                  utils:
+                    description: Utils installs the utils service.
+                    type: boolean
                 type: object
               proxy:
                 description: ProxySpec is the outbound HTTP proxy configuration.
@@ -544,6 +737,156 @@ spec:
                   backup:
                     description: Backup is the file name of the backup.
                     type: string
+                  dependencies:
+                    description: Dependencies replaces the backup's choice of the
+                      dependencies it names on a fresh restore.
+                    properties:
+                      database:
+                        description: ExternalDatabase is a PostgreSQL database outside
+                          the appliance.
+                        properties:
+                          ca:
+                            description: CA references the PEM CA bundle that signs
+                              the server's certificate; verify-full needs it.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          credentialsRef:
+                            description: CredentialsRef names the Secret in the appliance
+                              namespace holding the user name and the password.
+                            minLength: 1
+                            type: string
+                          host:
+                            description: Host is a host name or an IPv4 address.
+                            pattern: ^[a-zA-Z0-9._-]{1,253}$
+                            type: string
+                          name:
+                            description: Name is the database; its characters are
+                              safe in a JDBC URL.
+                            pattern: ^[A-Za-z0-9_$.-]{1,63}$
+                            type: string
+                          port:
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          tlsMode:
+                            description: |-
+                              TLSMode is the sslmode of the connection; empty leaves the drivers' default, which uses TLS when the server
+                              offers it without verifying the server.
+                            enum:
+                            - disable
+                            - require
+                            - verify-full
+                            type: string
+                        required:
+                        - credentialsRef
+                        - host
+                        - name
+                        - port
+                        type: object
+                        x-kubernetes-validations:
+                        - message: database.ca is required when tlsMode is verify-full
+                          rule: '!has(self.tlsMode) || self.tlsMode != ''verify-full''
+                            || has(self.ca)'
+                      identity:
+                        description: ExternalIdentity is an OIDC provider outside
+                          the appliance.
+                        properties:
+                          audiences:
+                            description: Audiences are the audiences ILM accepts in
+                              the provider's tokens; none accepts any token of the
+                              issuer.
+                            items:
+                              maxLength: 255
+                              type: string
+                            maxItems: 16
+                            type: array
+                          clientId:
+                            maxLength: 255
+                            minLength: 1
+                            type: string
+                          credentialsRef:
+                            description: CredentialsRef names the Secret in the appliance
+                              namespace holding the client secret.
+                            minLength: 1
+                            type: string
+                          issuer:
+                            maxLength: 2048
+                            pattern: ^https://
+                            type: string
+                          scopes:
+                            items:
+                              maxLength: 255
+                              type: string
+                            maxItems: 32
+                            type: array
+                        required:
+                        - clientId
+                        - credentialsRef
+                        - issuer
+                        type: object
+                      messaging:
+                        description: ExternalMessaging is a RabbitMQ broker outside
+                          the appliance.
+                        properties:
+                          ca:
+                            description: CA references the PEM CA bundle that signs
+                              the broker's certificate; TLS needs it.
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                type: string
+                            required:
+                            - key
+                            - name
+                            type: object
+                          credentialsRef:
+                            description: CredentialsRef names the Secret in the appliance
+                              namespace holding the user name and the password.
+                            minLength: 1
+                            type: string
+                          host:
+                            description: Host is a host name or an IPv4 address.
+                            pattern: ^[a-zA-Z0-9._-]{1,253}$
+                            type: string
+                          port:
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          tls:
+                            description: TLS connects with AMQPS to Port, verifying
+                              the server against CA.
+                            type: boolean
+                          virtualHost:
+                            maxLength: 255
+                            type: string
+                        required:
+                        - credentialsRef
+                        - host
+                        - port
+                        type: object
+                        x-kubernetes-validations:
+                        - message: messaging.ca is required exactly when tls is set
+                          rule: (has(self.tls) && self.tls) == has(self.ca)
+                      replace:
+                        items:
+                          enum:
+                          - database
+                          - messaging
+                          - identity
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                    type: object
                   file:
                     description: File is the path of the backup file in the manager,
                       read again at each step.
@@ -571,6 +914,7 @@ spec:
                     - stop
                     - ilmSecrets
                     - database
+                    - cbom
                     - start
                     - keycloak
                     - certificate
@@ -591,6 +935,7 @@ spec:
                     - stop
                     - ilmSecrets
                     - database
+                    - cbom
                     - start
                     - keycloak
                     - certificate

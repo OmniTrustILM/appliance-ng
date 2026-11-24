@@ -401,10 +401,21 @@ paths:
     get:
       tags: [audit]
       operationId: getAudit
-      summary: The most recent audit entries, newest first
+      summary: The audit entries, newest first, a page at a time
+      description: >-
+        Without `before`, the page starts at the newest entry. The `next` cursor of a page asks for the entries
+        written before its last one; new entries do not shift the pages that follow a cursor.
       security:
         - session: []
       parameters:
+        - name: before
+          in: query
+          required: false
+          description: >-
+            The `next` cursor of the previous page; the page starts at the entry written before that page's last one.
+            A cursor whose entries the rotation of the log dropped gives an empty page.
+          schema:
+            type: string
         - name: limit
           in: query
           required: false
@@ -918,6 +929,9 @@ paths:
         component needs credentials for the registry of its image, and a component that sends mail needs the mail
         settings; otherwise the request is answered with 400 and field `components`, naming the component. While an
         uploaded certificate is in use, a new host name it does not cover is answered with 400 and field `hostName`.
+        Once setup is complete a dependency cannot switch between managed and external, which moves its data: the
+        answer is 400 with field `dependencies.<kind>.mode`, and the switch is done by a backup, a fresh appliance
+        with the new choice and a restore. The connection details and credentials of an external one stay editable.
       security:
         - session: []
       requestBody:
@@ -929,6 +943,41 @@ paths:
       responses:
         '202':
           description: The platform follows shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /platform/dependencies/test:
+    post:
+      tags: [platform]
+      operationId: postDependencyTest
+      summary: Test the connection to an external dependency
+      description: |
+        Checks the settings entered for an external dependency; nothing is saved. A database is checked by a
+        session that runs `SELECT 1` from a short-lived pod, a message broker by an authenticated AMQP 0-9-1
+        connection to its virtual host, an identity provider by its discovery document, whose `issuer` must match
+        and which must name `jwks_uri`. Without `password` the stored one is used while the server, its TLS
+        setting and the user name are unchanged; otherwise the answer is 400 with field `settings.password`. A failure is reported with a
+        fixed reason.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DependencyTest'
+      responses:
+        '200':
+          description: The result of the test.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DependencyTestResult'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2171,6 +2220,11 @@ components:
             type: string
         mail:
           $ref: '#/components/schemas/Mail'
+        dependencies:
+          $ref: '#/components/schemas/DependenciesUpdate'
+        utils:
+          type: boolean
+          description: Install the utils service; left out keeps the current choice.
     Registry:
       type: object
       required: [host, credentialsSet]
@@ -2262,7 +2316,7 @@ components:
           type: string
           enum: [sign-in, sign-out, wizard-platform, admin-credential, node-settings, reboot, shutdown, certificate-upload,
             certificate-csr, certificate-signed, certificate-builtin, trust-add, trust-remove, registry-set,
-            registry-remove, platform-settings, mail-settings, mail-remove, mail-test, kubeconfig-issue,
+            registry-remove, platform-settings, dependency-test, mail-settings, mail-remove, mail-test, kubeconfig-issue,
             kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
             recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
             backup-target-test, backup-host-key-scan, restore-upload, restore-fetch, restore-inspect, restore-start,
@@ -2369,6 +2423,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AuditEntry'
+        next:
+          type: string
+          description: The cursor of the following page; absent when no older entry is left.
     NodeUpdate:
       type: object
       required: [dns, ntp]
@@ -2601,12 +2658,20 @@ components:
           description: Required unless the registry has a password for the same user name, which is then kept.
     PlatformComponent:
       type: object
-      required: [name, title, private, chosen, needsCredentials, needsMail]
+      required: [name, title, private, chosen, needsCredentials, needsMail, registered]
       properties:
         name:
           type: string
         title:
           type: string
+        registered:
+          type: boolean
+          description: |
+            Whether ILM registers the component by itself once it runs. False for a component that speaks only
+            interface v1, which is registered by hand in ILM with `url`.
+        url:
+          type: string
+          description: The in-cluster address to register a component that is not registered by itself with.
         private:
           type: boolean
           description: Whether the component's image comes from a registry that needs credentials.
@@ -2620,7 +2685,7 @@ components:
           description: A component that sends mail while no mail server is set.
     PlatformState:
       type: object
-      required: [ilmVersion, hostName, components]
+      required: [ilmVersion, hostName, components, dependencies, utils, cbom, setupComplete]
       properties:
         ilmVersion:
           type: string
@@ -2630,6 +2695,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlatformComponent'
+        dependencies:
+          $ref: '#/components/schemas/Dependencies'
+        utils:
+          type: boolean
+        cbom:
+          $ref: '#/components/schemas/CBOMRepository'
+        setupComplete:
+          type: boolean
+          description: Once setup is complete a dependency no longer switches between managed and external.
     PlatformUpdate:
       type: object
       required: [hostName, components]
@@ -2643,6 +2717,236 @@ components:
         ilmVersion:
           type: string
           description: Optional; must be the installed version, which cannot be changed.
+        dependencies:
+          $ref: '#/components/schemas/DependenciesUpdate'
+        utils:
+          type: boolean
+          description: Install the utils service; left out keeps the current choice.
+        cbom:
+          $ref: '#/components/schemas/CBOMRepository'
+    CBOMStorage:
+      type: string
+      enum: [appliance, s3]
+      x-enum-varnames: [CBOMStorageAppliance, CBOMStorageS3]
+    CBOMRepository:
+      type: object
+      required: [enabled, storage]
+      description: >-
+        The CBOM repository ILM keeps CBOMs in, reachable only by ILM. Turned off, the CBOMs stored on the appliance
+        are kept. Left out of an update, the current settings are kept.
+      properties:
+        enabled:
+          type: boolean
+        storage:
+          $ref: '#/components/schemas/CBOMStorage'
+        s3:
+          $ref: '#/components/schemas/CBOMS3'
+    CBOMS3:
+      type: object
+      required: [endpoint, bucket]
+      description: The external S3 bucket of `storage` s3; keys left out keep the stored ones for the same endpoint.
+      properties:
+        endpoint:
+          type: string
+          description: The https or http URL of the S3 service, without a path; without a scheme it is https.
+        bucket:
+          type: string
+        region:
+          type: string
+          description: Defaults to us-east-1.
+        accessKey:
+          type: string
+          format: password
+          writeOnly: true
+        secretKey:
+          type: string
+          format: password
+          writeOnly: true
+        ca:
+          type: string
+          writeOnly: true
+          description: The PEM CA bundle that signs the endpoint's certificate, when it is not publicly trusted.
+        removeCa:
+          type: boolean
+          writeOnly: true
+          description: Remove the stored CA bundle.
+        accessKeySet:
+          type: boolean
+          readOnly: true
+        secretKeySet:
+          type: boolean
+          readOnly: true
+        caSet:
+          type: boolean
+          readOnly: true
+    DependencyMode:
+      type: string
+      enum: [managed, external]
+      x-enum-varnames: [ModeManaged, ModeExternal]
+    DatabaseDependency:
+      type: object
+      required: [mode]
+      description: The database; managed, or an external PostgreSQL database with `host`, `name` and `username`.
+      properties:
+        mode:
+          $ref: '#/components/schemas/DependencyMode'
+        host:
+          type: string
+          description: A host name or an IPv4 address.
+        port:
+          type: integer
+          description: Defaults to 5432.
+        name:
+          type: string
+          description: The database; letters, digits and `_ $ . -`, at most 63.
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: Required unless the stored one was given for the same host, port, database and user name.
+        passwordSet:
+          type: boolean
+          readOnly: true
+        tlsMode:
+          type: string
+          enum: [disable, require, verify-full]
+          x-enum-varnames: [TLSDisable, TLSRequire, TLSVerifyFull]
+          description: >-
+            The sslmode of the connection; left out, the drivers' default uses TLS when the server offers it without
+            verifying the server. ILM's core and scheduler verify the server with verify-full; its auth service and
+            Keycloak encrypt the connection when the server offers TLS but never verify the server's certificate.
+        ca:
+          type: string
+          writeOnly: true
+          description: >-
+            The PEM CA bundle that signs the server's certificate; verify-full needs it, otherwise the answer is 400
+            with field `ca`. Left out, the stored one is kept.
+        caSet:
+          type: boolean
+          readOnly: true
+    MessagingDependency:
+      type: object
+      required: [mode]
+      description: The message broker; managed, or an external RabbitMQ broker with `host` and `username`.
+      properties:
+        mode:
+          $ref: '#/components/schemas/DependencyMode'
+        host:
+          type: string
+          description: A host name or an IPv4 address.
+        port:
+          type: integer
+          description: Defaults to 5672, or 5671 with `tls`.
+        virtualHost:
+          type: string
+          description: Defaults to /.
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          description: Required unless the stored one was given for the same host, port, virtual host and user name.
+        passwordSet:
+          type: boolean
+          readOnly: true
+        tls:
+          type: boolean
+          description: Connect with AMQPS to `port`, verifying the broker against `ca`.
+        ca:
+          type: string
+          writeOnly: true
+          description: >-
+            The PEM CA bundle that signs the broker's certificate; `tls` needs it, otherwise the answer is 400 with
+            field `ca`. Left out, the stored one is kept.
+        caSet:
+          type: boolean
+          readOnly: true
+    IdentityDependency:
+      type: object
+      required: [mode]
+      description: The identity provider; the managed Keycloak, or an external OIDC provider with `issuer` and `clientId`.
+      properties:
+        mode:
+          $ref: '#/components/schemas/DependencyMode'
+        issuer:
+          type: string
+          description: The issuer URL, starting with https://.
+        clientId:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        audiences:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+          description: >-
+            The audiences ILM accepts in the provider's tokens, at most 16 without spaces. Without any, ILM accepts
+            every token the issuer signs, whatever client it was issued for.
+        clientSecret:
+          type: string
+          format: password
+          writeOnly: true
+          description: Required unless the stored one was given for the same issuer and client ID.
+        clientSecretSet:
+          type: boolean
+          readOnly: true
+    Dependencies:
+      type: object
+      required: [database, messaging, identity]
+      properties:
+        database:
+          $ref: '#/components/schemas/DatabaseDependency'
+        messaging:
+          $ref: '#/components/schemas/MessagingDependency'
+        identity:
+          $ref: '#/components/schemas/IdentityDependency'
+    DependenciesUpdate:
+      type: object
+      description: The dependencies to choose; one left out keeps its current choice.
+      properties:
+        database:
+          $ref: '#/components/schemas/DatabaseDependency'
+        messaging:
+          $ref: '#/components/schemas/MessagingDependency'
+        identity:
+          $ref: '#/components/schemas/IdentityDependency'
+    DependencyTest:
+      type: object
+      required: [kind, settings]
+      properties:
+        kind:
+          type: string
+          enum: [database, messaging, identity]
+          x-enum-varnames: [KindDatabase, KindMessaging, KindIdentity]
+        settings:
+          description: The external settings of the dependency `kind` names.
+          oneOf:
+            - $ref: '#/components/schemas/DatabaseDependency'
+            - $ref: '#/components/schemas/MessagingDependency'
+            - $ref: '#/components/schemas/IdentityDependency'
+    DependencyTestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        reason:
+          type: string
+          enum: [unreachable, timeout, authFailed, notFound, untrusted, invalid, failed]
+          x-enum-varnames: [DependencyUnreachable, DependencyTimeout, DependencyAuthFailed, DependencyNotFound, DependencyUntrusted, DependencyInvalid, DependencyFailed]
+          description: >-
+            A fixed reason; the error text of the dependency is never passed on. `notFound` is an issuer without a
+            discovery document or a virtual host the broker refuses. For a database under verify-full, `authFailed`
+            may also be a certificate that does not verify, which PostgreSQL's client reports alike: the test opens
+            one session in the chosen mode and never sends the credentials with less verification. `untrusted` is a server certificate
+            the CA does not sign or that does not name the host; `invalid` is an answer that is not the dependency's
+            protocol or a discovery document that does not match the issuer.
     MailState:
       type: object
       properties:
@@ -2931,8 +3235,8 @@ components:
           type: boolean
         step:
           type: string
-          enum: [secrets, appliance, platform, stop, ilmSecrets, database, start, keycloak, certificate, done, waitingForKit]
-          x-enum-varnames: [StepSecrets, StepAppliance, StepPlatform, StepStop, StepILMSecrets, StepDatabase, StepStart,
+          enum: [secrets, appliance, platform, stop, ilmSecrets, database, cbom, start, keycloak, certificate, done, waitingForKit]
+          x-enum-varnames: [StepSecrets, StepAppliance, StepPlatform, StepStop, StepILMSecrets, StepDatabase, StepCBOM, StepStart,
             StepKeycloak, StepCertificate, StepDone, StepWaitingForKit]
           description: The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
         pausedStep:
@@ -3021,7 +3325,7 @@ components:
     RestoreSummary:
       type: object
       required: [inspection, backup, inPlace, time, hostName, ilmHostName, nodeHostName, ilm, operator, appliance,
-        database, databaseIncluded, accounts, clashes, components]
+        database, databaseIncluded, accounts, clashes, components, dependencies]
       properties:
         inspection:
           type: string
@@ -3071,6 +3375,11 @@ components:
           type: array
           items:
             type: string
+        dependencies:
+          $ref: '#/components/schemas/Dependencies'
+          description: >-
+            The backup's dependencies, which a fresh restore keeps unless it chooses them anew; nothing is stored
+            for them on this appliance yet, so no password, client secret or CA is reported set.
     RestoreStart:
       type: object
       required: [inspection, inPlace, confirm]
@@ -3084,6 +3393,11 @@ components:
         ilmHostName:
           type: string
           description: The ILM host name to set on a fresh restore; left out, the backup's is kept. A restore in place takes only the backup's.
+        dependencies:
+          $ref: '#/components/schemas/DependenciesUpdate'
+          description: >-
+            The dependencies a fresh restore chooses instead of the backup's; one left out keeps the backup's. Its
+            credentials are always entered. A restore in place keeps the current dependencies and refuses this with 400.
         confirm:
           type: boolean
           description: Must be true; what the appliance holds now is replaced by the backup.

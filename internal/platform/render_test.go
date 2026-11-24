@@ -3,6 +3,7 @@ package platform
 import (
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -169,18 +170,39 @@ func TestRenderComponents(t *testing.T) {
 	if !reflect.DeepEqual(ejbca.Spec.SecretRefs, want) {
 		t.Errorf("ejbca secretRefs %+v", ejbca.Spec.SecretRefs)
 	}
+	wantRegistration := &otilm.RegistrationSpec{PlatformURL: "http://core.ilm.svc.cluster.local:8080/api", Name: "EJBCA NG Connector", AuthType: otilm.AuthTypeNone}
+	if !reflect.DeepEqual(ejbca.Spec.Registration, wantRegistration) {
+		t.Errorf("ejbca registration %+v, want %+v", ejbca.Spec.Registration, wantRegistration)
+	}
 	for _, c := range []struct {
 		connector otilm.Connector
 		name      string
 	}{{x509, "X.509 Compliance Provider"}, {ejbca, "EJBCA NG Connector"}} {
-		want := &otilm.RegistrationSpec{PlatformURL: "http://core.ilm.svc.cluster.local:8080/api", Name: c.name, AuthType: otilm.AuthTypeNone}
-		if !reflect.DeepEqual(c.connector.Spec.Registration, want) {
-			t.Errorf("%s registration %+v, want %+v", c.connector.Name, c.connector.Spec.Registration, want)
-		}
 		// The operator mounts the root file system read-only, so the connector writes temporary files to a volume.
 		if want := []otilm.VolumeSpec{{Name: "tmp", MountPath: "/tmp"}}; !reflect.DeepEqual(c.connector.Spec.Volumes, want) {
 			t.Errorf("%s volumes %+v, want %+v", c.connector.Name, c.connector.Spec.Volumes, want)
 		}
+	}
+}
+
+func TestRenderV1WithoutRegistration(t *testing.T) {
+	m := loadManifest(t)
+	for _, name := range []string{"x509-compliance-provider", "email-notification-provider"} {
+		i := slices.IndexFunc(m.Connectors, func(c release.Connector) bool { return c.Name == name })
+		if i < 0 || !m.Connectors[i].V1Only() {
+			t.Fatalf("%s is not marked interface v1 in the catalogue", name)
+		}
+		c, err := renderConnector(m.Connectors[i], managedDatabase, nil, nil, SecretNames{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Spec.Registration != nil {
+			t.Errorf("%s registration %+v, want none", name, c.Spec.Registration)
+		}
+	}
+	c := release.Connector{Name: "x", Image: "r/x:1", Port: 9000}
+	if got, want := ConnectorURL(c), "http://x.ilm.svc.cluster.local:9000"; got != want {
+		t.Errorf("ConnectorURL = %s, want %s", got, want)
 	}
 }
 
@@ -449,5 +471,210 @@ func TestEmailConnectorGetsMailSettings(t *testing.T) {
 	}
 	if hasSecretRef(connectors[0], "ilm-mail", "password", "SMTP_PASSWORD") {
 		t.Error("credentials referenced without a mail Secret")
+	}
+}
+
+// externalAppliance is defaultAppliance with every dependency external.
+func externalAppliance() *v1alpha1.Appliance {
+	a := defaultAppliance()
+	a.Spec.Platform.Database = &v1alpha1.ExternalDatabase{Host: "db.example.com", Port: 5433, Name: "ilmdb", CredentialsRef: "appliance-database"}
+	a.Spec.Platform.Messaging = &v1alpha1.ExternalMessaging{Host: "mq.example.com", Port: 5673, VirtualHost: "ilm", CredentialsRef: "appliance-messaging"}
+	a.Spec.Platform.Identity = &v1alpha1.ExternalIdentity{Issuer: "https://idp.example.com/realms/ilm", ClientID: "ilm", CredentialsRef: "appliance-identity"}
+	return a
+}
+
+func TestRenderExternalDatabase(t *testing.T) {
+	a := externalAppliance()
+	a.Spec.Platform.Components = []string{"ejbca-ng-connector", "pyadcs-connector"}
+	m := loadManifest(t)
+
+	got, connectors, err := Render(a, m, SecretNames{Database: "ilm-database", Messaging: "ilm-messaging"}, testNodeIP)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := otilm.DatabaseSpec{Mode: "external", Host: "db.example.com", Port: 5433, Name: "ilmdb",
+		Credentials: &otilm.CredentialsRef{SecretRef: "ilm-database"}}
+	if !reflect.DeepEqual(got.Spec.Database, want) {
+		t.Errorf("database %+v, want %+v", got.Spec.Database, want)
+	}
+	ejbca, pyadcs := connectors[0], connectors[1]
+	if env := envMap(ejbca.Spec.Env); env["JDBC_URL"] != "jdbc:postgresql://db.example.com:5433/ilmdb?characterEncoding=UTF-8" {
+		t.Errorf("ejbca env %v", env)
+	}
+	if ref := ejbca.Spec.SecretRefs[0]; ref.Name != "ilm-database" {
+		t.Errorf("ejbca database secret %+v", ref)
+	}
+	if env := envMap(pyadcs.Spec.Env); env["DATABASE_HOST"] != "db.example.com" || env["DATABASE_PORT"] != "5433" || env["DATABASE_NAME"] != "ilmdb" {
+		t.Errorf("pyadcs env %v", env)
+	}
+	if ref := pyadcs.Spec.SecretRefs[0]; ref.Name != "ilm-database" {
+		t.Errorf("pyadcs database secret %+v", ref)
+	}
+
+	if _, _, err := Render(a, m, SecretNames{Messaging: "ilm-messaging"}, testNodeIP); err == nil || !strings.Contains(err.Error(), "database") {
+		t.Errorf("render without the copied credentials: %v", err)
+	}
+}
+
+func TestRenderExternalMessaging(t *testing.T) {
+	a := defaultAppliance()
+	a.Spec.Platform.Messaging = externalAppliance().Spec.Platform.Messaging
+	m := loadManifest(t)
+
+	got, _, err := Render(a, m, SecretNames{Messaging: "ilm-messaging"}, testNodeIP)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := otilm.MessagingSpec{Mode: "external", BrokerType: "rabbitmq", Host: "mq.example.com", Port: 5673, VirtualHost: "ilm",
+		Credentials: &otilm.CredentialsRef{SecretRef: "ilm-messaging"}}
+	if !reflect.DeepEqual(got.Spec.Messaging, want) {
+		t.Errorf("messaging %+v, want %+v", got.Spec.Messaging, want)
+	}
+	if got.Spec.Database.Mode != "managed" {
+		t.Errorf("database %+v", got.Spec.Database)
+	}
+	if _, _, err := Render(a, m, SecretNames{}, testNodeIP); err == nil || !strings.Contains(err.Error(), "messaging") {
+		t.Errorf("render without the copied credentials: %v", err)
+	}
+}
+
+func TestRenderExternalIdentity(t *testing.T) {
+	a := defaultAppliance()
+	a.Spec.Platform.Identity = externalAppliance().Spec.Platform.Identity
+
+	got, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (&otilm.KeycloakSpec{Mode: "external"}); !reflect.DeepEqual(got.Spec.Keycloak, want) {
+		t.Errorf("keycloak %+v, want %+v", got.Spec.Keycloak, want)
+	}
+}
+
+func TestRenderUtils(t *testing.T) {
+	a := defaultAppliance()
+	got, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+	if err != nil || got.Spec.Utils.Enabled {
+		t.Fatalf("utils by default %+v, %v", got.Spec.Utils, err)
+	}
+	a.Spec.Platform.Utils = true
+	got, _, err = Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+	if err != nil || !got.Spec.Utils.Enabled {
+		t.Errorf("utils %+v, %v", got.Spec.Utils, err)
+	}
+}
+
+// componentEnv is the value of the variable name in env, or "".
+func componentEnv(env []otilm.EnvVar, name string) string {
+	return envMap(env)[name]
+}
+
+func TestRenderDatabaseTLS(t *testing.T) {
+	ca := &v1alpha1.SecretKeyRef{Name: "appliance-database", Key: v1alpha1.CAKey}
+	caVolume := otilm.SecretRef{Name: "ilm-database-ca", Type: otilm.RefTypeVolume, MountPath: ptr("/etc/ilm/db-ca")}
+	for _, tc := range []struct {
+		mode     string
+		ca       *v1alpha1.SecretKeyRef
+		url      string
+		volumes  bool
+		pgEnvTLS string
+	}{
+		{mode: "", url: ""},
+		{mode: "disable", url: "jdbc:postgresql://db.example.com:5433/ilmdb?characterEncoding=UTF-8&sslmode=disable", pgEnvTLS: "disable"},
+		{mode: "require", url: "jdbc:postgresql://db.example.com:5433/ilmdb?characterEncoding=UTF-8&sslmode=require", pgEnvTLS: "require"},
+		{mode: "verify-full", ca: ca, volumes: true, pgEnvTLS: "verify-full",
+			url: "jdbc:postgresql://db.example.com:5433/ilmdb?characterEncoding=UTF-8&sslmode=verify-full&sslrootcert=/etc/ilm/db-ca/ca.crt"},
+	} {
+		t.Run("mode "+tc.mode, func(t *testing.T) {
+			a := defaultAppliance()
+			a.Spec.Platform.Components = []string{"ejbca-ng-connector", "pyadcs-connector"}
+			a.Spec.Platform.Database = externalAppliance().Spec.Platform.Database
+			a.Spec.Platform.Database.TLSMode, a.Spec.Platform.Database.CA = tc.mode, tc.ca
+			secrets := SecretNames{Database: "ilm-database"}
+			if tc.ca != nil {
+				secrets.DatabaseCA = "ilm-database-ca"
+			}
+
+			got, connectors, err := Render(a, loadManifest(t), secrets, testNodeIP)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, c := range map[string]otilm.ComponentSpec{"core": got.Spec.Core.ComponentSpec, "scheduler": got.Spec.Scheduler.ComponentSpec} {
+				if v := componentEnv(c.Env, "SPRING_DATASOURCE_URL"); v != tc.url {
+					t.Errorf("%s SPRING_DATASOURCE_URL %q, want %q", name, v, tc.url)
+				}
+				if componentEnv(c.Env, "JDBC_URL") != "" {
+					t.Errorf("%s overrides JDBC_URL", name)
+				}
+				if hasVolume := slices.ContainsFunc(c.SecretRefs, func(r otilm.SecretRef) bool { return reflect.DeepEqual(r, caVolume) }); hasVolume != tc.volumes {
+					t.Errorf("%s secretRefs %+v", name, c.SecretRefs)
+				}
+			}
+			ejbca, pyadcs := connectors[0], connectors[1]
+			wantJDBC := tc.url
+			if wantJDBC == "" {
+				wantJDBC = "jdbc:postgresql://db.example.com:5433/ilmdb?characterEncoding=UTF-8"
+			}
+			if v := componentEnv(ejbca.Spec.Env, "JDBC_URL"); v != wantJDBC {
+				t.Errorf("connector JDBC_URL %q, want %q", v, wantJDBC)
+			}
+			if v := componentEnv(pyadcs.Spec.Env, "PGSSLMODE"); v != tc.pgEnvTLS {
+				t.Errorf("connector PGSSLMODE %q, want %q", v, tc.pgEnvTLS)
+			}
+			for _, c := range connectors {
+				if hasVolume := slices.ContainsFunc(c.Spec.SecretRefs, func(r otilm.SecretRef) bool { return reflect.DeepEqual(r, caVolume) }); hasVolume != tc.volumes {
+					t.Errorf("%s secretRefs %+v", c.Name, c.Spec.SecretRefs)
+				}
+			}
+			if tc.volumes && componentEnv(pyadcs.Spec.Env, "PGSSLROOTCERT") != "/etc/ilm/db-ca/ca.crt" {
+				t.Errorf("pyadcs env %v", envMap(pyadcs.Spec.Env))
+			}
+		})
+	}
+
+	a := defaultAppliance()
+	a.Spec.Platform.Database = &v1alpha1.ExternalDatabase{Host: "db", Port: 5432, Name: "ilm", CredentialsRef: "c", TLSMode: "verify-full", CA: ca}
+	if _, _, err := Render(a, loadManifest(t), SecretNames{Database: "ilm-database"}, testNodeIP); err == nil || !strings.Contains(err.Error(), "CA") {
+		t.Errorf("render without the copied CA: %v", err)
+	}
+}
+
+func TestRenderMessagingTLS(t *testing.T) {
+	a := defaultAppliance()
+	a.Spec.Platform.Messaging = &v1alpha1.ExternalMessaging{Host: "mq.example.com", Port: 5671, VirtualHost: "ilm", CredentialsRef: "appliance-messaging",
+		TLS: true, CA: &v1alpha1.SecretKeyRef{Name: "appliance-messaging", Key: v1alpha1.CAKey}}
+
+	got, _, err := Render(a, loadManifest(t), SecretNames{Messaging: "ilm-messaging", MessagingCA: "ilm-messaging-ca"}, testNodeIP)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantURL := "amqps://mq.example.com:5671?transport.trustStoreLocation=/etc/ilm/broker-ca/truststore.p12&transport.trustStoreType=PKCS12&transport.trustStorePassword=" + TrustStorePassword
+	volume := otilm.SecretRef{Name: "ilm-messaging-ca", Type: otilm.RefTypeVolume, MountPath: ptr("/etc/ilm/broker-ca")}
+	for name, c := range map[string]otilm.ComponentSpec{"core": got.Spec.Core.ComponentSpec, "scheduler": got.Spec.Scheduler.ComponentSpec} {
+		if v := componentEnv(c.Env, "BROKER_URL"); v != wantURL {
+			t.Errorf("%s BROKER_URL %q", name, v)
+		}
+		if !slices.ContainsFunc(c.SecretRefs, func(r otilm.SecretRef) bool { return reflect.DeepEqual(r, volume) }) {
+			t.Errorf("%s secretRefs %+v", name, c.SecretRefs)
+		}
+	}
+	if got.Spec.Messaging.Port != 5671 || got.Spec.Messaging.VirtualHost != "ilm" {
+		t.Errorf("messaging %+v", got.Spec.Messaging)
+	}
+
+	a.Spec.Platform.Messaging.TLS, a.Spec.Platform.Messaging.CA = false, nil
+	got, _, err = Render(a, loadManifest(t), SecretNames{Messaging: "ilm-messaging"}, testNodeIP)
+	if err != nil || componentEnv(got.Spec.Core.Env, "BROKER_URL") != "" || len(got.Spec.Core.SecretRefs) != 0 {
+		t.Errorf("plain broker core %+v, %v", got.Spec.Core, err)
+	}
+	a.Spec.Platform.Messaging.TLS = true
+	a.Spec.Platform.Messaging.CA = &v1alpha1.SecretKeyRef{Name: "appliance-messaging", Key: v1alpha1.CAKey}
+	if _, _, err := Render(a, loadManifest(t), SecretNames{Messaging: "ilm-messaging"}, testNodeIP); err == nil {
+		t.Error("rendered a TLS broker without the trust store copy")
 	}
 }

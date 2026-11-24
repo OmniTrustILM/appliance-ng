@@ -312,3 +312,80 @@ func TestNFSVersion(t *testing.T) {
 	target.NFS.Version = "2"
 	wantInvalid(t, create(t, applianceWithTargets(target)))
 }
+
+func TestExternalDependencyTLSNeedsCA(t *testing.T) {
+	ca := &v1alpha1.SecretKeyRef{Name: "appliance-database", Key: v1alpha1.CAKey}
+	for _, tc := range []struct {
+		name string
+		db   *v1alpha1.ExternalDatabase
+		mq   *v1alpha1.ExternalMessaging
+		ok   bool
+	}{
+		{name: "default", db: &v1alpha1.ExternalDatabase{}, ok: true},
+		{name: "require", db: &v1alpha1.ExternalDatabase{TLSMode: v1alpha1.DatabaseTLSRequire}, ok: true},
+		{name: "verify-full with CA", db: &v1alpha1.ExternalDatabase{TLSMode: v1alpha1.DatabaseTLSVerifyFull, CA: ca}, ok: true},
+		{name: "verify-full without CA", db: &v1alpha1.ExternalDatabase{TLSMode: v1alpha1.DatabaseTLSVerifyFull}},
+		{name: "unknown mode", db: &v1alpha1.ExternalDatabase{TLSMode: "prefer"}},
+		{name: "plain broker", mq: &v1alpha1.ExternalMessaging{}, ok: true},
+		{name: "TLS broker with CA", mq: &v1alpha1.ExternalMessaging{TLS: true, CA: ca}, ok: true},
+		{name: "TLS broker without CA", mq: &v1alpha1.ExternalMessaging{TLS: true}},
+		{name: "CA without TLS", mq: &v1alpha1.ExternalMessaging{CA: ca}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			a.Spec.Platform = &v1alpha1.PlatformSpec{}
+			if tc.db != nil {
+				tc.db.Host, tc.db.Port, tc.db.Name, tc.db.CredentialsRef = "db.example.com", 5432, "ilm", "appliance-database"
+				a.Spec.Platform.Database = tc.db
+			}
+			if tc.mq != nil {
+				tc.mq.Host, tc.mq.Port, tc.mq.CredentialsRef = "mq.example.com", 5671, "appliance-messaging"
+				a.Spec.Platform.Messaging = tc.mq
+			}
+			err := create(t, a)
+			if tc.ok && err != nil || !tc.ok && !apierrors.IsInvalid(err) {
+				t.Errorf("create: %v, want accepted %v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestExternalDependencyHostAndName(t *testing.T) {
+	for name, db := range map[string]v1alpha1.ExternalDatabase{
+		"IPv6 host":              {Host: "[::1]", Name: "ilm"},
+		"JDBC parameter in name": {Host: "db.example.com", Name: "ilm?socketFactory=x"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			db.Port, db.CredentialsRef = 5432, "appliance-database"
+			a.Spec.Platform = &v1alpha1.PlatformSpec{Database: &db}
+			wantInvalid(t, create(t, a))
+		})
+	}
+}
+
+func TestCBOMS3SetExactlyForS3Storage(t *testing.T) {
+	bucket := &v1alpha1.S3Target{Endpoint: "https://s3.example.com", Bucket: "cboms"}
+	for _, tc := range []struct {
+		name string
+		cbom v1alpha1.CBOMSpec
+		ok   bool
+	}{
+		{name: "appliance", cbom: v1alpha1.CBOMSpec{Enabled: true, Storage: v1alpha1.CBOMStorageAppliance}, ok: true},
+		{name: "s3", cbom: v1alpha1.CBOMSpec{Enabled: true, Storage: v1alpha1.CBOMStorageS3, S3: bucket, CredentialsRef: "appliance-cbom"}, ok: true},
+		{name: "s3 without bucket", cbom: v1alpha1.CBOMSpec{Storage: v1alpha1.CBOMStorageS3, CredentialsRef: "appliance-cbom"}},
+		{name: "s3 without credentials", cbom: v1alpha1.CBOMSpec{Storage: v1alpha1.CBOMStorageS3, S3: bucket}},
+		{name: "bucket with appliance storage", cbom: v1alpha1.CBOMSpec{Storage: v1alpha1.CBOMStorageAppliance, S3: bucket}},
+		{name: "credentials with appliance storage", cbom: v1alpha1.CBOMSpec{Storage: v1alpha1.CBOMStorageAppliance, CredentialsRef: "appliance-cbom"}},
+		{name: "unknown storage", cbom: v1alpha1.CBOMSpec{Storage: "nfs"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			a.Spec.Platform = &v1alpha1.PlatformSpec{CBOM: &tc.cbom}
+			err := create(t, a)
+			if tc.ok && err != nil || !tc.ok && !apierrors.IsInvalid(err) {
+				t.Errorf("create: %v, want accepted %v", err, tc.ok)
+			}
+		})
+	}
+}

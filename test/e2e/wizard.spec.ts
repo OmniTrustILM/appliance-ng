@@ -25,9 +25,8 @@ base.describe('first-boot service', () => {
     await continueButton.click();
 
     await expect(page.getByRole('heading', { name: 'Authenticator' })).toBeVisible();
-    // The secret is the text after its caption; the QR code holds the same.
-    const secret = page.getByText('Secret', { exact: true }).locator('xpath=following-sibling::p[1]');
-    const seed = (await secret.textContent())?.trim() ?? '';
+    // The secret is the value of its read-only field; the QR code holds the same.
+    const seed = (await page.getByLabel('Secret', { exact: true }).inputValue()).trim();
     if (!seed) throw new Error('the setup page shows no TOTP secret');
     const used = new Date();
     await fillSecret(page.getByLabel('Code from the authenticator'), totpCode(seed, used), 'the TOTP code');
@@ -65,6 +64,9 @@ test('wizard part 2', async ({ console: page }) => {
 
   await expect(page.getByRole('heading', { name: 'Components' })).toBeVisible();
   await page.getByLabel(component).check();
+  await continueButton.click();
+
+  await expect(page.getByRole('heading', { name: 'Dependencies' })).toBeVisible();
   await continueButton.click();
 
   await expect(page.getByRole('heading', { name: 'Mail' })).toBeVisible();
