@@ -471,6 +471,29 @@ func TestInspectSummary(t *testing.T) {
 	}
 }
 
+// TestInspectOpensTheKitInTheKitSlot is an inspection that opens the kit in the slot that kit builds and other kit
+// opens take: their scrypt buffers do not fit the manager's memory together.
+func TestInspectOpensTheKitInTheKitSlot(t *testing.T) {
+	h, s, _, _, kit := freshRestore(t)
+	done := make(chan int)
+	go func() { done <- h.inspect("upload", restoreName, kit, restorePassphrase, s).Code }()
+	deadline := time.Now().Add(10 * time.Second)
+	for len(h.srv.hashSlots) == 0 {
+		select {
+		case code := <-done:
+			t.Fatalf("inspected with %d without taking the slot", code)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the inspection never took the slot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if code := <-done; code != http.StatusOK {
+		t.Errorf("inspect = %d, want 200", code)
+	}
+}
+
 func TestRestoreStartRefusals(t *testing.T) {
 	h, s, f, _, kit := freshRestore(t)
 	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)

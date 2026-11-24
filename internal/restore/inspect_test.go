@@ -25,8 +25,6 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
-const passphrase = "a recovery passphrase"
-
 // usersSecretYAML returns the Secret appliance-users holding the named accounts, as a backup stores it.
 func usersSecretYAML(t *testing.T, names ...string) string {
 	t.Helper()
@@ -52,7 +50,6 @@ func usersSecretYAML(t *testing.T, names ...string) string {
 type fixture struct {
 	dir      string
 	key      *age.X25519Identity
-	kit      []byte
 	file     string
 	manifest *release.Manifest
 }
@@ -97,16 +94,12 @@ func newFixture(t *testing.T, data func(key *age.X25519Identity) []byte) fixture
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit, err := recovery.Build(recovery.Kit{BackupKey: key, Kubeconfig: []byte("k"), Talosconfig: []byte("t")}, passphrase)
-	if err != nil {
-		t.Fatal(err)
-	}
 	dir := t.TempDir()
 	file := filepath.Join(dir, "node.ilmbackup")
 	if err := os.WriteFile(file, data(key), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return fixture{dir: dir, key: key, kit: kit, file: file, manifest: &release.Manifest{Platform: release.PlatformDefaults{ILMVersion: "2.17"}}}
+	return fixture{dir: dir, key: key, file: file, manifest: &release.Manifest{Platform: release.PlatformDefaults{ILMVersion: "2.17"}}}
 }
 
 // rawArchive returns an encrypted tar of one member, named name with content body.
@@ -139,32 +132,27 @@ func TestInspectRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := []struct {
-		name       string
-		backup     func(t *testing.T, key *age.X25519Identity) []byte
-		passphrase string
-		want       error
+		name   string
+		backup func(t *testing.T, key *age.X25519Identity) []byte
+		want   error
 	}{
-		{"wrong passphrase", func(t *testing.T, k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") }, "another passphrase", ErrWrongPassphrase},
-		{"foreign kit", func(t *testing.T, _ *age.X25519Identity) []byte { return writeBackup(t, foreign, "2.17") }, passphrase, ErrForeignKit},
+		{"foreign kit", func(t *testing.T, _ *age.X25519Identity) []byte { return writeBackup(t, foreign, "2.17") }, ErrForeignKit},
 		{"tampered", func(t *testing.T, k *age.X25519Identity) []byte {
 			b := writeBackup(t, k, "2.17")
 			b[len(b)/2] ^= 0xff
 			return b
-		}, passphrase, ErrTampered},
-		{"truncated", func(t *testing.T, k *age.X25519Identity) []byte { return rawArchive(t, k, "database.sql", "select 1;") }, passphrase, ErrTruncated},
+		}, ErrTampered},
+		{"truncated", func(t *testing.T, k *age.X25519Identity) []byte { return rawArchive(t, k, "database.sql", "select 1;") }, ErrTruncated},
 		{"format too new", func(t *testing.T, k *age.X25519Identity) []byte {
 			return rawArchive(t, k, "manifest.json", `{"format":2}`)
-		}, passphrase, ErrFormatTooNew},
-		{"other ILM version", func(t *testing.T, k *age.X25519Identity) []byte { return writeBackup(t, k, "2.16") }, passphrase, ErrVersionUnavailable{}},
+		}, ErrFormatTooNew},
+		{"other ILM version", func(t *testing.T, k *age.X25519Identity) []byte { return writeBackup(t, k, "2.16") }, ErrVersionUnavailable{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t, func(k *age.X25519Identity) []byte { return tt.backup(t, k) })
 			before, _ := os.ReadFile(f.file)
-			_, id, err := Inspect(context.Background(), f.file, f.kit, tt.passphrase, f.manifest, nil)
-			if id != nil {
-				t.Error("an identity came back with a refusal")
-			}
+			_, err := Inspect(context.Background(), f.file, f.key, f.manifest, nil)
 			var want ErrVersionUnavailable
 			if errors.As(tt.want, &want) {
 				var got ErrVersionUnavailable
@@ -177,10 +165,8 @@ func TestInspectRejects(t *testing.T) {
 			} else if !errors.Is(err, tt.want) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}
-			for _, secret := range []string{passphrase, tt.passphrase, f.key.String()} {
-				if strings.Contains(err.Error(), secret) {
-					t.Errorf("error %q contains a secret", err)
-				}
+			if strings.Contains(err.Error(), f.key.String()) {
+				t.Errorf("error %q contains the backup key", err)
 			}
 			if after, _ := os.ReadFile(f.file); !bytes.Equal(before, after) {
 				t.Error("the backup file changed")
@@ -192,7 +178,7 @@ func TestInspectRejects(t *testing.T) {
 func TestInspectSummary(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17", "zoe", "admin", "bob") })
 	before, _ := os.ReadFile(f.file)
-	s, id, err := Inspect(context.Background(), f.file, f.kit, passphrase, f.manifest, []string{"admin", "carol"})
+	s, err := Inspect(context.Background(), f.file, f.key, f.manifest, []string{"admin", "carol"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,9 +194,6 @@ func TestInspectSummary(t *testing.T) {
 	if s.Manifest.HostName != "node" || s.Manifest.ILM != "2.17" {
 		t.Errorf("Manifest = %+v", s.Manifest)
 	}
-	if x, ok := id.(*age.X25519Identity); !ok || x.String() != f.key.String() {
-		t.Error("the identity is not the kit's backup key")
-	}
 	if after, _ := os.ReadFile(f.file); !bytes.Equal(before, after) {
 		t.Error("the backup file changed")
 	}
@@ -218,7 +201,7 @@ func TestInspectSummary(t *testing.T) {
 
 func TestInspectWithoutAccounts(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") })
-	s, _, err := Inspect(context.Background(), f.file, f.kit, passphrase, f.manifest, []string{"admin"})
+	s, err := Inspect(context.Background(), f.file, f.key, f.manifest, []string{"admin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +212,7 @@ func TestInspectWithoutAccounts(t *testing.T) {
 
 func TestInspectMissingFile(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") })
-	if _, _, err := Inspect(context.Background(), filepath.Join(f.dir, "none"), f.kit, passphrase, f.manifest, nil); err == nil {
+	if _, err := Inspect(context.Background(), filepath.Join(f.dir, "none"), f.key, f.manifest, nil); err == nil {
 		t.Fatal("want an error for a missing file")
 	}
 }
@@ -238,7 +221,7 @@ func TestInspectCanceled(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := Inspect(ctx, f.file, f.kit, passphrase, f.manifest, nil); !errors.Is(err, context.Canceled) {
+	if _, err := Inspect(ctx, f.file, f.key, f.manifest, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

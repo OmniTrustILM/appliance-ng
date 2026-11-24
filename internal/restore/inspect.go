@@ -16,7 +16,6 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
-	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
@@ -24,10 +23,9 @@ const usersMember = "secrets/appliance-system/" + auth.UsersSecret + ".yaml"
 
 // Refusals of Inspect. They are matched with errors.Is, except ErrVersionUnavailable, which errors.As finds.
 var (
-	ErrWrongPassphrase = recovery.ErrWrongPassphrase
-	ErrTampered        = backup.ErrTampered
-	ErrTruncated       = backup.ErrTruncated
-	ErrFormatTooNew    = backup.ErrFormatTooNew
+	ErrTampered     = backup.ErrTampered
+	ErrTruncated    = backup.ErrTruncated
+	ErrFormatTooNew = backup.ErrFormatTooNew
 	// ErrForeignKit means the kit opened but its key does not decrypt the backup: the backup is from another appliance.
 	ErrForeignKit = errors.New("the recovery kit does not belong to this backup")
 )
@@ -47,25 +45,19 @@ type Summary struct {
 	Components []string
 }
 
-// Inspect opens the recovery kit, verifies the whole backup file and reads what a restore would change. It touches
-// neither the cluster nor the file. users are the current console accounts. The identity it returns is the kit's
-// backup key.
-func Inspect(ctx context.Context, file string, kit []byte, passphrase string, m *release.Manifest, users []string) (Summary, age.Identity, error) {
-	k, err := recovery.Open(kit, passphrase)
-	if err != nil {
-		return Summary{}, nil, fmt.Errorf("open the recovery kit: %w", err)
-	}
-	id := k.BackupKey
+// Inspect verifies the whole backup file with id, the recovery kit's backup key, and reads what a restore would
+// change. It touches neither the cluster nor the file. users are the current console accounts.
+func Inspect(ctx context.Context, file string, id age.Identity, m *release.Manifest, users []string) (Summary, error) {
 	bm, err := verify(ctx, file, id)
 	if err != nil {
-		return Summary{}, nil, err
+		return Summary{}, err
 	}
 	if want := m.Platform.ILMVersion; bm.ILM != want {
-		return Summary{}, nil, ErrVersionUnavailable{Have: want, Want: bm.ILM}
+		return Summary{}, ErrVersionUnavailable{Have: want, Want: bm.ILM}
 	}
 	accounts, err := accounts(ctx, file, id)
 	if err != nil {
-		return Summary{}, nil, err
+		return Summary{}, err
 	}
 	s := Summary{Manifest: bm, Accounts: accounts, Components: bm.Components}
 	for _, a := range accounts {
@@ -74,7 +66,7 @@ func Inspect(ctx context.Context, file string, kit []byte, passphrase string, m 
 		}
 	}
 	slog.Info("backup inspected", "host", bm.HostName, "ilm", bm.ILM, "accounts", len(accounts), "clashes", len(s.Clashes))
-	return s, id, nil
+	return s, nil
 }
 
 func verify(ctx context.Context, file string, id age.Identity) (backup.Manifest, error) {

@@ -234,7 +234,11 @@ func (s *Server) inspect(ctx context.Context, name string, local bool, parts map
 	if err != nil {
 		return restoreAnswer{}, err
 	}
-	summary, id, err := restore.Inspect(ctx, file, parts[partKit], string(parts[partPassphrase]), s.deps.Release, users)
+	kit, err := s.openKit(ctx, parts[partKit], string(parts[partPassphrase]))
+	var summary restore.Summary
+	if err == nil {
+		summary, err = restore.Inspect(ctx, file, kit.BackupKey, s.deps.Release, users)
+	}
 	if answer, ok := restoreRefusal(err); ok {
 		return answer, nil
 	}
@@ -244,7 +248,7 @@ func (s *Server) inspect(ctx context.Context, name string, local bool, parts map
 	if running := a.Status.Versions.ILM; local && running != summary.Manifest.ILM {
 		return versionUnavailable(running, summary.Manifest.ILM), nil
 	}
-	s.keepInspection(&inspection{token: requestFrom(ctx).token, name: name, file: file, local: local, summary: summary, id: id})
+	s.keepInspection(&inspection{token: requestFrom(ctx).token, name: name, file: file, local: local, summary: summary, id: kit.BackupKey})
 	s.deps.Log.Info("backup checked for a restore", "backup", name, "local", local, "ilm", summary.Manifest.ILM)
 	return restoreAnswer{status: http.StatusOK, body: summaryOf(name, local, summary, a.Spec.Node.HostName)}, nil
 }
