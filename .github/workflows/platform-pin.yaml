@@ -69,14 +69,15 @@ jobs:
             echo "skip=$skip"
           } >>"$GITHUB_OUTPUT"
 
-      # The bill of materials pin reads comes from the operator module, so the module moves to the release first.
+      # The bill of materials pin reads comes from the operator module, so the module moves to the release first;
+      # go mod tidy checks the new go.sum entries against the checksum database.
       - name: Pin
         if: steps.versions.outputs.skip != 'true'
         env:
           OPERATOR: ${{ steps.versions.outputs.operator }}
           ILM: ${{ steps.versions.outputs.ilm }}
         run: |
-          go get "github.com/OmniTrustILM/operator@v$OPERATOR"
+          go mod edit -require="github.com/OmniTrustILM/operator@v$OPERATOR"
           go mod tidy
           go run ./cmd/release pin --operator "$OPERATOR" ${ILM:+--ilm "$ILM"}
           go run ./cmd/release validate
