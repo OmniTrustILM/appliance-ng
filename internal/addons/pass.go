@@ -21,6 +21,16 @@ import (
 // Holds maps Deployments, as namespace/name, to the replicas a pass applies them with instead of their manifest's.
 type Holds map[string]int32
 
+// Holder gives the holds of one step right before its files are applied, and a release called once they are.
+type Holder interface {
+	Hold(ctx context.Context) (Holds, func(), error)
+}
+
+// Hold returns h itself, which nothing needs to release.
+func (h Holds) Hold(context.Context) (Holds, func(), error) {
+	return h, func() {}, nil
+}
+
 // Progress says how far a pass got: Step is the first step that is not ready, or the last step when Done.
 type Progress struct {
 	Step    string
@@ -30,8 +40,8 @@ type Progress struct {
 
 // Pass applies each step in order and returns at the first step whose waits do not pass, so a controller can
 // requeue instead of blocking. Steps that were passed before are applied again, which corrects drift. The Deployments
-// in holds are applied with the replicas held.
-func Pass(ctx context.Context, c kube.Cluster, steps []kube.Step, fsys fs.FS, holds Holds) (Progress, error) {
+// that holds holds are applied with the replicas held; holds may be nil.
+func Pass(ctx context.Context, c kube.Cluster, steps []kube.Step, fsys fs.FS, holds Holder) (Progress, error) {
 	for _, step := range steps {
 		if err := apply(ctx, c, step, fsys, holds); err != nil {
 			return Progress{}, fmt.Errorf("step %s: %w", step.Name, err)
@@ -75,7 +85,16 @@ func done(steps []kube.Step) Progress {
 	return Progress{Step: steps[len(steps)-1].Name, Done: true}
 }
 
-func apply(ctx context.Context, c kube.Cluster, step kube.Step, fsys fs.FS, holds Holds) error {
+func apply(ctx context.Context, c kube.Cluster, step kube.Step, fsys fs.FS, holder Holder) error {
+	var holds Holds
+	if holder != nil {
+		held, release, err := holder.Hold(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+		holds = held
+	}
 	for _, ns := range slices.Sorted(maps.Keys(step.NamespaceLabels)) {
 		if err := c.LabelNamespace(ctx, ns, step.NamespaceLabels[ns]); err != nil {
 			return err

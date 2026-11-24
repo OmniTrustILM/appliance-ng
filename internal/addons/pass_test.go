@@ -240,3 +240,36 @@ func TestPassHoldOnBrokenYAML(t *testing.T) {
 		t.Errorf("err = %v, want the file named", err)
 	}
 }
+
+// recordingHolder gives holds per step and records the calls around the applies.
+type recordingHolder struct {
+	c     *fakeCluster
+	holds Holds
+	err   error
+}
+
+func (h *recordingHolder) Hold(context.Context) (Holds, func(), error) {
+	h.c.calls = append(h.c.calls, "hold")
+	return h.holds, func() { h.c.calls = append(h.c.calls, "release") }, h.err
+}
+
+func TestPassHoldsAroundEachStep(t *testing.T) {
+	files := fstest.MapFS{"op.yaml": {Data: []byte(operatorDocs)}}
+	steps := []kube.Step{{Name: "one", Files: []string{"op.yaml"}}, {Name: "two", Files: []string{"op.yaml"}}}
+	c := &fakeCluster{}
+	h := &recordingHolder{c: c, holds: Holds{"ilm-operator-system/ilm-operator-controller-manager": 0}}
+	if _, err := Pass(context.Background(), c, steps, files, h); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) != 6 || c.calls[0] != "hold" || c.calls[2] != "release" || c.calls[3] != "hold" || c.calls[5] != "release" {
+		t.Fatalf("calls = %v, want each step's apply between a hold and its release", c.calls)
+	}
+	if !strings.Contains(c.calls[1], "replicas: 0") {
+		t.Errorf("applied %s, want the operator held", c.calls[1])
+	}
+	h.err = errors.New("no hold")
+	c.calls = nil
+	if _, err := Pass(context.Background(), c, steps, files, h); err == nil || slices.Contains(c.calls, "release") || len(c.calls) != 1 {
+		t.Errorf("err = %v, calls %v; want the pass to stop before applying", err, c.calls)
+	}
+}

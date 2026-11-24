@@ -2,12 +2,16 @@ package manager
 
 import (
 	"context"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
@@ -180,4 +184,51 @@ func (c staleRestore) Get(ctx context.Context, key client.ObjectKey, obj client.
 		a.Status.Restore.Step = v1alpha1.RestoreStepAppliance
 	}
 	return nil
+}
+
+// trackingLock is a lock that tells whether it is held.
+type trackingLock struct {
+	sync.Mutex
+	held atomic.Bool
+}
+
+func (l *trackingLock) Lock()   { l.Mutex.Lock(); l.held.Store(true) }
+func (l *trackingLock) Unlock() { l.held.Store(false); l.Mutex.Unlock() }
+
+// stoppingCluster records the documents it applied and whether the operator lock was held; the first apply moves
+// the restore to its stop step, as a restore that advances while a pass runs.
+type stoppingCluster struct {
+	recordingCluster
+	t      *testing.T
+	lock   *trackingLock
+	locked []bool
+}
+
+func (c *stoppingCluster) Apply(ctx context.Context, docs []byte) error {
+	if len(c.applied) == 0 {
+		setRestoreStep(c.t, v1alpha1.RestoreStepStop)
+	}
+	c.locked = append(c.locked, c.lock.held.Load())
+	return c.recordingCluster.Apply(ctx, docs)
+}
+
+// TestAddonPassHoldsOperatorStoppedDuringThePass is a pass that starts before the restore stops the operator: the
+// operator Deployment is applied with the hold read right before it, under the lock the restore scales it with.
+func TestAddonPassHoldsOperatorStoppedDuringThePass(t *testing.T) {
+	cleanCertificates(t)
+	restoringAppliance(t, v1alpha1.RestoreStepAppliance)
+	lock := &trackingLock{}
+	cluster := &stoppingCluster{t: t, lock: lock}
+	r, _ := newReconciler(testClient, cluster)
+	r.OperatorLock = lock
+	r.Addons = fstest.MapFS{"a.yaml": {Data: []byte("a")}, "op.yaml": {Data: []byte(operatorDeployment)}}
+	r.Steps = []kube.Step{{Name: "first", Files: []string{"a.yaml"}}, {Name: "ilm-operator", Files: []string{"op.yaml"}}}
+	// The status write that ends the reconcile conflicts with the restore's step change; the pass is what counts.
+	_, _ = r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: v1alpha1.ApplianceName}})
+	if len(cluster.applied) < 2 || !strings.Contains(cluster.applied[1], "replicas: 0") {
+		t.Errorf("applied %q, want the operator Deployment with replicas 0", cluster.applied)
+	}
+	if !slices.Equal(cluster.locked[:2], []bool{true, true}) {
+		t.Errorf("operator lock held at the applies: %v, want held", cluster.locked)
+	}
 }

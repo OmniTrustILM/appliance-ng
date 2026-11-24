@@ -99,6 +99,9 @@ type ApplianceReconciler struct {
 	Audit AuditWriter
 	// Schedule, when set, schedules the backups of the targets on every reconcile.
 	Schedule BackupScheduler
+	// OperatorLock, when set, is held while the add-on pass applies a step, which may write the ILM operator's
+	// Deployment; a restore holds it while it scales the operator.
+	OperatorLock sync.Locker
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -312,7 +315,7 @@ func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Ap
 	if r.passed && a.Generation == r.passedGen && held == r.passedHeld && r.now().Sub(r.passedAt) < resync {
 		return addons.Check(ctx, r.Cluster, r.Steps)
 	}
-	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, r.Addons, restoreHolds(held))
+	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, r.Addons, operatorHold{r})
 	r.passed = err == nil && progress.Done
 	if r.passed {
 		r.passedAt, r.passedGen, r.passedHeld = r.now(), a.Generation, held
@@ -328,6 +331,24 @@ func (r *ApplianceReconciler) holdsOperator(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("read the restore status: %w", err)
 	}
 	return live.Status.Restore.HoldsOperator(), nil
+}
+
+// operatorHold holds the operator lock while a step is applied and reads the restore's hold under it, so that a pass
+// that began before a restore stopped the operator does not start it again.
+type operatorHold struct{ r *ApplianceReconciler }
+
+func (h operatorHold) Hold(ctx context.Context) (addons.Holds, func(), error) {
+	lock := h.r.OperatorLock
+	if lock == nil {
+		lock = &sync.Mutex{}
+	}
+	lock.Lock()
+	held, err := h.r.holdsOperator(ctx)
+	if err != nil {
+		lock.Unlock()
+		return nil, nil, err
+	}
+	return restoreHolds(held), lock.Unlock, nil
 }
 
 // restoreHolds keeps the ILM operator at zero replicas while held.

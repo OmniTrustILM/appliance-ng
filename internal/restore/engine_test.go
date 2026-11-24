@@ -1342,6 +1342,41 @@ func TestAccountsSignInAfterEveryWrite(t *testing.T) {
 	}
 }
 
+// heldLock is a lock that tells whether it is held.
+type heldLock struct {
+	sync.Mutex
+	held atomic.Bool
+}
+
+func (l *heldLock) Lock()   { l.Mutex.Lock(); l.held.Store(true) }
+func (l *heldLock) Unlock() { l.held.Store(false); l.Mutex.Unlock() }
+
+// TestOperatorScaledUnderTheOperatorLock is a restore that scales the ILM operator under the lock the add-on pass
+// applies the operator's Deployment under.
+func TestOperatorScaledUnderTheOperatorLock(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	lock := &heldLock{}
+	var mu sync.Mutex
+	var scaled []bool
+	c := interceptor.NewClient(testClient, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			if obj.GetName() == "ilm-operator-controller-manager" {
+				mu.Lock()
+				scaled = append(scaled, lock.held.Load())
+				mu.Unlock()
+			}
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+	})
+	e := f.engine(c)
+	e.deps.OperatorLock = lock
+	f.start(t, e, Options{ILMHostName: newILMHost})
+	f.wantDone(t)
+	if len(scaled) == 0 || slices.Contains(scaled, false) {
+		t.Errorf("operator scaled with the lock held: %v, want every time", scaled)
+	}
+}
+
 func TestInPlaceRestoreReplacesTheAccounts(t *testing.T) {
 	for user, want := range map[string]map[string]string{
 		"first": {"admin": "backup", "alice": "backup", "first": "current"},

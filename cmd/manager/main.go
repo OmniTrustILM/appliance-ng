@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
@@ -139,6 +140,8 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Version:   version,
 		DataDir:   data,
 		Audit:     auditLog,
+		// The add-on pass and the restore engine both write the ILM operator's replicas.
+		OperatorLock: &sync.Mutex{},
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the Appliance controller: %w", err)
@@ -168,7 +171,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err := addBackupSchedule(mgr, reconciler, backups); err != nil {
 		return err
 	}
-	restorer := newRestoreEngine(ctx, mgr, direct, backups, auditLog, log)
+	restorer := newRestoreEngine(ctx, mgr, direct, backups, auditLog, log, reconciler.OperatorLock)
 
 	api := apiserver.NewServer(apiserver.Deps{
 		Client:     mgr.GetClient(),
@@ -248,13 +251,14 @@ func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.C
 
 // newRestoreEngine returns the restore engine and, in the background, marks a restore that a restart cut off as
 // waiting for its recovery kit: the backup key it held lived only in memory.
-func newRestoreEngine(ctx context.Context, mgr crmanager.Manager, direct client.Client, backups *backup.Runner, auditLog *audit.Log, log *slog.Logger) *restore.Engine {
+func newRestoreEngine(ctx context.Context, mgr crmanager.Manager, direct client.Client, backups *backup.Runner, auditLog *audit.Log, log *slog.Logger, operatorLock sync.Locker) *restore.Engine {
 	engine := restore.New(restore.Deps{
-		Client:  direct,
-		Dumper:  backup.NewManagedDumper(mgr.GetAPIReader(), mgr.GetConfig()),
-		Backups: backups,
-		Audit:   auditLog,
-		Log:     log,
+		Client:       direct,
+		Dumper:       backup.NewManagedDumper(mgr.GetAPIReader(), mgr.GetConfig()),
+		Backups:      backups,
+		Audit:        auditLog,
+		Log:          log,
+		OperatorLock: operatorLock,
 	})
 	go engine.KeepRecovering(ctx)
 	return engine

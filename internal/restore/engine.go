@@ -91,6 +91,9 @@ type Deps struct {
 	Backups BackupRunner
 	Audit   AuditWriter
 	Log     *slog.Logger
+	// OperatorLock, when set, is held while the ILM operator is scaled; the add-on pass holds it while it applies the
+	// operator's Deployment.
+	OperatorLock sync.Locker
 }
 
 // Engine restores a backup onto the appliance, one restore at a time and step by step. Each step is recorded in the

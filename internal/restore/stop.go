@@ -223,6 +223,10 @@ func (e *Engine) operatorAvailable(ctx context.Context) (bool, error) {
 }
 
 func (e *Engine) scaleOperator(ctx context.Context, replicas int32) error {
+	if l := e.deps.OperatorLock; l != nil {
+		l.Lock()
+		defer l.Unlock()
+	}
 	d := &appsv1.Deployment{}
 	d.Namespace, d.Name = platform.OperatorNamespace, platform.OperatorDeployment
 	return e.scale(ctx, d, replicas)
