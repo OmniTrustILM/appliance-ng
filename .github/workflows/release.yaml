@@ -167,17 +167,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The system bundle carries the installer and the manager the images job pushed.
-      - name: Resolve the built images
+      # The system bundle carries the installer and the manager the images job pushed, by the digests it recorded:
+      # other builds push the same tags.
+      - name: Download the pushed digests
+        if: needs.check.outputs.dry-run != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests
+
+      - name: Name the built images
         if: needs.check.outputs.dry-run != 'true'
         env:
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           built=()
           for name in installer manager; do
-            ref="ghcr.io/omnitrustilm/appliance-ng/$name:$VERSION-$ARCH"
-            digest="$(oras manifest fetch --descriptor "$ref" | jq -er .digest)"
-            built+=("$ref@$digest")
+            digest="$(cat "$RUNNER_TEMP/digests/$name.digest")"
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::The images job recorded no valid digest for $name."
+              exit 1
+            fi
+            built+=("ghcr.io/omnitrustilm/appliance-ng/$name:$VERSION-$ARCH@$digest")
           done
           echo "BUILT_IMAGES=${built[*]}" >>"$GITHUB_ENV"
 
