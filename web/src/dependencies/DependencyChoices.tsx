@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { type ChangeEvent, useId, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { Alert } from '../components/Alert';
 import { Button } from '../components/Button';
@@ -161,6 +161,10 @@ function DependencyFields({ kind, answers, locked, errors, onEdit }: Readonly<{
     onEdit(patch);
   }
 
+  function chooseMode(e: ChangeEvent<HTMLInputElement>) {
+    edit({ mode: e.target.value as DependencyAnswers['mode'] });
+  }
+
   async function runTest() {
     const run = ++latest.current;
     setTest({ busy: true });
@@ -185,7 +189,7 @@ function DependencyFields({ kind, answers, locked, errors, onEdit }: Readonly<{
       ) : (
         (['managed', 'external'] as const).map((mode) => (
           <ChoiceField key={mode} type="radio" name={`${kind}-mode`} value={mode} label={modeLabels[kind][mode]} description={modeHints[kind][mode]}
-            checked={answers.mode === mode} onChange={() => edit({ mode })} />
+            checked={answers.mode === mode} onChange={chooseMode} />
         ))
       )}
       {!locked && shown[`dependencies.${kind}.mode`] && <Alert tone="error">{shown[`dependencies.${kind}.mode`]}</Alert>}
