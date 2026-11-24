@@ -420,6 +420,8 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 		}
 	}
 	opts := restore.Options{InPlace: in.local, ILMHostName: host, User: requestFrom(ctx).user}
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
 	plan, answer, err := s.writeRestoreCredentials(ctx, deps)
 	if answer.status != 0 || err != nil {
 		return answer, err

@@ -118,6 +118,9 @@ type Server struct {
 	kitMu sync.Mutex
 	// targetMu keeps backup target changes one at a time, so that a target's settings and its Secret change together.
 	targetMu sync.Mutex
+	// credentialsMu keeps the saves of the wizard, the Platform page and the start of a restore one at a time, so
+	// that the dependency credentials they write and the settings that use them change together.
+	credentialsMu sync.Mutex
 	// restoreMu keeps the uploads, fetches, inspections and resumes of a restore one at a time.
 	restoreMu sync.Mutex
 	// inspectMu guards inspected.

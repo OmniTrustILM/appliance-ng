@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -630,6 +631,57 @@ func TestFailedPlatformUpdateRestoresTheCredentials(t *testing.T) {
 	}
 	if !secretGone(t, CBOMSecretName) {
 		t.Error("a failed platform update left the CBOM store's credentials")
+	}
+}
+
+// pausedUpdateClient holds the first Update of the Appliance until release is closed, after closing paused.
+type pausedUpdateClient struct {
+	client.Client
+	once            *sync.Once
+	paused, release chan struct{}
+}
+
+func (c pausedUpdateClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if _, ok := obj.(*v1alpha1.Appliance); ok {
+		c.once.Do(func() {
+			close(c.paused)
+			<-c.release
+		})
+	}
+	return c.Client.Update(ctx, obj, opts...)
+}
+
+// Two wizard saves at once leave the database and its credentials of the same save.
+func TestConcurrentWizardSavesKeepTheCredentialsWithTheirDatabase(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupPart2)
+	paused, release := make(chan struct{}), make(chan struct{})
+	h.srv.deps.Client = pausedUpdateClient{Client: testClient, once: &sync.Once{}, paused: paused, release: release}
+	save := func(host, password string, done chan<- int) {
+		body := PlatformSettings{HostName: "ilm.example.com", Components: []string{},
+			Dependencies: &DependenciesUpdate{Database: externalDatabaseBody(host, ptr(password))}}
+		done <- h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s).Code
+	}
+
+	first, second := make(chan int, 1), make(chan int, 1)
+	go save("a.example.com", databasePassword, first)
+	<-paused
+	go save("b.example.com", databaseNext, second)
+	select {
+	case <-second:
+		second <- http.StatusAccepted
+	case <-time.After(time.Second):
+	}
+	close(release)
+	if a, b := <-first, <-second; a != http.StatusAccepted || b != http.StatusAccepted {
+		t.Fatalf("saves answered %d and %d", a, b)
+	}
+
+	host := getAppliance(t).Spec.Platform.Database.Host
+	password := string(systemSecret(t, DatabaseSecretName).Data["password"])
+	if (host == "a.example.com") != (password == databasePassword) {
+		t.Errorf("database %s stored with the password of the other save", host)
 	}
 }
 

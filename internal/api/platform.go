@@ -101,6 +101,8 @@ func (s *Server) PutPlatform(ctx context.Context, req PutPlatformRequestObject) 
 // on the Appliance as it is written, a host name the uploaded certificate in use does not cover, and once setup is
 // complete a dependency that switches between managed and external.
 func (s *Server) updatePlatform(ctx context.Context, platform v1alpha1.PlatformSpec, version *string, deps *dependenciesInput, utils *bool, cbom *cbomInput) ([]string, *fieldError, error) {
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
 	var paths []string
 	var ferr *fieldError
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {

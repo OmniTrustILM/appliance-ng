@@ -83,6 +83,8 @@ func (s *Server) PutWizardPlatform(ctx context.Context, req PutWizardPlatformReq
 }
 
 func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpec, m *mailInput, deps *dependenciesInput, utils *bool) (PutWizardPlatformResponseObject, error) {
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
 	a, err := s.openAppliance(ctx)
 	if err != nil {
 		return wizardClosed(err)
