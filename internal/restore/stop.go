@@ -3,6 +3,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -123,28 +124,35 @@ func (e *Engine) stop(ctx context.Context, _ *job) error {
 	return e.waitFor(ctx, "the ILM pods to stop", e.ilmPodsGone)
 }
 
-// operatorPodGone reports whether no pod of the operator's Deployment is left.
+// operatorPodGone reports whether no pod of the operator's Deployment is left running.
 func (e *Engine) operatorPodGone(ctx context.Context) (bool, error) {
 	pods := &corev1.PodList{}
 	selector := client.MatchingLabels{operatorPodLabel: operatorPodValue}
 	if err := e.deps.Client.List(ctx, pods, client.InNamespace(platform.OperatorNamespace), selector); err != nil {
 		return false, fmt.Errorf("list the operator pods: %w", err)
 	}
-	return len(pods.Items) == 0, nil
+	return !anyRunning(pods.Items), nil
 }
 
-// ilmPodsGone reports whether no pod of the operator's Deployments or of Keycloak is left.
+// ilmPodsGone reports whether no pod of the operator's Deployments or of Keycloak is left running.
 func (e *Engine) ilmPodsGone(ctx context.Context) (bool, error) {
 	for _, selector := range []client.MatchingLabels{{managedByLabel: managedByOperator}, {keycloakPodLabel: keycloakPodValue}} {
 		pods := &corev1.PodList{}
 		if err := e.deps.Client.List(ctx, pods, client.InNamespace(platform.Namespace), selector); err != nil {
 			return false, fmt.Errorf("list the ILM pods: %w", err)
 		}
-		if len(pods.Items) > 0 {
+		if anyRunning(pods.Items) {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// anyRunning reports whether a pod has not exited: a Succeeded or Failed pod that is kept runs nothing.
+func anyRunning(pods []corev1.Pod) bool {
+	return slices.ContainsFunc(pods, func(p corev1.Pod) bool {
+		return p.Status.Phase != corev1.PodSucceeded && p.Status.Phase != corev1.PodFailed
+	})
 }
 
 // stopKeycloak sets the managed Keycloak's instances to zero; without a managed Keycloak there is nothing to stop.

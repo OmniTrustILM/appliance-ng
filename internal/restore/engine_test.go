@@ -1588,3 +1588,25 @@ func TestWaitTimesOutOnAnErrorAtItsDeadline(t *testing.T) {
 		t.Errorf("wait = %v, want the error at once", err)
 	}
 }
+
+// TestStopIgnoresExitedPods is a stop with pods of the operator, ILM and Keycloak kept after they exited: they match
+// the selectors but run nothing, so the stop does not wait for them.
+func TestStopIgnoresExitedPods(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	exited := func(ns, name string, labels map[string]string, phase corev1.PodPhase) {
+		p := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name, Labels: labels},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "example/c"}}},
+		}
+		mustCreate(t, p)
+		p.Status.Phase = phase
+		if err := testClient.Status().Update(context.Background(), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exited("ilm-operator-system", "ilm-operator-controller-manager-old", map[string]string{"control-plane": "controller-manager"}, corev1.PodFailed)
+	exited("ilm", "core-old", map[string]string{"app.kubernetes.io/managed-by": "ilm-operator"}, corev1.PodSucceeded)
+	exited("ilm", "ilm-keycloak-old", map[string]string{"app": "keycloak"}, corev1.PodFailed)
+	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
+	f.wantDone(t)
+}
