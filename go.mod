@@ -12,7 +12,7 @@ require (
 	github.com/oapi-codegen/runtime v1.9.0
 	github.com/pkg/sftp v1.13.12
 	github.com/pquerna/otp v1.5.0
-	github.com/rabbitmq/amqp091-go v1.10.0
+	github.com/rabbitmq/amqp091-go v1.17.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/siderolabs/crypto v0.6.5
 	github.com/siderolabs/go-pointer v1.0.1
@@ -57,6 +57,7 @@ require (
 	github.com/containerd/go-cni v1.1.13 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/evanphx/json-patch v5.9.11+incompatible // indirect
