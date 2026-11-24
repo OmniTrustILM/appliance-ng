@@ -451,6 +451,33 @@ func TestReissueRejectsForeignKit(t *testing.T) {
 	}
 }
 
+// TestKitRefusedWhileARestoreIsPending: a kit issued before the restore would be overwritten by the backup's recipient.
+func TestKitRefusedWhileARestoreIsPending(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	withKitAccess(t, h)
+	a := getAppliance(t)
+	a.Status.Setup = v1alpha1.SetupRestore
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"issue":   h.request(http.MethodPost, pathRecoveryKit, RecoveryKitRequest{Passphrase: ptr(kitPassphrase)}, s),
+		"replace": h.request(http.MethodPost, pathReplace, RecoveryKitReplace{Passphrase: ptr(kitPassphrase), Confirm: true}, s),
+	} {
+		wantStatus(t, rec, http.StatusConflict)
+		var e Error
+		decode(t, rec, &e)
+		if e.Code != codeRestorePending {
+			t.Errorf("%s: code %q, want %s", name, e.Code, codeRestorePending)
+		}
+	}
+	if !secretGone(t, recovery.RecipientSecret) {
+		t.Error("a kit was issued during a restore")
+	}
+}
+
 func TestConcurrentFirstIssuesStoreOneKey(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()

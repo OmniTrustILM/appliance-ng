@@ -73,10 +73,10 @@ func (w *wizard) PostSetupCode(ctx context.Context, req setupapi.PostSetupCodeRe
 		return setupapi.PostSetupCode409JSONResponse{ConflictJSONResponse: conflict("Setup is in progress in another browser.")}, nil
 	case w.step != setupapi.Code:
 		w.deps.Log.Warn("the setup session expired, setup starts over in a new session")
-		w.user, w.passwordHash, w.seed, w.node = "", "", "", NodeAnswers{}
+		w.mode, w.user, w.passwordHash, w.seed, w.node = "", "", "", "", NodeAnswers{}
 	}
 	token, csrf := w.sessions.Create(sessionUser)
-	w.step = setupapi.Admin
+	w.step = setupapi.Mode
 	w.deps.Log.Info("setup session started")
 	cookie := auth.SessionCookie(token).String()
 	return setupapi.PostSetupCode200JSONResponse{
@@ -94,6 +94,25 @@ func (w *wizard) GetSetupState(ctx context.Context, _ setupapi.GetSetupStateRequ
 		state.Step = setupapi.Code
 	}
 	return setupapi.GetSetupState200JSONResponse(state), nil
+}
+
+// PutSetupMode saves the choice between a new appliance and the restore of a backup.
+func (w *wizard) PutSetupMode(_ context.Context, req setupapi.PutSetupModeRequestObject) (setupapi.PutSetupModeResponseObject, error) {
+	if w.currentStep() != setupapi.Mode {
+		return setupapi.PutSetupMode409JSONResponse{ConflictJSONResponse: wrongStep}, nil
+	}
+	if req.Body == nil || !req.Body.Mode.Valid() {
+		return setupapi.PutSetupMode400JSONResponse{BadRequestJSONResponse: badRequest("mode", "Choose a new appliance or a restore.")}, nil
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.step != setupapi.Mode {
+		return setupapi.PutSetupMode409JSONResponse{ConflictJSONResponse: wrongStep}, nil
+	}
+	w.mode, w.step = string(req.Body.Mode), setupapi.Admin
+	w.deps.Log.Info(msgStepDone, "step", "mode", "mode", w.mode)
+	return setupapi.PutSetupMode204Response{}, nil
 }
 
 // PutSetupAdmin sets the administrator's user name and password.
@@ -240,7 +259,7 @@ func (w *wizard) PostSetupApply(context.Context, setupapi.PostSetupApplyRequestO
 		w.mu.Unlock()
 		return setupapi.PostSetupApply409JSONResponse{ConflictJSONResponse: wrongStep}, nil
 	}
-	file := HandoverFile{Version: HandoverVersion, Node: w.node}
+	file := HandoverFile{Version: HandoverVersion, Mode: w.mode, Node: w.node}
 	file.Admin.User, file.Admin.PasswordHash, file.Admin.TOTPSeed = w.user, w.passwordHash, w.seed
 	data, err := json.Marshal(file)
 	if err != nil {

@@ -16,7 +16,7 @@ jobs:
   images:
     name: images (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -120,9 +120,10 @@ jobs:
           npm ci --ignore-scripts
           ./node_modules/.bin/playwright install --with-deps chromium
 
+      # Two VMs one after the other: the second restores the first one's backup.
       - name: Boot test
         if: matrix.arch == 'amd64'
-        run: E2E=1 make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
+        run: E2E=1 RESTORE=1 make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
 
       - name: Upload failure logs
         if: failure()

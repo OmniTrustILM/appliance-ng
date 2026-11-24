@@ -498,3 +498,44 @@ func TestNewExternalDumper(t *testing.T) {
 		t.Fatal("no dumper")
 	}
 }
+
+func TestManagedRecreateCommand(t *testing.T) {
+	managedCluster(t, `we"ird`)
+	f := &fakeExec{}
+	if err := newManagedDumper(testClient, nil, f.exec).Recreate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("%d execs, want 1", len(f.calls))
+	}
+	c := f.calls[0]
+	want := []string{"psql", "-v", "ON_ERROR_STOP=1", "-v", "db=ilmdb", "-v", `owner=we"ird`, "-d", "postgres"}
+	if c.ns != "ilm" || c.pod != "ilm-db-2" || c.container != "postgres" || !slices.Equal(c.cmd, want) {
+		t.Errorf("exec = %+v, want %v in ilm/ilm-db-2 postgres", c, want)
+	}
+	wantStdin := "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = :'db' AND pid <> pg_backend_pid();\n" +
+		"DROP DATABASE IF EXISTS :\"db\" WITH (FORCE);\n" +
+		"SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db')\\gexec\n"
+	if c.stdin != wantStdin {
+		t.Errorf("stdin = %q\nwant    %q", c.stdin, wantStdin)
+	}
+	for _, arg := range c.cmd {
+		if strings.Contains(strings.ToLower(arg), "password") {
+			t.Errorf("argument %q mentions a password", arg)
+		}
+	}
+}
+
+func TestManagedRecreateFails(t *testing.T) {
+	d := newManagedDumper(testClient, nil, (&fakeExec{}).exec)
+	if err := d.Recreate(context.Background()); err == nil {
+		t.Error("recreated without a Cluster")
+	}
+	managedCluster(t, "ilm")
+	f := &fakeExec{handler: func(call, io.Writer) error { return &kube.ExitError{Code: 3} }}
+	err := newManagedDumper(testClient, nil, f.exec).Recreate(context.Background())
+	var exit *kube.ExitError
+	if !errors.As(err, &exit) || !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("error = %v, want the failed recreate", err)
+	}
+}

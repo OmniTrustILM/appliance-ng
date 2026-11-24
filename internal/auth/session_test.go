@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -262,5 +263,35 @@ func TestSessionLookupAndActive(t *testing.T) {
 	clock.advance(IdleTimeout + time.Second)
 	if s.Active() != 0 {
 		t.Errorf("Active() = %d after the idle timeout, want 0", s.Active())
+	}
+}
+
+func TestSessionEndsWhenUserIsRemoved(t *testing.T) {
+	accounts := map[string]bool{"admin": true, "other": true}
+	var mu sync.Mutex
+	s := NewSessions(nil).WithUserCheck(func(_ context.Context, user string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return accounts[user]
+	})
+	gone, _ := s.Create("other")
+	kept, _ := s.Create("admin")
+	h := s.Middleware(whoami)
+	if rec := call(t, h, http.MethodGet, gone, ""); rec.Code != http.StatusOK {
+		t.Fatalf("GET before removal = %d", rec.Code)
+	}
+
+	mu.Lock()
+	delete(accounts, "other")
+	mu.Unlock()
+
+	if rec := call(t, h, http.MethodGet, gone, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET of a removed user = %d, want 401", rec.Code)
+	}
+	if n := s.Active(); n != 1 {
+		t.Fatalf("Active = %d after the removed user's request, want 1", n)
+	}
+	if rec := call(t, h, http.MethodGet, kept, ""); rec.Code != http.StatusOK {
+		t.Fatalf("GET of a remaining user = %d", rec.Code)
 	}
 }

@@ -41,6 +41,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/setup/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Choose a new appliance or the restore of a backup */
+        put: operations["putSetupMode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/setup/admin": {
         parameters: {
             query?: never;
@@ -871,7 +888,8 @@ export interface paths {
          * Back up now
          * @description Starts a backup copied to every target and answers before it ends; the status and the audit log record how
          *     it ends. A backup that may not start is answered with 409: `backup_running`, `no_recovery_kit`,
-         *     `upgrade_in_progress` or `no_space`.
+         *     `upgrade_in_progress`, `restore_in_progress` (a restore runs, waits for its kit or failed before it was done)
+         *     or `no_space`.
          */
         post: operations["postBackups"];
         delete?: never;
@@ -983,6 +1001,165 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The state of the restore
+         * @description The setup phase and the latest restore, with its step, its fixed failure reason and its warning.
+         */
+        get: operations["getRestore"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/restore/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload a backup to restore
+         * @description Streams the body to the data volume as the backup to restore onto this fresh appliance; it replaces the one
+         *     uploaded or fetched before. The request needs `Content-Length`: a backup that does not fit twice into the
+         *     free space is refused with 409 `no_space` before it is read. Only while setup is `restore`.
+         */
+        put: operations["putRestoreUpload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/restore/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List the backups on a target entered for the restore
+         * @description Lists the backup files on the target in the request, which is not saved; its secrets are used for this
+         *     request only. A target failure is answered with 502 and a fixed reason as its code. Only while setup is
+         *     `restore`.
+         */
+        post: operations["postRestoreList"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/restore/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fetch a backup to restore from a target entered for the restore
+         * @description Copies the named backup from the target in the request, which is not saved, to the data volume as the backup
+         *     to restore; it replaces the one uploaded or fetched before. A backup that does not fit twice into the free
+         *     space is refused with 409 `no_space`. A target failure is answered with 502 and a fixed reason as its code.
+         *     Only while setup is `restore`.
+         */
+        post: operations["postRestoreFetch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/restore/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a backup with the recovery kit
+         * @description Opens the kit with its passphrase, verifies the whole backup and describes what a restore would change. The
+         *     backup is the uploaded or fetched one (`upload`, while setup is `restore`) or a local backup (`local`, for a
+         *     restore in place once setup is `complete`). Refusals: `wrong_passphrase` and `invalid_kit` with 400;
+         *     `foreign_kit`, `tampered`, `truncated`, `format_too_new` and `version_unavailable` with 409. The backup key
+         *     stays in the manager's memory for this session until the restore starts or another backup is checked. The
+         *     request body is limited to 1 MiB.
+         */
+        post: operations["postRestoreInspect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/restore/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore the backup checked in this session
+         * @description Starts the restore of the backup this session checked last and answers before it ends; `GET /restore`
+         *     reports its progress. Needs `confirm` set to true and the `inspection` of that check's summary. A restore in
+         *     place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
+         *     backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
+         *     check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
+         *     `upgrade_in_progress`, `backup_running`, and `tampered` or `truncated` for a backup changed since its check.
+         */
+        post: operations["postRestoreStart"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/restore/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a restore with the recovery kit
+         * @description Continues a restore that waits for its kit after a manager restart, or one that stopped on a failure, at
+         *     its step. The kit's backup key is checked against the whole backup first. Refusals as for inspect, and
+         *     `not_waiting` and `busy` with 409. The request body is limited to 1 MiB.
+         */
+        post: operations["postRestoreResume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1023,11 +1200,18 @@ export interface components {
             code: string;
         };
         /** @enum {string} */
-        SetupStep: "code" | "admin" | "totp" | "node" | "apply" | "applying";
+        SetupStep: "code" | "mode" | "admin" | "totp" | "node" | "apply" | "applying";
         SetupState: {
             step: components["schemas"]["SetupStep"];
             /** @description Present with a valid setup session. */
             csrfToken?: string;
+        };
+        SetupMode: {
+            /**
+             * @description `new` sets up an appliance with wizard part 2; `restore` hands over to the restore of a backup, which keeps wizard part 2 closed.
+             * @enum {string}
+             */
+            mode: "new" | "restore";
         };
         AdminAccount: {
             user: string;
@@ -1095,7 +1279,7 @@ export interface components {
         };
         Status: {
             /** @enum {string} */
-            setup: "part1" | "part2" | "complete";
+            setup: "part1" | "part2" | "complete" | "restore";
             /** @description The add-on being installed while AddonsReady is not true yet. */
             addonStep?: string;
             conditions: components["schemas"]["Condition"][];
@@ -1191,7 +1375,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -1573,6 +1757,113 @@ export interface components {
             /** @description The SHA256 fingerprint of the host key, as ssh-keygen -l prints it. */
             fingerprint: string;
         };
+        RestoreState: {
+            /** @description The setup phase, as in the status; `restore` while the appliance waits for a backup to restore. */
+            setup: string;
+            restore?: components["schemas"]["RestoreProgress"];
+        };
+        RestoreProgress: {
+            /** @description The file name of the backup. */
+            backup: string;
+            inPlace: boolean;
+            /**
+             * @description The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+             * @enum {string}
+             */
+            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "start" | "keycloak" | "certificate" | "done" | "waitingForKit";
+            /** @description The step a restore waiting for its kit resumes at. */
+            pausedStep?: string;
+            /**
+             * @description The fixed reason a restore failed at its step; absent unless it failed.
+             * @enum {string}
+             */
+            message?: "failed" | "timeout";
+            /** @description What a completed restore left for the administrator. */
+            warning?: string;
+            /** @description The ILM host name the restore sets; absent when it keeps the backup's. */
+            ilmHostName?: string;
+            /** Format: date-time */
+            startedAt?: string;
+        };
+        RestoreTargetRequest: {
+            target: components["schemas"]["BackupTargetUpdate"];
+        };
+        RestoreFetch: {
+            target: components["schemas"]["BackupTargetUpdate"];
+            /** @description The backup's file name in the target's listing, ending in `.ilmbackup`; it is stored as an upload is. */
+            name: string;
+        };
+        RestoreFile: {
+            name: string;
+            /** Format: int64 */
+            sizeBytes: number;
+            /** Format: date-time */
+            modified: string;
+        };
+        RestoreFiles: {
+            files: components["schemas"]["RestoreFile"][];
+        };
+        RestoreInspect: {
+            /**
+             * @description The uploaded or fetched backup, or a local backup for a restore in place.
+             * @enum {string}
+             */
+            source: "upload" | "local";
+            /** @description The backup's file name. */
+            name: string;
+            /**
+             * Format: binary
+             * @description The recovery kit whose backup key the backup is encrypted to.
+             */
+            kit: string;
+            /** Format: password */
+            passphrase: string;
+        };
+        RestoreResume: {
+            /** Format: binary */
+            kit: string;
+            /** Format: password */
+            passphrase: string;
+        };
+        RestoreSummary: {
+            /** @description Identifies this check of the backup; `POST /restore/start` names it to restore this backup. */
+            inspection: string;
+            /** @description The backup's file name. */
+            backup: string;
+            inPlace: boolean;
+            /**
+             * Format: date-time
+             * @description When the backup was taken.
+             */
+            time: string;
+            /** @description The node host name the backup's manifest names; the manifest is not proof of where the backup comes from. */
+            hostName: string;
+            /** @description The backup's ILM host name, which the restore keeps unless another is given. */
+            ilmHostName: string;
+            /** @description This node's host name, which the restore keeps. */
+            nodeHostName: string;
+            ilm: string;
+            operator: string;
+            appliance: string;
+            /** @enum {string} */
+            database: "managed" | "external";
+            databaseIncluded: boolean;
+            /** @description The console accounts in the backup, which the restore adds. */
+            accounts: string[];
+            /** @description The accounts that exist here too; the backup's account replaces this appliance's. */
+            clashes: string[];
+            components: string[];
+        };
+        RestoreStart: {
+            /** @description The `inspection` of the summary being confirmed. */
+            inspection: string;
+            /** @description Restore a local backup onto this appliance instead of onto a fresh one. */
+            inPlace: boolean;
+            /** @description The ILM host name to set on a fresh restore; left out, the backup's is kept. A restore in place takes only the backup's. */
+            ilmHostName?: string;
+            /** @description Must be true; what the appliance holds now is replaced by the backup. */
+            confirm: boolean;
+        };
     };
     responses: {
         /** @description The request is invalid. */
@@ -1695,6 +1986,15 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description The target failed; the code is a fixed reason, never the target's error text. */
+        TargetFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: never;
     requestBodies: never;
@@ -1750,6 +2050,32 @@ export interface operations {
                     "application/json": components["schemas"]["SetupState"];
                 };
             };
+        };
+    };
+    putSetupMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupMode"];
+            };
+        };
+        responses: {
+            /** @description The choice is saved. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
     putSetupAdmin: {
@@ -3118,6 +3444,203 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             503: components["responses"]["BackupsUnavailable"];
+        };
+    };
+    getRestore: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 1 marks a read the console makes on its own, which does not keep the session from going idle. */
+                "X-Background-Refresh"?: "1";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The state of the restore. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreState"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    putRestoreUpload: {
+        parameters: {
+            query: {
+                /**
+                 * @description The backup's file name, ending in `.ilmbackup`. It is stored with every character other than a letter, a
+                 *     digit, `.`, `_` and `-` replaced by `_`; an inspection finds it by the same name.
+                 */
+                name: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The backup is stored. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postRestoreList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description The backup files on the target, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreFiles"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["TargetFailed"];
+            503: components["responses"]["BackupsUnavailable"];
+        };
+    };
+    postRestoreFetch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreFetch"];
+            };
+        };
+        responses: {
+            /** @description The backup is stored. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["TargetFailed"];
+            503: components["responses"]["BackupsUnavailable"];
+        };
+    };
+    postRestoreInspect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RestoreInspect"];
+            };
+        };
+        responses: {
+            /** @description What the restore would change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreSummary"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postRestoreStart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreStart"];
+            };
+        };
+        responses: {
+            /** @description The restore started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postRestoreResume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RestoreResume"];
+            };
+        };
+        responses: {
+            /** @description The restore continues. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
         };
     };
 }

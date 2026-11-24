@@ -212,3 +212,24 @@ func TestScanHostKeyUsesTheProxy(t *testing.T) {
 		t.Error("scanned without an Appliance")
 	}
 }
+
+func TestEnteredTargetUsesTheGivenCredentials(t *testing.T) {
+	f := newFixture(t)
+	spec := v1alpha1.BackupTarget{Name: "restore", Type: v1alpha1.BackupTypeSFTP,
+		SFTP: &v1alpha1.SFTPTarget{Host: "sftp.example.com", Port: 22, Path: "/b", User: "u", HostKey: "SHA256:x"}}
+	store := &readableTarget{memTarget{objects: map[string][]byte{}}}
+	f.runner.newTarget = func(got v1alpha1.BackupTarget, c map[string][]byte, deps target.Deps) (target.Target, error) {
+		if got.Name != spec.Name || string(c[target.PasswordKey]) != "entered" || deps.Proxy == nil {
+			t.Errorf("target %s, credentials %v, deps %+v", got.Name, c, deps)
+		}
+		return store, nil
+	}
+	tgt, err := f.runner.EnteredTarget(context.Background(), spec, map[string][]byte{target.PasswordKey: []byte("entered")})
+	if err != nil || tgt != store {
+		t.Errorf("entered target %v: %v", tgt, err)
+	}
+	resetRunnerCluster(t)
+	if _, err := f.runner.EnteredTarget(context.Background(), spec, nil); err == nil {
+		t.Error("opened without an Appliance")
+	}
+}

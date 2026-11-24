@@ -44,7 +44,7 @@ func TestStatus(t *testing.T) {
 	wantStatus(t, rec, http.StatusOK)
 	var got Status
 	decode(t, rec, &got)
-	if got.Setup != Part2 || got.AddonStep == nil || *got.AddonStep != "traefik" || got.RebootRequired {
+	if got.Setup != StatusSetupPart2 || got.AddonStep == nil || *got.AddonStep != "traefik" || got.RebootRequired {
 		t.Errorf("status = %+v, want part2 at add-on step traefik", got)
 	}
 	if len(got.Conditions) != 2 || got.Conditions[0].Type != v1alpha1.ConditionAddonsReady || *got.Conditions[0].Reason != "Progressing" ||
@@ -140,7 +140,7 @@ func TestStatusOnceAddonsAreReady(t *testing.T) {
 	}
 	var got Status
 	decode(t, h.request(http.MethodGet, "/appliance/api/v1/status", nil, s), &got)
-	if got.Setup != Complete || got.AddonStep != nil {
+	if got.Setup != StatusSetupComplete || got.AddonStep != nil {
 		t.Errorf("status = %+v, want complete without an add-on step", got)
 	}
 }
@@ -151,7 +151,7 @@ func TestStatusBeforeTheManagerReconciled(t *testing.T) {
 	createAppliance(t, "")
 	var got Status
 	decode(t, h.request(http.MethodGet, "/appliance/api/v1/status", nil, s), &got)
-	if got.Setup != Part2 || got.Conditions == nil {
+	if got.Setup != StatusSetupPart2 || got.Conditions == nil {
 		t.Errorf("status = %+v, want part2 with an empty condition list", got)
 	}
 }
@@ -282,7 +282,7 @@ func TestStatusSurvivesACertificateReadError(t *testing.T) {
 	}
 
 	h.srv.deps.Client = failingGet{Client: testClient, name: certs.SecretName}
-	if got := status(); got.Certificate != nil || got.Setup != Complete {
+	if got := status(); got.Certificate != nil || got.Setup != StatusSetupComplete {
 		t.Errorf("status %+v, want it without the certificate", got)
 	}
 	if !strings.Contains(h.logs.String(), "certificate in use not read") {
@@ -300,7 +300,7 @@ func TestStatusSurvivesARecoveryKitReadError(t *testing.T) {
 	wantStatus(t, rec, http.StatusOK)
 	var got Status
 	decode(t, rec, &got)
-	if got.RecoveryKit != nil || got.Setup != Complete {
+	if got.RecoveryKit != nil || got.Setup != StatusSetupComplete {
 		t.Errorf("status %+v, want it without the recovery kit", got)
 	}
 	if strings.Contains(rec.Body.String(), "recoveryKit") {
@@ -308,5 +308,18 @@ func TestStatusSurvivesARecoveryKitReadError(t *testing.T) {
 	}
 	if !strings.Contains(h.logs.String(), "recovery kit not read") {
 		t.Errorf("log %s, want the read error", h.logs)
+	}
+}
+
+func TestStatusReportsRestore(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupRestore)
+	rec := h.request(http.MethodGet, "/appliance/api/v1/status", nil, s)
+	wantStatus(t, rec, http.StatusOK)
+	var got Status
+	decode(t, rec, &got)
+	if got.Setup != StatusSetupRestore {
+		t.Errorf("setup %q, want restore", got.Setup)
 	}
 }

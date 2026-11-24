@@ -238,3 +238,14 @@ func TestValidateRequiresTheBackupFlags(t *testing.T) {
 		t.Errorf("serve-targets with its flags = %v", err)
 	}
 }
+
+func TestValidateKeepsACredentialOnlyWithItsPassword(t *testing.T) {
+	o := options{user: "u", password: "p", seedFile: "s", hostName: "h", credential: "c"}
+	if err := o.validate("check"); err == nil {
+		t.Error("--credential without --credential-password-file passed validation")
+	}
+	o.credentialPasswordFile = "f"
+	if err := o.validate("check"); err != nil {
+		t.Errorf("--credential with its password = %v", err)
+	}
+}

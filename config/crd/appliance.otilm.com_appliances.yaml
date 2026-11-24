@@ -537,11 +537,81 @@ spec:
                     format: date-time
                     type: string
                 type: object
+              restore:
+                description: Restore is the latest restore of a backup; unset until
+                  one starts.
+                properties:
+                  backup:
+                    description: Backup is the file name of the backup.
+                    type: string
+                  file:
+                    description: File is the path of the backup file in the manager,
+                      read again at each step.
+                    type: string
+                  ilmHostName:
+                    description: ILMHostName is the ILM host name the restore sets;
+                      empty keeps the backup's.
+                    type: string
+                  inPlace:
+                    type: boolean
+                  message:
+                    description: Message is the fixed reason a restore failed at Step;
+                      set only on failure.
+                    enum:
+                    - failed
+                    - timeout
+                    type: string
+                  pausedStep:
+                    description: PausedStep is the step a restore waiting for the
+                      kit resumes at.
+                    enum:
+                    - secrets
+                    - appliance
+                    - platform
+                    - stop
+                    - ilmSecrets
+                    - database
+                    - start
+                    - keycloak
+                    - certificate
+                    type: string
+                  startedAt:
+                    format: date-time
+                    type: string
+                  startedBy:
+                    description: |-
+                      StartedBy is the console account that started the restore; a restore in place keeps it among the backup's
+                      accounts.
+                    type: string
+                  step:
+                    enum:
+                    - secrets
+                    - appliance
+                    - platform
+                    - stop
+                    - ilmSecrets
+                    - database
+                    - start
+                    - keycloak
+                    - certificate
+                    - done
+                    - waitingForKit
+                    type: string
+                  warning:
+                    description: |-
+                      Warning names what a completed restore left for the administrator, such as host names an uploaded certificate
+                      does not cover.
+                    type: string
+                required:
+                - backup
+                - step
+                type: object
               setup:
                 enum:
                 - part1
                 - part2
                 - complete
+                - restore
                 type: string
               versions:
                 description: Versions are the component versions running on the appliance.

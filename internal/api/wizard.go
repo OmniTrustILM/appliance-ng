@@ -37,9 +37,20 @@ const (
 var (
 	errNotSetUp      = errors.New("the Appliance does not exist yet")
 	errSetupComplete = errors.New("setup is complete")
+	errRestoring     = errors.New("a restore is pending")
 	// errPasswordNeeded refuses to keep a stored password for another server or user name.
 	errPasswordNeeded = errors.New("the stored password belongs to another server or user")
 )
+
+// codeRestorePending refuses what a restore from a backup would overwrite.
+const (
+	codeRestorePending    = "restore_pending"
+	messageRestorePending = "The appliance is waiting for a backup to restore; restore it, or set up a new appliance."
+)
+
+func restorePending() ConflictJSONResponse {
+	return ConflictJSONResponse{Code: codeRestorePending, Message: messageRestorePending}
+}
 
 // fieldError is a request field that failed validation.
 type fieldError struct{ field, message string }
@@ -106,7 +117,7 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 	return PutWizardPlatform202Response{}, nil
 }
 
-// openAppliance reads the Appliance and fails with errNotSetUp or errSetupComplete when part 2 is not open.
+// openAppliance reads the Appliance and fails with errNotSetUp, errSetupComplete or errRestoring when part 2 is not open.
 func (s *Server) openAppliance(ctx context.Context) (*v1alpha1.Appliance, error) {
 	a := &v1alpha1.Appliance{}
 	err := s.deps.Client.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, a)
@@ -117,6 +128,8 @@ func (s *Server) openAppliance(ctx context.Context) (*v1alpha1.Appliance, error)
 		return nil, fmt.Errorf("read the Appliance: %w", err)
 	case a.Status.Setup == v1alpha1.SetupComplete:
 		return nil, errSetupComplete
+	case a.Status.Setup == v1alpha1.SetupRestore:
+		return nil, errRestoring
 	}
 	return a, nil
 }
@@ -128,6 +141,8 @@ func wizardClosed(err error) (PutWizardPlatformResponseObject, error) {
 		return PutWizardPlatform409JSONResponse{ConflictJSONResponse: ConflictJSONResponse{
 			Code: "setup_complete", Message: "Setup is complete; change the settings in the console.",
 		}}, nil
+	case errors.Is(err, errRestoring):
+		return PutWizardPlatform409JSONResponse{ConflictJSONResponse: restorePending()}, nil
 	case errors.Is(err, errNotSetUp):
 		return PutWizardPlatform409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
 	}

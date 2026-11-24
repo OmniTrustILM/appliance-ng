@@ -64,7 +64,9 @@ func TestCollectSecretsList(t *testing.T) {
 		secret(t, "appliance-system", name, map[string][]byte{"k": []byte("v")})
 	}
 	secret(t, "cert-manager", "appliance-root-ca", map[string][]byte{"tls.key": []byte("v")})
-	secret(t, "ilm", "ca-keypair", map[string][]byte{"k": []byte("v")})
+	for _, name := range []string{"ca-keypair", "admin-ca-keypair", "admin-certificate-secret", "ilm-oidc-client", "ilm-keycloak-initial-admin"} {
+		secret(t, "ilm", name, map[string][]byte{"k": []byte("v")})
+	}
 	secret(t, "ilm", "unrelated", map[string][]byte{"k": []byte("v")})
 	connector(t, "software-cryptography-provider")
 	connector(t, "without-keys")
@@ -79,7 +81,8 @@ func TestCollectSecretsList(t *testing.T) {
 		"appliance-system/mail-creds", "appliance-system/registry-creds", "appliance-system/target-ca",
 		"appliance-system/target-s3", "appliance-system/tls-upload", "appliance-system/trust-bundle",
 		"cert-manager/appliance-root-ca",
-		"ilm/ca-keypair", "ilm/software-cryptography-provider-keys",
+		"ilm/admin-ca-keypair", "ilm/admin-certificate-secret", "ilm/ca-keypair", "ilm/ilm-keycloak-initial-admin",
+		"ilm/ilm-oidc-client", "ilm/software-cryptography-provider-keys",
 	}
 	if !slices.Equal(names(got), want) {
 		t.Errorf("collected\n%v\nwant\n%v", names(got), want)
@@ -177,5 +180,31 @@ func TestCollectSecretsKeepsAReferenceRequiredThatAlsoIsOptional(t *testing.T) {
 	a.Spec.Mail = &v1alpha1.MailSpec{CredentialsRef: "appliance-users"}
 	if _, err := CollectSecrets(context.Background(), testClient, a, nil); err == nil {
 		t.Fatal("a missing referenced Secret that is also collected as optional was skipped")
+	}
+}
+
+func TestRestorable(t *testing.T) {
+	a := fullAppliance()
+	for _, ref := range []string{
+		"appliance-system/appliance-backup-recipient", "appliance-system/appliance-users", "appliance-system/appliance-users-key",
+		"appliance-system/mail-creds", "appliance-system/target-ca", "appliance-system/tls-upload",
+		"cert-manager/appliance-root-ca", "ilm/admin-ca-keypair", "ilm/ilm-oidc-client", "ilm/any-connector-keys",
+	} {
+		ns, name, _ := strings.Cut(ref, "/")
+		if !Restorable(a, ns, name) {
+			t.Errorf("%s not restorable, want it collected", ref)
+		}
+	}
+	for _, ref := range []string{
+		"appliance-system/unrelated", "kube-system/appliance-users", "ilm/unrelated", "ilm/-keys", "cert-manager/other",
+		"appliance-system/any-keys",
+	} {
+		ns, name, _ := strings.Cut(ref, "/")
+		if Restorable(a, ns, name) {
+			t.Errorf("%s restorable, want it refused", ref)
+		}
+	}
+	if Restorable(&v1alpha1.Appliance{}, "appliance-system", "mail-creds") {
+		t.Error("a Secret the Appliance does not reference is restorable")
 	}
 }

@@ -48,6 +48,8 @@ var (
 	ErrBusy = errors.New("a backup is running")
 	// ErrUpgradeInProgress refuses a backup while the operator upgrades the platform.
 	ErrUpgradeInProgress = errors.New("the platform is being upgraded")
+	// ErrRestoreInProgress refuses a backup while a restore runs, waits for its kit or failed before it was done.
+	ErrRestoreInProgress = errors.New("a restore is in progress")
 	// ErrNoKit refuses a backup until the administrator confirmed the recovery kit that holds its key.
 	ErrNoKit = errors.New("no confirmed recovery kit")
 	// ErrNoSpace refuses a backup while the data volume lacks twice the size of the last one.
@@ -74,9 +76,11 @@ const (
 	conditionLocalFailed  = "LocalFailed"
 	conditionTargetFailed = "TargetFailed"
 	conditionUpgrade      = "UpgradeInProgress"
+	conditionRestore      = "RestoreInProgress"
 	conditionNoKit        = "NoKit"
 	messageSucceeded      = "the last backup and its copies succeeded"
 	messageUpgrade        = "no backup while the platform is being upgraded"
+	messageRestore        = "no backup while a restore is in progress"
 	messageNoKit          = "no backup until the recovery kit is confirmed"
 	reasonNoSpace         = target.ReasonNoSpace
 	reasonFailed          = target.ReasonFailed
@@ -151,6 +155,9 @@ type Runner struct {
 	running bool
 	// pending is a replace or scheduled run that waits for the running backup to end.
 	pending *pendingRun
+	// admission keeps the checks before a backup apart from a restore's admission, so that neither starts unseen by
+	// the other.
+	admission sync.Mutex
 
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration) error
@@ -210,8 +217,8 @@ func runOpts(opts []RunOption) runOptions {
 // Run takes a backup for reason, one of RunManual, RunSchedule and RunReplace, keeps the newest LocalCopies locally
 // and copies it to the named targets of the Appliance, each pruned to its retention. A target that fails is
 // recorded in the status and fails neither the run nor the other targets. Run refuses with ErrBusy, then
-// ErrUpgradeInProgress, ErrNoKit and ErrNoSpace; a backup that breaks off returns ErrFailed and leaves no file.
-// A replace or scheduled run refused with ErrBusy starts once the running backup ends, with the background context:
+// ErrRestoreInProgress, ErrUpgradeInProgress, ErrNoKit and ErrNoSpace; a backup that breaks off returns ErrFailed and
+// leaves no file. A replace or scheduled run refused with ErrBusy starts once the running backup ends, with the background context:
 // the backup encrypted to a confirmed new kit must not wait for the next schedule, and a target due must get its copy.
 func (r *Runner) Run(ctx context.Context, reason string, targets []string, opts ...RunOption) (v1alpha1.BackupRecord, error) {
 	if !r.begin(reason, targets, opts) {
@@ -240,6 +247,24 @@ func (r *Runner) Start(ctx context.Context, reason string, targets []string, opt
 		}
 	}()
 	return nil
+}
+
+// Busy tells whether a backup runs.
+func (r *Runner) Busy() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.running
+}
+
+// Exclusive runs admit, a restore's admission, while no backup runs or passes its checks, and refuses with ErrBusy
+// while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
+func (r *Runner) Exclusive(admit func() error) error {
+	r.admission.Lock()
+	defer r.admission.Unlock()
+	if r.Busy() {
+		return ErrBusy
+	}
+	return admit()
 }
 
 // begin marks a run as started, or keeps a replace or scheduled run for later while another one runs.
@@ -296,7 +321,7 @@ func (r *Runner) end() {
 // Describe is a fixed description of an error of Run, safe for a log: the refusal or failure it is, or the
 // Kubernetes reason of a failed read.
 func Describe(err error) string {
-	for _, known := range []error{ErrBusy, ErrUpgradeInProgress, ErrNoKit, ErrNoSpace, ErrFailed} {
+	for _, known := range []error{ErrBusy, ErrUpgradeInProgress, ErrRestoreInProgress, ErrNoKit, ErrNoSpace, ErrFailed} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}
@@ -335,7 +360,9 @@ func (r *Runner) run(ctx context.Context, reason string, targets []string, opts 
 
 // admit reads the Appliance and the recipient of the backup and records a refusal.
 func (r *Runner) admit(ctx context.Context, reason string, o runOptions) (*v1alpha1.Appliance, age.Recipient, error) {
+	r.admission.Lock()
 	a, recipient, err := r.prepare(ctx)
+	r.admission.Unlock()
 	if err != nil && a != nil {
 		r.refused(ctx, a, o.user, reason, err)
 	}
@@ -415,6 +442,8 @@ func (r *Runner) refused(ctx context.Context, a *v1alpha1.Appliance, user, reaso
 	switch {
 	case errors.Is(err, ErrUpgradeInProgress):
 		condition, message = conditionUpgrade, messageUpgrade
+	case errors.Is(err, ErrRestoreInProgress):
+		condition, message = conditionRestore, messageRestore
 	case errors.Is(err, ErrNoKit):
 		condition, message = conditionNoKit, messageNoKit
 	case errors.Is(err, ErrNoSpace):
@@ -436,7 +465,10 @@ func (r *Runner) prepare(ctx context.Context) (*v1alpha1.Appliance, age.Recipien
 	if err := r.deps.Reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, a); err != nil {
 		return nil, nil, fmt.Errorf(readApplianceFailed, err)
 	}
-	upgrading, err := r.upgrading(ctx)
+	if r := a.Status.Restore; r != nil && r.Step != v1alpha1.RestoreStepDone {
+		return a, nil, ErrRestoreInProgress
+	}
+	upgrading, err := Upgrading(ctx, r.deps.Reader)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -458,11 +490,11 @@ func (r *Runner) prepare(ctx context.Context) (*v1alpha1.Appliance, age.Recipien
 	return a, recipient, r.check(r.deps.Dir, last)
 }
 
-// upgrading tells whether the operator reports an upgrade of the Platform; no Platform, or no Platform kind yet,
-// is none.
-func (r *Runner) upgrading(ctx context.Context) (bool, error) {
+// Upgrading tells whether the operator reports an upgrade of the Platform; no Platform, or no Platform kind yet, is
+// none.
+func Upgrading(ctx context.Context, reader client.Reader) (bool, error) {
 	p := &otilm.Platform{}
-	err := r.deps.Reader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, p)
+	err := reader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, p)
 	switch {
 	case apierrors.IsNotFound(err), meta.IsNoMatchError(err):
 		return false, nil
@@ -963,6 +995,16 @@ func (r *Runner) TestTarget(ctx context.Context, name string) error {
 	err = target.Test(ctx, t)
 	r.deps.Log.Info("backup target tested", "target", name, "result", cmp.Or(target.Reason(err), "ok"))
 	return err
+}
+
+// EnteredTarget returns the driver of spec, a target entered for one request and not saved, with creds as its
+// credentials; it is reached through the proxy of the Appliance and trusts its CAs as the saved targets do.
+func (r *Runner) EnteredTarget(ctx context.Context, spec v1alpha1.BackupTarget, creds map[string][]byte) (target.Target, error) {
+	a := &v1alpha1.Appliance{}
+	if err := r.deps.Reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, a); err != nil {
+		return nil, fmt.Errorf(readApplianceFailed, err)
+	}
+	return r.newTarget(spec, creds, r.targetDeps(ctx, a))
 }
 
 // ScanHostKey returns the SHA256 fingerprint of the SSH host key at host:port, reached through the proxy of the

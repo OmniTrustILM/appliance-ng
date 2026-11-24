@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -18,9 +20,12 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
+	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/mail"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/restore"
+	"github.com/OmniTrustILM/appliance-ng/internal/storage"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
@@ -53,6 +58,14 @@ type BackupRunner interface {
 	Open(name string) (*os.File, int64, error)
 	TestTarget(ctx context.Context, name string) error
 	ScanHostKey(ctx context.Context, host string, port int32) (string, error)
+	// EnteredTarget opens a target entered for one request with the given credentials; nothing is saved.
+	EnteredTarget(ctx context.Context, spec v1alpha1.BackupTarget, creds map[string][]byte) (target.Target, error)
+}
+
+// Restorer restores a backup onto the appliance.
+type Restorer interface {
+	Start(ctx context.Context, file string, id age.Identity, opts restore.Options) error
+	Resume(ctx context.Context, id age.Identity) error
 }
 
 // Deps is what the Server needs. Now defaults to time.Now; without Talos, reboot and shutdown are unavailable;
@@ -76,6 +89,10 @@ type Deps struct {
 	Talos func(context.Context) (talos.Node, error)
 	// Backups takes a backup to every target once a recovery kit is confirmed and serves the backup operations.
 	Backups BackupRunner
+	// Restore restores a backup onto the appliance.
+	Restore Restorer
+	// RestoreDir keeps the backup uploaded or fetched for a restore.
+	RestoreDir string
 }
 
 // Server serves the manager's API under auth.APIBase.
@@ -97,6 +114,14 @@ type Server struct {
 	kitMu sync.Mutex
 	// targetMu keeps backup target changes one at a time, so that a target's settings and its Secret change together.
 	targetMu sync.Mutex
+	// restoreMu keeps the uploads, fetches, inspections and resumes of a restore one at a time.
+	restoreMu sync.Mutex
+	// inspectMu guards inspected.
+	inspectMu sync.Mutex
+	// inspected is the backup checked last, for the session that checked it.
+	inspected *inspection
+	// checkSpace is storage.Check; tests replace it.
+	checkSpace func(path string, expected uint64) error
 }
 
 // NewServer returns the API server on deps.
@@ -106,12 +131,25 @@ func NewServer(deps Deps) *Server {
 	}
 	return &Server{
 		deps:          deps,
-		sessions:      auth.NewSessions(deps.Now),
+		sessions:      auth.NewSessions(deps.Now).WithUserCheck(accountExists(deps.Users)),
 		limiter:       auth.SignInLimiter(),
 		checkPassword: auth.CheckPassword,
 		hashSlots:     auth.NewHashSlots(maxPasswordChecks),
 		dummyHash:     newDummyHash(),
 		sendMail:      mail.SendTest,
+		checkSpace:    storage.Check,
+	}
+}
+
+// accountExists returns the check that keeps a session only while its user is a console account. A failed read
+// keeps the session, so that a passing error does not sign everyone out.
+func accountExists(users auth.UserStore) func(ctx context.Context, user string) bool {
+	return func(ctx context.Context, user string) bool {
+		if users == nil {
+			return true
+		}
+		_, err := users.Get(ctx, user)
+		return !errors.Is(err, auth.ErrUserNotFound)
 	}
 }
 
@@ -168,6 +206,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodDelete, backupTargetsPath+namePath), change(AuditEntryActionBackupTargetRemove))
 	mux.Handle(route(http.MethodPost, backupTargetsPath+"/hostkey"), withWriteDeadline(targetTestTimeout, change(AuditEntryActionBackupHostKeyScan)))
 	mux.Handle(route(http.MethodPost, backupTargetsPath+"/{name}/test"), withWriteDeadline(targetTestWriteTimeout(), change(AuditEntryActionBackupTargetTest)))
+	mux.Handle(route(http.MethodPut, restoreUploadPath), withStreamDeadlines(change(AuditEntryActionRestoreUpload)))
+	mux.Handle(route(http.MethodPost, restorePath+"/fetch"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreFetch)))
+	mux.Handle(route(http.MethodPost, restorePath+"/inspect"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreInspect)))
+	mux.Handle(route(http.MethodPost, restorePath+"/start"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreStart)))
+	mux.Handle(route(http.MethodPost, restorePath+"/resume"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreResume)))
+	mux.Handle(route(http.MethodPost, restorePath+"/list"), withWriteDeadline(targetTestWriteTimeout(), protected))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
 }
@@ -188,6 +232,8 @@ type request struct {
 	written AuditEntryResult
 	// result, when set, is the audit result of an answer that reports a failure with a success status.
 	result AuditEntryResult
+	// contentLength is the request body's declared size; -1 when unknown.
+	contentLength int64
 }
 
 type requestKey struct{}
@@ -204,7 +250,7 @@ func withRequest(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r.URL.Path))
-		req := &request{peer: r.RemoteAddr}
+		req := &request{peer: r.RemoteAddr, contentLength: r.ContentLength}
 		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 			req.peer = host
 		}
@@ -216,9 +262,13 @@ func withRequest(next http.Handler) http.Handler {
 }
 
 // bodyLimit is the largest request body accepted for path: certificate uploads carry chains, trust uploads CA
-// bundles, re-issuing the recovery kit uploads the kit and backup targets carry private keys and CA bundles.
+// bundles, re-issuing the recovery kit uploads the kit, backup targets carry private keys and CA bundles, and a
+// restore takes the kit, a target and the backup itself.
 func bodyLimit(path string) int64 {
-	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue", backupTargetsPath} {
+	if path == restoreUploadPath {
+		return maxRestoreUpload
+	}
+	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue", backupTargetsPath, restorePath} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return maxUploadBody
 		}

@@ -15,6 +15,12 @@ kind: Namespace
 metadata:
   name: ilm
 ---
+# The ILM operator's namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm-operator-system
+---
 # The cert-manager namespace, so the manager's Role in it can be bound. The manager is applied first; the
 # cert-manager add-on later applies the same Namespace server-side and the two merge.
 apiVersion: v1
@@ -184,7 +190,9 @@ subjects:
 # Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
 # the administrator certificate there and marks its Secret once handed out. The copies of the trust bundle, the
 # registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
-# dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods.
+# dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods. A
+# restore waits for the managed Keycloak, stops it, waits for the ILM pods to go, deletes the CertificateRequests so that
+# cert-manager keeps the restored Secrets, writes those into the live Secrets and loads the dump the same way.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -208,6 +216,13 @@ rules:
     resources: [clusters]
     resourceNames: [ilm-db]
     verbs: [get]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloaks]
+    resourceNames: [ilm-keycloak]
+    verbs: [get, patch]
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests]
+    verbs: [list, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -223,7 +238,33 @@ subjects:
     name: appliance-manager
     namespace: appliance-system
 ---
-# A backup holds the root CA of the built-in certificate chain, which cert-manager keeps in its own namespace.
+# A restore waits for the pod of the ILM operator to be gone after scaling it to zero.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: ilm-operator-system
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: ilm-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A backup holds the root CA of the built-in certificate chain, which cert-manager keeps in its own namespace. A
+# fresh restore writes it back, after deleting its CertificateRequests so that cert-manager keeps it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -233,7 +274,13 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     resourceNames: [appliance-root-ca]
-    verbs: [get]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests]
+    verbs: [list, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -946,11 +993,81 @@ spec:
                     format: date-time
                     type: string
                 type: object
+              restore:
+                description: Restore is the latest restore of a backup; unset until
+                  one starts.
+                properties:
+                  backup:
+                    description: Backup is the file name of the backup.
+                    type: string
+                  file:
+                    description: File is the path of the backup file in the manager,
+                      read again at each step.
+                    type: string
+                  ilmHostName:
+                    description: ILMHostName is the ILM host name the restore sets;
+                      empty keeps the backup's.
+                    type: string
+                  inPlace:
+                    type: boolean
+                  message:
+                    description: Message is the fixed reason a restore failed at Step;
+                      set only on failure.
+                    enum:
+                    - failed
+                    - timeout
+                    type: string
+                  pausedStep:
+                    description: PausedStep is the step a restore waiting for the
+                      kit resumes at.
+                    enum:
+                    - secrets
+                    - appliance
+                    - platform
+                    - stop
+                    - ilmSecrets
+                    - database
+                    - start
+                    - keycloak
+                    - certificate
+                    type: string
+                  startedAt:
+                    format: date-time
+                    type: string
+                  startedBy:
+                    description: |-
+                      StartedBy is the console account that started the restore; a restore in place keeps it among the backup's
+                      accounts.
+                    type: string
+                  step:
+                    enum:
+                    - secrets
+                    - appliance
+                    - platform
+                    - stop
+                    - ilmSecrets
+                    - database
+                    - start
+                    - keycloak
+                    - certificate
+                    - done
+                    - waitingForKit
+                    type: string
+                  warning:
+                    description: |-
+                      Warning names what a completed restore left for the administrator, such as host names an uploaded certificate
+                      does not cover.
+                    type: string
+                required:
+                - backup
+                - step
+                type: object
               setup:
                 enum:
                 - part1
                 - part2
                 - complete
+                - restore
                 type: string
               versions:
                 description: Versions are the component versions running on the appliance.

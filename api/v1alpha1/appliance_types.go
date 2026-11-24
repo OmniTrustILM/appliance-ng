@@ -23,6 +23,8 @@ const (
 	SetupPart1    = "part1"
 	SetupPart2    = "part2"
 	SetupComplete = "complete"
+	// SetupRestore is a new appliance that restores a backup instead of running wizard part 2.
+	SetupRestore = "restore"
 )
 
 // TLS sources of TLSSpec.Source.
@@ -275,7 +277,7 @@ type Versions struct {
 
 // ApplianceStatus is the observed state of the appliance.
 type ApplianceStatus struct {
-	// +kubebuilder:validation:Enum=part1;part2;complete
+	// +kubebuilder:validation:Enum=part1;part2;complete;restore
 	// +optional
 	Setup string `json:"setup,omitempty"`
 	// +optional
@@ -302,6 +304,9 @@ type ApplianceStatus struct {
 	// LastRestoreTest is when a restore test last succeeded.
 	// +optional
 	LastRestoreTest *metav1.Time `json:"lastRestoreTest,omitempty"`
+	// Restore is the latest restore of a backup; unset until one starts.
+	// +optional
+	Restore *RestoreStatus `json:"restore,omitempty"`
 }
 
 // BackupStatus is the observed state of the backups.

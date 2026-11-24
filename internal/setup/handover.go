@@ -3,10 +3,18 @@ package setup
 // HandoverVersion is the version of the hand-over file format.
 const HandoverVersion = 1
 
+// Modes of the hand-over: a new appliance runs wizard part 2, a restore waits for a backup. A file without a mode,
+// as an older first-boot wrote it, is a new appliance.
+const (
+	ModeNew     = "new"
+	ModeRestore = "restore"
+)
+
 // HandoverFile is what wizard part 1 hands over to the Appliance Manager through the hand-over file. It holds the
 // administrator's password hash and TOTP seed, so it is never logged.
 type HandoverFile struct {
 	Version int         `json:"version"`
+	Mode    string      `json:"mode,omitempty"`
 	Node    NodeAnswers `json:"node"`
 	Admin   struct {
 		User         string `json:"user"`

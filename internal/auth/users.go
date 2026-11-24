@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -189,6 +191,10 @@ func (s *SecretUserStore) cipher(ctx context.Context) (cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newAEAD(key)
+}
+
+func newAEAD(key []byte) (cipher.AEAD, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("seed key: %w", err)
@@ -242,6 +248,15 @@ func openSeed(aead cipher.AEAD, user string, enc []byte) (string, error) {
 		return "", fmt.Errorf("TOTP seed of user %q does not decrypt", user)
 	}
 	return string(seed), nil
+}
+
+// UserNames returns the sorted account names in a UsersSecret.
+func UserNames(secret *corev1.Secret) ([]string, error) {
+	records, err := decodeRecords(secret)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(records)), nil
 }
 
 func decodeRecords(secret *corev1.Secret) (map[string]record, error) {

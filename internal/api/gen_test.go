@@ -20,11 +20,11 @@ func methods(t reflect.Type) []string {
 func TestServersAreSplitByTag(t *testing.T) {
 	setup := methods(reflect.TypeFor[setupapi.StrictServerInterface]())
 	manager := methods(reflect.TypeFor[api.StrictServerInterface]())
-	if len(setup) != 8 {
-		t.Errorf("setup operations = %v, want 8", setup)
+	if len(setup) != 9 {
+		t.Errorf("setup operations = %v, want 9", setup)
 	}
-	if len(manager) != 49 {
-		t.Errorf("manager operations = %v, want 49", manager)
+	if len(manager) != 56 {
+		t.Errorf("manager operations = %v, want 56", manager)
 	}
 	for _, m := range setup {
 		if !strings.Contains(m, "Setup") {

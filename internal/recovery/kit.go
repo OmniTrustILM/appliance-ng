@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,6 +17,12 @@ import (
 // workFactor is the scrypt work factor of the kit's passphrase, 2^18, age's default: it takes 256 MiB, so the
 // manager builds or opens one kit at a time. Opening a kit accepts no higher factor.
 const workFactor = 18
+
+// collectScrypt collects the 256 MiB that scrypt left behind: a kit opened and another built right after would
+// otherwise need twice that in the manager's 512 MiB.
+func collectScrypt() {
+	runtime.GC()
+}
 
 // maxFileSize bounds each file read from a kit.
 const maxFileSize = 256 << 10
@@ -82,6 +89,7 @@ func Build(k Kit, passphrase string) ([]byte, error) {
 	key := fmt.Sprintf("# created: %s\n# public key: %s\n%s\n",
 		time.Now().UTC().Format(time.RFC3339), k.BackupKey.Recipient(), k.BackupKey)
 
+	defer collectScrypt()
 	recipient, err := age.NewScryptRecipient(passphrase)
 	if err != nil {
 		return nil, fmt.Errorf("prepare the passphrase: %w", err)
@@ -122,6 +130,7 @@ func Build(k Kit, passphrase string) ([]byte, error) {
 // Open decrypts a kit with passphrase. It returns ErrWrongPassphrase when the passphrase does not open it and
 // ErrInvalidKit for anything else that is not a kit; no error quotes the kit's content.
 func Open(data []byte, passphrase string) (Kit, error) {
+	defer collectScrypt()
 	id, err := age.NewScryptIdentity(passphrase)
 	if err != nil {
 		return Kit{}, ErrWrongPassphrase

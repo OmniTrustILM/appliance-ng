@@ -16,14 +16,17 @@ const rejected = 'The user name, password or code is not correct.';
 type Failure = { message: string; serverTime?: string };
 
 /**
- * The page a sign-in opens: the wizard while setup is open, the recovery kit page while no kit is confirmed, else
- * the status page.
+ * The page a sign-in opens: the wizard while setup is open, the restore page while the appliance waits for a backup
+ * or a restore has not finished, the recovery kit page while no kit is confirmed, else the status page.
  */
 async function startPage() {
   const status = await attempt(() => api.GET('/status'));
   const setup = status?.data?.setup;
   if (setup === 'part1' || setup === 'part2') return '/wizard/';
+  if (setup === 'restore') return '/restore';
   if (setup !== 'complete') return '/';
+  const restore = (await attempt(() => api.GET('/restore')))?.data?.restore;
+  if (restore && restore.step !== 'done') return '/restore';
   const kit = await attempt(() => api.GET('/recovery-kit'));
   return kit?.data && !kit.data.confirmed ? '/recovery-kit' : '/';
 }

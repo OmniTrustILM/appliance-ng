@@ -103,6 +103,9 @@ func (r *HandoverReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 // step is reported with a fixed reason and message; the error itself goes only to the log.
 func (r *HandoverReconciler) importAnswers(ctx context.Context, a *v1alpha1.Appliance, answers *wizard.HandoverFile) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	if err := r.ensureRestoreSetup(ctx, a, answers); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.ensureAdministrator(ctx, answers); err != nil {
 		logger.Error(err, "could not create the administrator")
 		return ctrl.Result{}, r.failed(ctx, a, reasonCreatingAdministrator, "creating the administrator failed, retrying", err)
@@ -124,6 +127,21 @@ func (r *HandoverReconciler) importAnswers(ctx context.Context, a *v1alpha1.Appl
 	return ctrl.Result{}, nil
 }
 
+// ensureRestoreSetup puts an Appliance of a restore hand-over in setup state restore, which keeps wizard part 2
+// closed. The appliance reconciler may have started part 2 between the creation and this step, so that state is
+// taken over as well; an Appliance further along is left alone.
+func (r *HandoverReconciler) ensureRestoreSetup(ctx context.Context, a *v1alpha1.Appliance, f *wizard.HandoverFile) error {
+	if f.Mode != wizard.ModeRestore || (a.Status.Setup != "" && a.Status.Setup != v1alpha1.SetupPart2) {
+		return nil
+	}
+	a.Status.Setup = v1alpha1.SetupRestore
+	if err := r.Client.Status().Update(ctx, a, client.FieldOwner(fieldManager)); err != nil {
+		return fmt.Errorf("set the setup state to restore: %w", err)
+	}
+	log.FromContext(ctx).Info("the appliance restores a backup instead of running wizard part 2")
+	return nil
+}
+
 // parseHandover decodes and checks the hand-over file of the Secret. Decoding errors may quote the content, so they
 // are dropped.
 func parseHandover(s *corev1.Secret) (*wizard.HandoverFile, bool) {
@@ -132,7 +150,8 @@ func parseHandover(s *corev1.Secret) (*wizard.HandoverFile, bool) {
 		return nil, false
 	}
 	// An empty seed would be a TOTP key everyone knows, so an account without a hash and a seed is refused.
-	return f, f.Version == wizard.HandoverVersion && f.Node.HostName != "" && f.Admin.User != "" &&
+	knownMode := f.Mode == "" || f.Mode == wizard.ModeNew || f.Mode == wizard.ModeRestore
+	return f, f.Version == wizard.HandoverVersion && knownMode && f.Node.HostName != "" && f.Admin.User != "" &&
 		f.Admin.PasswordHash != "" && f.Admin.TOTPSeed != ""
 }
 

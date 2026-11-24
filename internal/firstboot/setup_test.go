@@ -82,6 +82,7 @@ func (c *setupClient) call(method, path string, body any, want int) map[string]a
 func (c *setupClient) runWizard(code string) string {
 	c.t.Helper()
 	c.csrf, _ = c.call(http.MethodPost, "code", map[string]string{"code": code}, http.StatusOK)["csrfToken"].(string)
+	c.call(http.MethodPut, "mode", map[string]string{"mode": "new"}, http.StatusNoContent)
 	c.call(http.MethodPut, "admin", map[string]string{"user": "admin", "password": setupPassword}, http.StatusNoContent)
 	seed, _ := c.call(http.MethodPost, "totp", nil, http.StatusOK)["seed"].(string)
 	otp, err := totp.GenerateCode(seed, time.Now())

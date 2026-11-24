@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
@@ -39,6 +40,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/manager"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/restore"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
@@ -52,6 +54,8 @@ const (
 	failedPodSweep = 10 * time.Minute
 	// backupDir, under the data directory, keeps the local backups.
 	backupDir = "backups"
+	// restoreDir, under the data directory, keeps the backup uploaded or fetched for a restore.
+	restoreDir = "restore"
 )
 
 func main() {
@@ -136,6 +140,8 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Version:   version,
 		DataDir:   data,
 		Audit:     auditLog,
+		// The add-on pass and the restore engine both write the ILM operator's replicas.
+		OperatorLock: &sync.Mutex{},
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the Appliance controller: %w", err)
@@ -165,18 +171,21 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err := addBackupSchedule(mgr, reconciler, backups); err != nil {
 		return err
 	}
+	restorer := newRestoreEngine(ctx, mgr, direct, backups, auditLog, log, reconciler.OperatorLock)
 
 	api := apiserver.NewServer(apiserver.Deps{
-		Client:    mgr.GetClient(),
-		Reader:    mgr.GetAPIReader(),
-		Kube:      kubeClient,
-		ClusterCA: clusterCA,
-		Users:     users,
-		Audit:     auditLog,
-		Release:   rel,
-		Log:       log,
-		Talos:     talosAccess,
-		Backups:   backups,
+		Client:     mgr.GetClient(),
+		Reader:     mgr.GetAPIReader(),
+		Kube:       kubeClient,
+		ClusterCA:  clusterCA,
+		Users:      users,
+		Audit:      auditLog,
+		Release:    rel,
+		Log:        log,
+		Talos:      talosAccess,
+		Backups:    backups,
+		Restore:    restorer,
+		RestoreDir: filepath.Join(data, restoreDir),
 	})
 	cert, err := console.NewCertificate(log, mgr.GetClient())
 	if err != nil {
@@ -238,6 +247,21 @@ func newBackupRunner(ctx context.Context, mgr crmanager.Manager, direct client.C
 		log.Warn("could not clear the backup a restart cut off from the status", "failure", backup.Describe(err))
 	}
 	return runner, nil
+}
+
+// newRestoreEngine returns the restore engine and, in the background, marks a restore that a restart cut off as
+// waiting for its recovery kit: the backup key it held lived only in memory.
+func newRestoreEngine(ctx context.Context, mgr crmanager.Manager, direct client.Client, backups *backup.Runner, auditLog *audit.Log, log *slog.Logger, operatorLock sync.Locker) *restore.Engine {
+	engine := restore.New(restore.Deps{
+		Client:       direct,
+		Dumper:       backup.NewManagedDumper(mgr.GetAPIReader(), mgr.GetConfig()),
+		Backups:      backups,
+		Audit:        auditLog,
+		Log:          log,
+		OperatorLock: operatorLock,
+	})
+	go engine.KeepRecovering(ctx)
+	return engine
 }
 
 // keyedConnectors names the catalogue's connectors that keep a key Secret.

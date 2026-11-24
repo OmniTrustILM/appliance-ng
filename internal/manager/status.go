@@ -26,6 +26,7 @@ const (
 	reasonProgressing           = "Progressing"
 	reasonFailed                = "Failed"
 	reasonWaitingForOperator    = "WaitingForOperator"
+	reasonRestoring             = "Restoring"
 	reasonWaitingForCertManager = "WaitingForCertManager"
 	reasonWaitingForNodeAddress = "WaitingForNodeAddress"
 	reasonIssuing               = "Issuing"

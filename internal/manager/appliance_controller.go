@@ -99,6 +99,9 @@ type ApplianceReconciler struct {
 	Audit AuditWriter
 	// Schedule, when set, schedules the backups of the targets on every reconcile.
 	Schedule BackupScheduler
+	// OperatorLock, when set, is held while the add-on pass applies a step, which may write the ILM operator's
+	// Deployment; a restore holds it while it scales the operator.
+	OperatorLock sync.Locker
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -107,10 +110,11 @@ type ApplianceReconciler struct {
 	watchedKind map[string]bool
 
 	// The last completed full add-on pass. The controller runs one reconcile at a time, so no lock is needed.
-	passed    bool
-	passedAt  time.Time
-	passedGen int64
-	now       func() time.Time
+	passed     bool
+	passedAt   time.Time
+	passedGen  int64
+	passedHeld bool
+	now        func() time.Time
 }
 
 // AuditWriter appends entries to the audit log.
@@ -260,6 +264,10 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 	if a.Spec.Platform == nil {
 		return requeue(certificate), nil
 	}
+	if a.Status.Restore.PausesPlatform() {
+		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonRestoring, "a restore has stopped the ILM operator")
+		return ctrl.Result{RequeueAfter: addonsRequeue}, nil
+	}
 	if err := r.watchOperator(ctx); err != nil {
 		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonWaitingForOperator, "waiting for the ILM operator to serve its kinds")
 		return ctrl.Result{}, err
@@ -300,15 +308,55 @@ func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Ap
 	if r.now == nil {
 		r.now = time.Now
 	}
-	if r.passed && a.Generation == r.passedGen && r.now().Sub(r.passedAt) < resync {
+	held, err := r.holdsOperator(ctx)
+	if err != nil {
+		return addons.Progress{}, err
+	}
+	if r.passed && a.Generation == r.passedGen && held == r.passedHeld && r.now().Sub(r.passedAt) < resync {
 		return addons.Check(ctx, r.Cluster, r.Steps)
 	}
-	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, r.Addons)
+	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, r.Addons, operatorHold{r})
 	r.passed = err == nil && progress.Done
 	if r.passed {
-		r.passedAt, r.passedGen = r.now(), a.Generation
+		r.passedAt, r.passedGen, r.passedHeld = r.now(), a.Generation, held
 	}
 	return progress, err
+}
+
+// holdsOperator tells whether a restore needs the ILM operator stopped, from the Appliance as the API server has it:
+// the cached one may not show yet the step that stopped the operator.
+func (r *ApplianceReconciler) holdsOperator(ctx context.Context) (bool, error) {
+	live := &v1alpha1.Appliance{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, live); err != nil {
+		return false, fmt.Errorf("read the restore status: %w", err)
+	}
+	return live.Status.Restore.HoldsOperator(), nil
+}
+
+// operatorHold holds the operator lock while a step is applied and reads the restore's hold under it, so that a pass
+// that began before a restore stopped the operator does not start it again.
+type operatorHold struct{ r *ApplianceReconciler }
+
+func (h operatorHold) Hold(ctx context.Context) (addons.Holds, func(), error) {
+	lock := h.r.OperatorLock
+	if lock == nil {
+		lock = &sync.Mutex{}
+	}
+	lock.Lock()
+	held, err := h.r.holdsOperator(ctx)
+	if err != nil {
+		lock.Unlock()
+		return nil, nil, err
+	}
+	return restoreHolds(held), lock.Unlock, nil
+}
+
+// restoreHolds keeps the ILM operator at zero replicas while held.
+func restoreHolds(held bool) addons.Holds {
+	if !held {
+		return nil
+	}
+	return addons.Holds{platform.OperatorNamespace + "/" + platform.OperatorDeployment: 0}
 }
 
 // reconcilePlatform applies the Platform and Connectors with the Secrets they read and reports whether the

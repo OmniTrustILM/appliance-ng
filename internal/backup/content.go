@@ -28,18 +28,12 @@ type secretRef struct {
 
 // CollectSecrets returns the Secrets a restore needs, without the metadata of the cluster they came from, sorted by
 // namespace and name: every Secret the Appliance references (a missing one is an error), the appliance's own
-// account, key and recipient Secrets, the CA Secrets, and in the platform namespace the CA key pairs and the key
-// Secret of every Connector and of every connector named in keyed. A removed connector's key Secret stays, and so
-// does what the connector stored with it in the database. Other Secrets that do not exist are skipped.
+// account, key and recipient Secrets, the CA Secrets, and in the platform namespace the CA key pairs, the
+// administrator certificate, the Keycloak client and administrator Secrets and the key Secret of every Connector and
+// of every connector named in keyed. A removed connector's key Secret stays, and so does what the connector stored
+// with it in the database. Other Secrets that do not exist are skipped.
 func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance, keyed []string) ([]corev1.Secret, error) {
-	refs := referenced(a)
-	for _, name := range []string{auth.UsersSecret, auth.UsersKeySecret, recovery.RecipientSecret} {
-		refs = append(refs, secretRef{namespace: kube.SystemNamespace, name: name})
-	}
-	refs = append(refs, secretRef{namespace: certs.ClusterResourceNamespace, name: certs.RootCAName})
-	for _, name := range []string{platform.EdgeCASecret, platform.AdminCASecret} {
-		refs = append(refs, secretRef{namespace: platform.Namespace, name: name})
-	}
+	refs := append(referenced(a), ownRefs()...)
 	connectors := &otilm.ConnectorList{}
 	if err := c.List(ctx, connectors, client.InNamespace(platform.Namespace)); err != nil {
 		return nil, fmt.Errorf("list connectors: %w", err)
@@ -49,7 +43,7 @@ func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance,
 		withKeys = append(withKeys, connector.Name)
 	}
 	for _, name := range withKeys {
-		refs = append(refs, secretRef{namespace: platform.Namespace, name: name + "-keys"})
+		refs = append(refs, secretRef{namespace: platform.Namespace, name: name + keysSuffix})
 	}
 
 	slices.SortFunc(refs, func(x, y secretRef) int {
@@ -72,6 +66,38 @@ func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance,
 		out = append(out, portable(s))
 	}
 	return out, nil
+}
+
+// keysSuffix ends the name of a connector's key Secret in the platform namespace.
+const keysSuffix = "-keys"
+
+// Restorable tells whether CollectSecrets collects the Secret namespace/name for the appliance a, a connector's key
+// Secret for any connector.
+func Restorable(a *v1alpha1.Appliance, namespace, name string) bool {
+	if namespace == platform.Namespace && len(name) > len(keysSuffix) && strings.HasSuffix(name, keysSuffix) {
+		return true
+	}
+	return slices.ContainsFunc(append(referenced(a), ownRefs()...), func(r secretRef) bool {
+		return r.namespace == namespace && r.name == name
+	})
+}
+
+// ownRefs are the Secrets of the appliance, cert-manager and the platform that a backup holds when they exist,
+// connector keys aside.
+func ownRefs() []secretRef {
+	var refs []secretRef
+	for _, name := range []string{auth.UsersSecret, auth.UsersKeySecret, recovery.RecipientSecret} {
+		refs = append(refs, secretRef{namespace: kube.SystemNamespace, name: name})
+	}
+	refs = append(refs, secretRef{namespace: certs.ClusterResourceNamespace, name: certs.RootCAName})
+	platformSecrets := []string{
+		platform.EdgeCASecret, platform.AdminCASecret, platform.AdminCertificateSecret, platform.OIDCClientSecret,
+		platform.KeycloakAdminSecret,
+	}
+	for _, name := range platformSecrets {
+		refs = append(refs, secretRef{namespace: platform.Namespace, name: name})
+	}
+	return refs
 }
 
 // dedupe merges references to the same Secret; one required reference makes it required.
