@@ -80,7 +80,7 @@ jobs:
           go mod tidy
           go run ./cmd/release pin --operator "$OPERATOR" ${ILM:+--ilm "$ILM"}
           go run ./cmd/release validate
-          go test . ./addons/... ./internal/release/... ./internal/bundle/...
+          go test . ./addons/... ./internal/release/... ./internal/bundle/... ./internal/platform/...
 
       - name: Open the pull request
         if: steps.versions.outputs.skip != 'true'
