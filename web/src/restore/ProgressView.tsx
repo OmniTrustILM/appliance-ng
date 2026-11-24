@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { Alert } from '../components/Alert';
 import { Button } from '../components/Button';
 import { cx } from '../components/cx';
@@ -38,6 +39,12 @@ export function ProgressView({ progress, fresh, onResumed, onStartOver }: Progre
     <>
       <h2 className="mb-3 text-lg font-semibold">{done ? `Restored ${progress.backup}` : `Restoring ${progress.backup}`}</h2>
       {done && <Alert tone="success">The restore finished.</Alert>}
+      {done && !progress.inPlace && (
+        <Alert tone="warning">
+          The recovery kit's cluster access belongs to the node the backup was taken on, so backups wait until a new recovery kit is issued and confirmed.{' '}
+          <Link to="/recovery-kit">Issue a new recovery kit</Link>
+        </Alert>
+      )}
       {progress.warning && <Alert tone="warning">{progress.warning}</Alert>}
       {progress.message && (
         <Alert tone="error">{`The restore stopped at "${stepLabel(at)}": ${reasons[progress.message]}.${restarted}`}</Alert>

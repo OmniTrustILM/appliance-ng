@@ -244,6 +244,21 @@ describe('RestorePage', () => {
     expect(screen.queryByText('Bring the platform up')).not.toBeInTheDocument();
   });
 
+  it('asks for a new recovery kit once a fresh restore is done', async () => {
+    stubApi({ [STATE]: [200, { setup: 'complete', restore: { backup: backupName, inPlace: false, step: 'done' } }] });
+    renderPage();
+    expect(await screen.findByText(/the restore finished/i)).toBeInTheDocument();
+    expect(screen.getByText(/backups wait until a new recovery kit is issued and confirmed/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Issue a new recovery kit' })).toHaveAttribute('href', '/recovery-kit');
+  });
+
+  it('asks for no new recovery kit after a restore in place', async () => {
+    stubApi({ [STATE]: [200, { setup: 'complete', restore: { backup: backupName, inPlace: true, step: 'done' } }] });
+    renderPage();
+    expect(await screen.findByText(/the restore finished/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Issue a new recovery kit' })).not.toBeInTheDocument();
+  });
+
   it('says that no restore waits on a set-up appliance', async () => {
     stubApi({ [STATE]: [200, { setup: 'complete' }] });
     renderPage();
