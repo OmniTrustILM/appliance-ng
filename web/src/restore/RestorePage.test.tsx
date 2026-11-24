@@ -121,6 +121,23 @@ describe('RestorePage', () => {
     });
   });
 
+  it('takes no dependency changes while the restore starts', async () => {
+    let answer: (reply: readonly [number]) => void = () => undefined;
+    stubApi({
+      [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary],
+      [START]: () => new Promise<readonly [number]>((resolve) => { answer = resolve; }),
+    });
+    renderPage();
+    await uploadAndCheck();
+    await userEvent.click(await screen.findByLabelText(/Choose the dependencies anew/));
+    await userEvent.click(screen.getByRole('button', { name: 'Restore the backup' }));
+    expect(screen.getByLabelText(/Choose the dependencies anew/)).toBeDisabled();
+    expect(screen.getByLabelText('Database host')).toBeDisabled();
+    expect(screen.getByLabelText(/Managed PostgreSQL/)).toBeDisabled();
+    answer([400]);
+    await waitFor(() => expect(screen.getByLabelText('Database host')).toBeEnabled());
+  });
+
   it('warns that the dump replaces the content of the external database it loads into', async () => {
     stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary] });
     renderPage();

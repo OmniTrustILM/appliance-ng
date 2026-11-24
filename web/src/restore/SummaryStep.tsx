@@ -80,16 +80,18 @@ export function SummaryStep({ summary, onStarted, onBack }: SummaryStepProps) {
       <Field label="ILM host name" name="ilmHostName" value={host} onChange={(event) => setHost(event.target.value)}
         autoComplete="off" spellCheck={false} error={refusal?.field === 'ilmHostName' ? refusal.message : undefined}
         hint="The backup's ILM host name; enter another to restore ILM under a new name." />
-      <ChoiceField type="checkbox" label="Choose the dependencies anew"
-        description="Keep the backup's database, messaging and identity provider, or choose managed or external ones; the database dump loads into either."
-        checked={dependencies !== undefined} onChange={(e) => setDependencies(e.target.checked ? backedUp : undefined)} />
-      {dependencies && (
-        <div className="mt-4">
-          <p className="mb-4 text-sm text-content-muted">Enter the passwords and client secret of external ones again: the backup's stay sealed until the restore.</p>
-          <DependencyChoices answers={dependencies} errors={dependencyError && refusal ? { [refusal.field ?? '']: refusal.message } : {}}
-            onChange={setDependencies} />
-        </div>
-      )}
+      <fieldset disabled={busy} className="min-w-0">
+        <ChoiceField type="checkbox" label="Choose the dependencies anew"
+          description="Keep the backup's database, messaging and identity provider, or choose managed or external ones; the database dump loads into either."
+          checked={dependencies !== undefined} onChange={(e) => setDependencies(e.target.checked ? backedUp : undefined)} />
+        {dependencies && (
+          <div className="mt-4">
+            <p className="mb-4 text-sm text-content-muted">Enter the passwords and client secret of external ones again: the backup's stay sealed until the restore.</p>
+            <DependencyChoices answers={dependencies} errors={dependencyError && refusal ? { [refusal.field ?? '']: refusal.message } : {}}
+              onChange={setDependencies} />
+          </div>
+        )}
+      </fieldset>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Button busy={busy} disabled={!host.trim()} onClick={() => void start()}>Restore the backup</Button>
         <Button variant="secondary" disabled={busy} onClick={onBack}>Choose another backup</Button>
