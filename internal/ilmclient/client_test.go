@@ -293,3 +293,33 @@ func TestDiscoveryChecked(t *testing.T) {
 		t.Fatalf("untrusted issuer: reason %q of %v", Reason(err), err)
 	}
 }
+
+func TestProviderClientFollowsOnlyHTTPSRedirects(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer plain.Close()
+	var idp *httptest.Server
+	idp = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/to-http":
+			http.Redirect(w, r, plain.URL, http.StatusFound)
+		case "/to-https":
+			http.Redirect(w, r, idp.URL+"/done", http.StatusFound)
+		case "/loop":
+			http.Redirect(w, r, idp.URL+"/loop", http.StatusFound)
+		}
+	}))
+	defer idp.Close()
+	client := ProviderClient(idp.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs, nil, 0)
+
+	if resp, err := client.Get(idp.URL + "/to-https"); err != nil || resp.Request.URL.Path != "/done" {
+		t.Fatalf("an https redirect was not followed: %v", err)
+	} else {
+		_ = resp.Body.Close()
+	}
+	for _, path := range []string{"/to-http", "/loop"} {
+		if resp, err := client.Get(idp.URL + path); err == nil {
+			_ = resp.Body.Close()
+			t.Fatalf("%s was followed", path)
+		}
+	}
+}
