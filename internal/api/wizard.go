@@ -100,6 +100,14 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 	if err != nil {
 		return nil, err
 	}
+	storedMail, err := s.systemSecret(ctx, MailSecretName)
+	if err != nil {
+		return nil, err
+	}
+	undo := func() {
+		s.undoCredentials(ctx, plan)
+		s.putBack(context.WithoutCancel(ctx), MailSecretName, storedMail)
+	}
 	credentialsChanged, err := s.writeMailCredentials(ctx, m, a.Spec.Mail)
 	if errors.Is(err, errPasswordNeeded) {
 		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: badRequestField("mail.password",
@@ -110,7 +118,7 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 	}
 	credentialPaths, err := s.writeCredentials(ctx, plan)
 	if err != nil {
-		s.undoCredentials(ctx, plan)
+		undo()
 		return nil, err
 	}
 	var paths []string
@@ -132,7 +140,7 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 		return s.deps.Client.Update(ctx, a, client.FieldOwner(FieldManager))
 	})
 	if err != nil {
-		s.undoCredentials(ctx, plan)
+		undo()
 		return wizardClosed(err)
 	}
 	recordPaths(ctx, paths)

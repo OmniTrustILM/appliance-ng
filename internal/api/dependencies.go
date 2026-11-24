@@ -485,7 +485,7 @@ func (s *Server) putBack(ctx context.Context, name string, stored *corev1.Secret
 		_, err = s.putDependencySecret(ctx, name, current, data)
 	}
 	if err != nil {
-		s.deps.Log.Error("could not put back the credentials of a dependency", "secret", name, "failure", apierrors.ReasonForError(err))
+		s.deps.Log.Error("could not put back the credentials", "secret", name, "failure", apierrors.ReasonForError(err))
 	}
 }
 

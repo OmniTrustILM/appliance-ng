@@ -634,6 +634,30 @@ func TestFailedPlatformUpdateRestoresTheCredentials(t *testing.T) {
 	}
 }
 
+// A failed wizard save puts the mail credentials back too, whether it changed or removed them.
+func TestFailedWizardSaveRestoresTheMailCredentials(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupPart2)
+	mail := validMail()
+	mail.Password = ptr(consoleMailPassword)
+	body := PlatformSettings{HostName: "ilm.example.com", Components: []string{}, Mail: mail}
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
+	h.srv.deps.Client = failingUpdateClient{testClient}
+
+	mail.Password = ptr("another-password")
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusInternalServerError)
+	if got := string(systemSecret(t, MailSecretName).Data[MailPasswordKey]); got != consoleMailPassword {
+		t.Error("a failed wizard save changed the mail credentials")
+	}
+
+	body.Mail = nil
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusInternalServerError)
+	if secretGone(t, MailSecretName) {
+		t.Error("a failed wizard save deleted the mail credentials")
+	}
+}
+
 // pausedUpdateClient holds the first Update of the Appliance until release is closed, after closing paused.
 type pausedUpdateClient struct {
 	client.Client
