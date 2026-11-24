@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -54,7 +55,8 @@ const (
 var (
 	freshSteps = []string{
 		v1alpha1.RestoreStepSecrets, v1alpha1.RestoreStepAppliance, v1alpha1.RestoreStepPlatform, v1alpha1.RestoreStepStop,
-		v1alpha1.RestoreStepILMSecrets, v1alpha1.RestoreStepDatabase, v1alpha1.RestoreStepStart, v1alpha1.RestoreStepCertificate,
+		v1alpha1.RestoreStepILMSecrets, v1alpha1.RestoreStepDatabase, v1alpha1.RestoreStepStart, v1alpha1.RestoreStepKeycloak,
+		v1alpha1.RestoreStepCertificate,
 	}
 	inPlaceSteps = []string{
 		v1alpha1.RestoreStepSecrets, v1alpha1.RestoreStepAppliance, v1alpha1.RestoreStepStop, v1alpha1.RestoreStepILMSecrets,
@@ -94,6 +96,10 @@ type Deps struct {
 	// OperatorLock, when set, is held while the ILM operator is scaled; the add-on pass holds it while it applies the
 	// operator's Deployment.
 	OperatorLock sync.Locker
+	// KeycloakURL is the base URL of the managed Keycloak; empty is its Service in the cluster.
+	KeycloakURL string
+	// HTTPClient calls Keycloak; nil is a client that never uses a proxy.
+	HTTPClient *http.Client
 }
 
 // Engine restores a backup onto the appliance, one restore at a time and step by step. Each step is recorded in the
@@ -124,6 +130,12 @@ type job struct {
 
 // New returns an Engine on deps.
 func New(deps Deps) *Engine {
+	if deps.KeycloakURL == "" {
+		deps.KeycloakURL = keycloakServiceURL()
+	}
+	if deps.HTTPClient == nil {
+		deps.HTTPClient = keycloakHTTPClient()
+	}
 	e := &Engine{deps: deps, retryDelay: 10 * time.Second, poll: 2 * time.Second, waitTimeout: 30 * time.Minute, now: time.Now}
 	e.steps = map[string]func(context.Context, *job) error{
 		v1alpha1.RestoreStepSecrets:     e.restoreSystemSecrets,
@@ -133,6 +145,7 @@ func New(deps Deps) *Engine {
 		v1alpha1.RestoreStepILMSecrets:  e.restoreILMSecrets,
 		v1alpha1.RestoreStepDatabase:    e.restoreDatabase,
 		v1alpha1.RestoreStepStart:       e.start,
+		v1alpha1.RestoreStepKeycloak:    e.rehostKeycloak,
 		v1alpha1.RestoreStepCertificate: e.restoreCertificate,
 	}
 	return e

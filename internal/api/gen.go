@@ -462,6 +462,7 @@ const (
 	StepDatabase      RestoreProgressStep = "database"
 	StepDone          RestoreProgressStep = "done"
 	StepILMSecrets    RestoreProgressStep = "ilmSecrets"
+	StepKeycloak      RestoreProgressStep = "keycloak"
 	StepPlatform      RestoreProgressStep = "platform"
 	StepSecrets       RestoreProgressStep = "secrets"
 	StepStart         RestoreProgressStep = "start"
@@ -481,6 +482,8 @@ func (e RestoreProgressStep) Valid() bool {
 	case StepDone:
 		return true
 	case StepILMSecrets:
+		return true
+	case StepKeycloak:
 		return true
 	case StepPlatform:
 		return true

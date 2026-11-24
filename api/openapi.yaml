@@ -2931,9 +2931,9 @@ components:
           type: boolean
         step:
           type: string
-          enum: [secrets, appliance, platform, stop, ilmSecrets, database, start, certificate, done, waitingForKit]
+          enum: [secrets, appliance, platform, stop, ilmSecrets, database, start, keycloak, certificate, done, waitingForKit]
           x-enum-varnames: [StepSecrets, StepAppliance, StepPlatform, StepStop, StepILMSecrets, StepDatabase, StepStart,
-            StepCertificate, StepDone, StepWaitingForKit]
+            StepKeycloak, StepCertificate, StepDone, StepWaitingForKit]
           description: The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
         pausedStep:
           type: string

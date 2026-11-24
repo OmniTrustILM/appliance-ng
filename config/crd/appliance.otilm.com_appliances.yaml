@@ -572,6 +572,7 @@ spec:
                     - ilmSecrets
                     - database
                     - start
+                    - keycloak
                     - certificate
                     type: string
                   startedAt:
@@ -591,6 +592,7 @@ spec:
                     - ilmSecrets
                     - database
                     - start
+                    - keycloak
                     - certificate
                     - done
                     - waitingForKit

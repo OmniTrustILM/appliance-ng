@@ -1770,7 +1770,7 @@ export interface components {
              * @description The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
              * @enum {string}
              */
-            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "start" | "certificate" | "done" | "waitingForKit";
+            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "start" | "keycloak" | "certificate" | "done" | "waitingForKit";
             /** @description The step a restore waiting for its kit resumes at. */
             pausedStep?: string;
             /**

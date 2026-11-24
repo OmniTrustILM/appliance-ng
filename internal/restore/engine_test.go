@@ -137,6 +137,8 @@ type restoreFixture struct {
 	audit   *memAudit
 	logs    *bytes.Buffer
 	ran     []string
+	// keycloak is the managed Keycloak with the backup's realm.
+	keycloak *fakeKeycloak
 	// stalled stops the emulated operator from scaling its Deployments back up.
 	stalled atomic.Bool
 }
@@ -324,7 +326,7 @@ func newRestoreFixture(t *testing.T, inPlace bool) *restoreFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &restoreFixture{key: key, dumper: &fakeDumper{}, backups: &fakeBackups{}, audit: &memAudit{}, logs: &bytes.Buffer{}}
+	f := &restoreFixture{key: key, dumper: &fakeDumper{}, backups: &fakeBackups{}, audit: &memAudit{}, logs: &bytes.Buffer{}, keycloak: newFakeKeycloak(t)}
 	f.file = buildBackup(t, key, backupSpec())
 
 	spec := v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: newHost, Address: "192.0.2.20/24", Gateway: "192.0.2.1"}}
@@ -439,7 +441,10 @@ func readyPlatform(t *testing.T, a *v1alpha1.Appliance) {
 }
 
 func (f *restoreFixture) engine(c client.Client) *Engine {
-	e := New(Deps{Client: c, Dumper: f.dumper, Backups: f.backups, Audit: f.audit, Log: slog.New(slog.NewTextHandler(f.logs, nil))})
+	e := New(Deps{
+		Client: c, Dumper: f.dumper, Backups: f.backups, Audit: f.audit, Log: slog.New(slog.NewTextHandler(f.logs, nil)),
+		KeycloakURL: f.keycloak.url,
+	})
 	e.retryDelay, e.poll, e.waitTimeout = 0, 5*time.Millisecond, 2*time.Second
 	e.afterStep = func(step string) bool {
 		f.ran = append(f.ran, step)
@@ -544,7 +549,7 @@ func TestFreshRestore(t *testing.T) {
 	if f.backups.recordedInAdmits != 1 {
 		t.Errorf("restore recorded in %d backup admissions, want 1", f.backups.recordedInAdmits)
 	}
-	want := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "certificate"}
+	want := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "keycloak", "certificate"}
 	if !slices.Equal(f.ran, want) {
 		t.Errorf("steps %v, want %v", f.ran, want)
 	}
@@ -830,7 +835,7 @@ func TestRestoreRefusals(t *testing.T) {
 }
 
 func TestRestoreResumesAtEveryStep(t *testing.T) {
-	steps := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "certificate"}
+	steps := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "keycloak", "certificate"}
 	for i, crash := range steps {
 		t.Run(crash, func(t *testing.T) {
 			f := newRestoreFixture(t, false)
@@ -971,7 +976,7 @@ func TestRestoreFailureRestartsOperator(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.wg.Wait()
-	if !slices.Equal(f.ran, []string{"database", "start", "certificate"}) {
+	if !slices.Equal(f.ran, []string{"database", "start", "keycloak", "certificate"}) {
 		t.Errorf("resumed steps %v", f.ran)
 	}
 	if got := f.dumper.running; len(got) > 0 {

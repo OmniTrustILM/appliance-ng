@@ -6,7 +6,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Steps of a restore in RestoreStatus.Step, in their order. A restore in place skips platform and certificate.
+// Steps of a restore in RestoreStatus.Step, in their order. A restore in place skips platform, keycloak and
+// certificate.
 const (
 	RestoreStepSecrets     = "secrets"
 	RestoreStepAppliance   = "appliance"
@@ -15,6 +16,7 @@ const (
 	RestoreStepILMSecrets  = "ilmSecrets"
 	RestoreStepDatabase    = "database"
 	RestoreStepStart       = "start"
+	RestoreStepKeycloak    = "keycloak"
 	RestoreStepCertificate = "certificate"
 	RestoreStepDone        = "done"
 	// RestoreStepWaitingForKit is a restore the manager restarted during: the backup key it held in memory is gone,
@@ -42,11 +44,11 @@ type RestoreStatus struct {
 	// ILMHostName is the ILM host name the restore sets; empty keeps the backup's.
 	// +optional
 	ILMHostName string `json:"ilmHostName,omitempty"`
-	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;start;certificate;done;waitingForKit
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;start;keycloak;certificate;done;waitingForKit
 	Step string `json:"step"`
 	// PausedStep is the step a restore waiting for the kit resumes at.
 	// +optional
-	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;start;certificate
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;start;keycloak;certificate
 	PausedStep string `json:"pausedStep,omitempty"`
 	// Message is the fixed reason a restore failed at Step; set only on failure.
 	// +optional
