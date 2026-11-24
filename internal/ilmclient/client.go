@@ -116,7 +116,7 @@ type Client struct {
 
 // New returns a client of the ILM edge at edge that presents cert and trusts the edge's certificate for ilmHost
 // when roots verifies it. It never uses a proxy: the edge is the node itself.
-func New(edge string, ilmHost string, cert tls.Certificate, roots *x509.CertPool) *Client {
+func New(edge, ilmHost string, cert tls.Certificate, roots *x509.CertPool) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.TLSClientConfig = &tls.Config{

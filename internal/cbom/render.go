@@ -32,8 +32,9 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
-// The kind of the workloads and the label that names an application.
+// The API version and kind of the workloads and the label that names an application.
 const (
+	appsV1         = "apps/v1"
 	kindDeployment = "Deployment"
 	labelName      = "app.kubernetes.io/name"
 )
@@ -119,9 +120,9 @@ func Workloads() []*unstructured.Unstructured {
 		u.SetName(name)
 		out = append(out, u)
 	}
-	add("apps/v1", kindDeployment, StoreName)
+	add(appsV1, kindDeployment, StoreName)
 	add("v1", "Service", StoreName)
-	add("apps/v1", kindDeployment, repositoryDeploy)
+	add(appsV1, kindDeployment, repositoryDeploy)
 	add("v1", "Service", repositoryService)
 	add("v1", "Secret", trustedSecret)
 	return out
@@ -279,7 +280,7 @@ func StoreObjects(image string) ([]*unstructured.Unstructured, error) {
 	}
 	labels := storeLabels()
 	deployment := &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: kindDeployment},
+		TypeMeta:   metav1.TypeMeta{APIVersion: appsV1, Kind: kindDeployment},
 		ObjectMeta: metav1.ObjectMeta{Namespace: Namespace, Name: StoreName, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To[int32](1),

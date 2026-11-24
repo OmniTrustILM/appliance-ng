@@ -33,7 +33,7 @@ export function cbomAnswersOf({ enabled, storage, s3 }: CBOM): CBOMAnswers {
 /** The request body of the repository: the bucket only for an external store, and only the secrets entered. */
 export function cbomRequest(a: CBOMAnswers): CBOM {
   if (a.storage !== 's3') return { enabled: a.enabled, storage: a.storage };
-  const secret = (value: string) => (value ? value : undefined);
+  const secret = (value: string) => value || undefined;
   return {
     enabled: a.enabled,
     storage: 's3',
