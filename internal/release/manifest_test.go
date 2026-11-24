@@ -62,3 +62,13 @@ func TestLoadRejectsMissingFileAndUnknownField(t *testing.T) {
 		t.Fatal("want error for unknown field")
 	}
 }
+
+func TestChartByName(t *testing.T) {
+	m := &Manifest{Charts: []Chart{{Name: "a", File: "charts/a-1.tgz"}}}
+	if c, err := m.Chart("a"); err != nil || c.File != "charts/a-1.tgz" {
+		t.Errorf("Chart(a) = %+v, %v", c, err)
+	}
+	if _, err := m.Chart("b"); err == nil {
+		t.Error("Chart(b) found a chart the manifest does not pin")
+	}
+}

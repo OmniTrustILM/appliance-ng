@@ -22,7 +22,7 @@ const uploadSigned = (form: FormData) => api.PUT('/certificate/csr/signed', { bo
 
 /** Shows the certificate in use and replaces it: an uploaded certificate, a signed request or the built-in one. */
 export function CertificatePage() {
-  const { data: info, error: loadError, reload } = useLoaded(loadCertificate);
+  const { data: info, error: loadError, reload, settled } = useLoaded(loadCertificate);
   const [notice, setNotice] = useState<string>();
   const [csrError, setCsrError] = useState<string>();
   const [creating, setCreating] = useState(false);
@@ -65,7 +65,8 @@ export function CertificatePage() {
         {notice && <Alert tone="success">{notice}</Alert>}
         {loadError && <Alert tone="error">{loadError}</Alert>}
         {!info && !loadError && <Loading />}
-        {info && <CurrentCertificate info={info} />}
+        {/* Keyed by the read, so the expiry is judged at the time of the latest one. */}
+        {info && <CurrentCertificate key={settled} info={info} />}
         {info?.source === 'builtin' && (
           <p className="mt-4 text-sm">
             Browsers trust the built-in certificate once they trust its root certificate. <RootCaLink />

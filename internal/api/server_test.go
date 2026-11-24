@@ -106,7 +106,7 @@ var testRelease = &release.Manifest{
 		{Name: "ejbca-ng-connector", DisplayName: "EJBCA NG Connector"},
 		{Name: "external-authority-provider", DisplayName: "External Authority Provider", Private: true,
 			Image: testRegistryHost + "/ilm-private/external-authority-provider:1.0.0"},
-		{Name: testMailComponent, DisplayName: "Email Notification Provider", Settings: []string{release.SettingMail}},
+		{Name: testMailComponent, DisplayName: "Email Notification Provider", Interface: release.InterfaceV1, Port: 8080, Settings: []string{release.SettingMail}},
 	},
 }
 

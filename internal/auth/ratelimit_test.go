@@ -45,7 +45,7 @@ func TestSignInLimiter(t *testing.T) {
 		}
 	})
 
-	t.Run("failures from any source space the next attempts of a failing source", func(t *testing.T) {
+	t.Run("failures from any source space the next attempts", func(t *testing.T) {
 		l := SignInLimiter()
 		for i := range 5 {
 			l.Allow("admin", fmt.Sprint("10.0.1.", i), now)
@@ -56,9 +56,6 @@ func TestSignInLimiter(t *testing.T) {
 		}
 		if ok, _ := l.Allow("admin", "10.0.1.0", now.Add(userDelay)); !ok {
 			t.Fatal("refused after the delay")
-		}
-		if ok, _ := l.Allow("admin", "10.0.0.9", now.Add(userDelay)); !ok {
-			t.Fatal("an address without failures is delayed")
 		}
 	})
 
@@ -181,5 +178,59 @@ func TestSignInLimiterKeepsOnlyTheStartOfLongUserNames(t *testing.T) {
 	}
 	if ok, _ := l.Allow("admin", "10.0.0.9", now); !ok {
 		t.Error("a short user name is blocked by the long ones")
+	}
+}
+
+func TestLimiterIPv6Slash64(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	l := SignInLimiter()
+	for i := range 5 {
+		if ok, _ := l.Allow("admin", fmt.Sprintf("2001:db8:1:2::%x", i+1), now); !ok {
+			t.Fatalf("attempt %d refused", i+1)
+		}
+	}
+	if ok, _ := l.Allow("admin", "2001:db8:1:2:ffff:ffff:ffff:ffff", now.Add(time.Minute)); ok {
+		t.Error("another address of the same /64 escapes the block of the user and source")
+	}
+	if ok, retry := l.Allow("admin", "2001:db8:1:3::1", now.Add(time.Minute)); !ok {
+		t.Errorf("an address of another /64 is refused for %s", retry)
+	}
+	l.Succeed("admin", "2001:db8:1:2::abcd")
+	if ok, _ := l.Allow("admin", "2001:db8:1:2::1", now.Add(time.Minute)); !ok {
+		t.Error("a success from the same /64 does not clear the block")
+	}
+
+	l = SignInLimiter()
+	for i := range ipAttempts {
+		l.Allow(fmt.Sprint("user", i), fmt.Sprintf("2001:db8:5:6:%x::1", i), now)
+	}
+	if ok, _ := l.Allow("fresh", "2001:db8:5:6::9", now); ok {
+		t.Error("rotating within a /64 escapes the per-source limit")
+	}
+	if ok, _ := l.Allow("fresh", "::ffff:10.0.0.1", now); !ok {
+		t.Error("an IPv4-mapped address is counted with an IPv6 /64")
+	}
+}
+
+func TestPerUserDelaySurvivesRotation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	l := SignInLimiter()
+	for i := range userAttempts {
+		if ok, _ := l.Allow("admin", fmt.Sprint("10.0.2.", i), now); !ok {
+			t.Fatalf("attempt %d refused", i+1)
+		}
+	}
+	ok, retry := l.Allow("admin", "10.0.2.99", now.Add(time.Second))
+	if ok || retry != userDelay-time.Second {
+		t.Fatalf("a new address after %d failures: Allow = %v, %s; want false, %s", userAttempts, ok, retry, userDelay-time.Second)
+	}
+	if ok, _ := l.Allow("admin", "10.0.2.100", now.Add(userDelay)); !ok {
+		t.Fatal("refused after the delay")
+	}
+	if ok, _ := l.Allow("admin", "10.0.2.101", now.Add(userDelay+time.Second)); ok {
+		t.Error("a failure from a new address resets the delay")
+	}
+	if ok, _ := l.Allow("other", "10.0.2.102", now.Add(userDelay+time.Second)); !ok {
+		t.Error("the delay of one user holds back another")
 	}
 }

@@ -13,11 +13,12 @@ afterEach(() => {
 });
 
 describe('TotpPage', () => {
-  it('shows the QR code and the secret, and keeps neither', async () => {
+  it('shows the QR code and the secret under its name, and keeps neither', async () => {
     const log = vi.spyOn(console, 'log');
     stubApi({ 'POST /appliance/api/v1/setup/totp': [200, enrolment] });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
-    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Secret' })).toHaveValue('JBSWY3DPEHPK3PXP');
+    expect(screen.getByRole('textbox', { name: 'Secret' })).toHaveAttribute('readonly');
     expect(screen.getByRole('img', { name: /QR code/ })).toBeInTheDocument();
     expect(localStorage.length + sessionStorage.length).toBe(0);
     expect(location.href).not.toContain('JBSWY3DPEHPK3PXP');
@@ -31,7 +32,7 @@ describe('TotpPage', () => {
         <TotpPage onDone={vi.fn()} onExpired={vi.fn()} />
       </StrictMode>,
     );
-    expect(await screen.findByText('JBSWY3DPEHPK3PXP')).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: 'Secret' })).toHaveValue('JBSWY3DPEHPK3PXP');
     expect(sent['POST /appliance/api/v1/setup/totp']).toHaveLength(1);
   });
 
@@ -42,7 +43,7 @@ describe('TotpPage', () => {
     });
     const onDone = vi.fn();
     render(<TotpPage onDone={onDone} onExpired={vi.fn()} />);
-    await screen.findByText('JBSWY3DPEHPK3PXP');
+    await screen.findByDisplayValue('JBSWY3DPEHPK3PXP');
     await userEvent.type(screen.getByLabelText('Code from the authenticator'), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
@@ -55,7 +56,7 @@ describe('TotpPage', () => {
       'POST /appliance/api/v1/setup/totp/confirm': [400, { code: 'invalid_code', message: 'x', serverTime: '2026-11-18T10:00:00Z' }],
     });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
-    await screen.findByText('JBSWY3DPEHPK3PXP');
+    await screen.findByDisplayValue('JBSWY3DPEHPK3PXP');
     await userEvent.type(screen.getByLabelText('Code from the authenticator'), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(await screen.findByText(/Appliance time: .*2026/)).toBeInTheDocument();
@@ -65,7 +66,7 @@ describe('TotpPage', () => {
   it('rejects a code that is not six digits without a request', async () => {
     const { mock } = stubApi({ 'POST /appliance/api/v1/setup/totp': [200, enrolment] });
     render(<TotpPage onDone={vi.fn()} onExpired={vi.fn()} />);
-    await screen.findByText('JBSWY3DPEHPK3PXP');
+    await screen.findByDisplayValue('JBSWY3DPEHPK3PXP');
     await userEvent.type(screen.getByLabelText('Code from the authenticator'), '12');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(screen.getByLabelText('Code from the authenticator')).toHaveAccessibleDescription(/6 digits/);

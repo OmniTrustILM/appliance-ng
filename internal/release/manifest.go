@@ -21,8 +21,30 @@ type Manifest struct {
 	// with the appliance and has no fixed reference; the first-boot service replaces it with the built one.
 	ManagerImage string      `json:"managerImage,omitempty"`
 	Addons       []AddonFile `json:"addons"`
-	Images       []Image     `json:"images"`
-	Connectors   []Connector `json:"connectors,omitempty"`
+	// Charts are the Helm charts the manager renders itself, vendored next to the add-on files.
+	Charts     []Chart     `json:"charts,omitempty"`
+	Images     []Image     `json:"images"`
+	Connectors []Connector `json:"connectors,omitempty"`
+}
+
+// Chart is a Helm chart archive the manager renders as templates, never installed as a Helm release.
+type Chart struct {
+	Name    string `json:"name"`
+	File    string `json:"file"`
+	Version string `json:"version"`
+	// Source is where the archive was downloaded from.
+	Source string `json:"source"`
+	SHA256 string `json:"sha256"`
+}
+
+// Chart returns the chart the manifest pins under name.
+func (m *Manifest) Chart(name string) (Chart, error) {
+	for _, c := range m.Charts {
+		if c.Name == name {
+			return c, nil
+		}
+	}
+	return Chart{}, fmt.Errorf("the release pins no chart %s", name)
 }
 
 // TalosPin pins the Talos release the appliance is built on.
@@ -57,6 +79,12 @@ const (
 	SettingMail  = "mail"
 )
 
+// Interface versions of Connector.Interface.
+const (
+	InterfaceV1 = "v1"
+	InterfaceV2 = "v2"
+)
+
 // Connector is an ILM connector the appliance can install.
 type Connector struct {
 	Name        string `json:"name"`
@@ -65,6 +93,9 @@ type Connector struct {
 	Image  string `json:"image"`
 	Digest string `json:"digest"`
 	Port   int32  `json:"port"`
+	// Interface is the connector interface version, InterfaceV1 or InterfaceV2; empty means InterfaceV2. The operator
+	// registers a connector with ILM as v2 only, so a v1 connector is installed unregistered.
+	Interface string `json:"interface,omitempty"`
 	// Private images need registry credentials and are not cached.
 	Private bool `json:"private,omitempty"`
 	// HealthPath is the liveness path; a path ending in /liveness has a /readiness sibling.
@@ -78,6 +109,9 @@ type Connector struct {
 	// Keys names the variables that hold a random key generated on the device.
 	Keys []string `json:"keys,omitempty"`
 }
+
+// V1Only reports whether the connector speaks interface v1 only.
+func (c Connector) V1Only() bool { return c.Interface == InterfaceV1 }
 
 // AddonFile is a manifest file applied to the cluster at install time.
 type AddonFile struct {

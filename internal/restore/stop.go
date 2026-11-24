@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
@@ -44,14 +45,28 @@ var (
 	certificateGVK = schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "Certificate"}
 )
 
-// waitForPlatform waits until the operator has made the Platform from the restored spec: the database is ready, the
-// Platform is available at its current generation, and the managed Keycloak, its administrator Secret and the
-// administrator Certificates exist. The Secrets restored later are then written into the objects the operators own.
+// waitForPlatform waits until the operator has made the Platform from the restored spec: the managed database is
+// ready, the Platform is available at its current generation, and the managed Keycloak, its administrator Secret and
+// the administrator Certificates exist. An external database or identity provider has nothing of these to wait for.
+// The Secrets restored later are then written into the objects the operators own.
 func (e *Engine) waitForPlatform(ctx context.Context, _ *job) error {
+	a, err := e.appliance(ctx)
+	if err != nil {
+		return err
+	}
+	p := a.Spec.Platform
+	if p == nil {
+		p = &v1alpha1.PlatformSpec{}
+	}
+	checks := []func(context.Context) (bool, error){e.platformAvailable, e.certificatesExist}
+	if p.Database == nil {
+		checks = append(checks, e.databaseReady)
+	}
+	if p.Identity == nil {
+		checks = append(checks, e.keycloakExists)
+	}
 	return e.waitFor(ctx, "the Platform", func(ctx context.Context) (bool, error) {
-		for _, ready := range []func(context.Context) (bool, error){
-			e.databaseReady, e.platformAvailable, e.operatorObjectsExist,
-		} {
+		for _, ready := range checks {
 			if ok, err := ready(ctx); err != nil || !ok {
 				return false, err
 			}
@@ -68,15 +83,17 @@ func (e *Engine) databaseReady(ctx context.Context) (bool, error) {
 	return conditionTrue(u, "Ready"), nil
 }
 
-// operatorObjectsExist reports whether the managed Keycloak, its administrator Secret and the administrator
-// Certificates exist.
-func (e *Engine) operatorObjectsExist(ctx context.Context) (bool, error) {
+// keycloakExists reports whether the managed Keycloak and its administrator Secret exist.
+func (e *Engine) keycloakExists(ctx context.Context) (bool, error) {
 	if s, err := e.liveSecret(ctx, platform.Namespace, platform.KeycloakAdminSecret); s == nil || err != nil {
 		return false, err
 	}
-	if u, err := e.object(ctx, keycloakGVK, keycloakName); u == nil || err != nil {
-		return false, err
-	}
+	u, err := e.object(ctx, keycloakGVK, keycloakName)
+	return u != nil, err
+}
+
+// certificatesExist reports whether the administrator Certificates exist.
+func (e *Engine) certificatesExist(ctx context.Context) (bool, error) {
 	for _, name := range adminCertificates {
 		if u, err := e.object(ctx, certificateGVK, name); u == nil || err != nil {
 			return false, err
@@ -203,11 +220,16 @@ func (e *Engine) ilmRunning(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// platformAvailable reports whether the operator reports the Platform available at its current generation.
+// platformAvailable reports whether the operator reports the Platform available at its current generation. Until
+// the add-ons have installed the operator, its kind does not exist.
 func (e *Engine) platformAvailable(ctx context.Context) (bool, error) {
 	p := &otilm.Platform{}
-	if err := e.deps.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, p); err != nil {
-		return false, client.IgnoreNotFound(err)
+	err := e.deps.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, p)
+	if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
 	}
 	c := meta.FindStatusCondition(p.Status.Conditions, "Available")
 	return p.Status.ObservedGeneration == p.Generation && c != nil && c.Status == metav1.ConditionTrue, nil

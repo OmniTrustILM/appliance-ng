@@ -60,6 +60,8 @@ func (s *Server) PutMail(ctx context.Context, req PutMailRequestObject) (PutMail
 	if ferr != nil {
 		return PutMail400JSONResponse{BadRequestJSONResponse: badRequestField(strings.TrimPrefix(ferr.field, "mail."), ferr.message)}, nil
 	}
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
 	a, err := s.appliance(ctx)
 	if apierrors.IsNotFound(err) {
 		return PutMail409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
@@ -86,6 +88,8 @@ func (s *Server) PutMail(ctx context.Context, req PutMailRequestObject) (PutMail
 
 // DeleteMail removes the mail server and its credentials unless a chosen component sends mail.
 func (s *Server) DeleteMail(ctx context.Context, _ DeleteMailRequestObject) (DeleteMailResponseObject, error) {
+	s.credentialsMu.Lock()
+	defer s.credentialsMu.Unlock()
 	// The Appliance stops referencing the credentials before they go.
 	paths, err := s.setMail(ctx, nil, false)
 	var inUse *mailInUseError

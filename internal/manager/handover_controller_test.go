@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -133,9 +134,10 @@ func (f *fakeTalos) RemoveExtensionConfig(_ context.Context, name, file string) 
 
 func newHandoverReconciler(c client.Client, node *fakeTalos) *HandoverReconciler {
 	return &HandoverReconciler{
-		Client: c,
-		Users:  auth.NewSecretUserStore(c, SystemNamespace),
-		Talos:  func(context.Context) (talos.Node, error) { return node, nil },
+		Client:   c,
+		Users:    auth.NewSecretUserStore(c, SystemNamespace),
+		Talos:    func(context.Context) (talos.Node, error) { return node, nil },
+		Recorder: events.NewFakeRecorder(10),
 	}
 }
 
@@ -539,7 +541,7 @@ func TestImportReportsAFailedStep(t *testing.T) {
 	}
 }
 
-func TestImportIgnoresAnInvalidSecret(t *testing.T) {
+func TestUnparseableHandoverDeleted(t *testing.T) {
 	without := func(drop func(*wizard.HandoverFile)) []byte {
 		f := handoverAnswers()
 		drop(&f)
@@ -549,35 +551,109 @@ func TestImportIgnoresAnInvalidSecret(t *testing.T) {
 		}
 		return data
 	}
-	for name, data := range map[string][]byte{
-		"not JSON":         []byte("{" + seedMarker),
-		"wrong version":    []byte(`{"version":99}`),
-		"no password hash": without(func(f *wizard.HandoverFile) { f.Admin.PasswordHash = "" }),
-		"no TOTP seed":     without(func(f *wizard.HandoverFile) { f.Admin.TOTPSeed = "" }),
-		"unknown mode":     without(func(f *wizard.HandoverFile) { f.Mode = "upgrade" }),
+	for name, tc := range map[string]struct {
+		data   []byte
+		reason string
+	}{
+		"not JSON":         {[]byte("{" + seedMarker), "it is not JSON"},
+		"wrong version":    {[]byte(`{"version":99}`), "its version is not supported"},
+		"no password hash": {without(func(f *wizard.HandoverFile) { f.Admin.PasswordHash = "" }), "answers are missing"},
+		"no TOTP seed":     {without(func(f *wizard.HandoverFile) { f.Admin.TOTPSeed = "" }), "answers are missing"},
+		"unknown mode":     {without(func(f *wizard.HandoverFile) { f.Mode = "upgrade" }), "its mode is not known"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cleanupHandover(t)
-			createHandoverSecret(t, data)
+			createHandoverSecret(t, tc.data)
 			node := &fakeTalos{mounted: true}
 			var logs bytes.Buffer
 			ctx := log.IntoContext(context.Background(), funcr.New(func(prefix, args string) {
 				logs.WriteString(prefix + args + "\n")
 			}, funcr.Options{}))
+			r := newHandoverReconciler(testClient, node)
 
-			if _, err := reconcileHandover(ctx, newHandoverReconciler(testClient, node)); err != nil {
-				t.Errorf("reconcile: %v, want the Secret ignored until it changes", err)
+			if _, err := reconcileHandover(ctx, r); err != nil {
+				t.Errorf("reconcile: %v, want the Secret deleted", err)
+			}
+			if handoverSecretExists(t) {
+				t.Error("the invalid hand-over Secret was kept")
 			}
 			if err := testClient.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, &v1alpha1.Appliance{}); !apierrors.IsNotFound(err) {
 				t.Errorf("Appliance read %v, want none created", err)
 			}
-			if !node.mounted || !handoverSecretExists(t) {
-				t.Error("the hand-over was cleaned up from an invalid Secret")
+			if !node.mounted {
+				t.Error("the hand-over file was removed for an invalid Secret")
 			}
-			if strings.Contains(logs.String(), seedMarker) {
-				t.Errorf("log quotes the Secret:\n%s", logs.String())
+			select {
+			case e := <-r.Recorder.(*events.FakeRecorder).Events:
+				if !strings.HasPrefix(e, "Warning InvalidHandover ") || !strings.HasSuffix(e, ": "+tc.reason) ||
+					strings.Contains(e, seedMarker) || strings.Contains(e, hashMarker) {
+					t.Errorf("event %q, want a warning ending in %q that quotes nothing of the Secret", e, tc.reason)
+				}
+			default:
+				t.Error("no event records the deleted Secret")
+			}
+			for _, marker := range []string{seedMarker, hashMarker} {
+				if strings.Contains(logs.String(), marker) {
+					t.Errorf("log quotes the Secret:\n%s", logs.String())
+				}
 			}
 		})
+	}
+}
+
+func TestUnparseableHandoverGoneClaimsNoDeletion(t *testing.T) {
+	cleanupHandover(t)
+	createHandoverSecret(t, []byte("{"))
+	r := newHandoverReconciler(testClient, &fakeTalos{mounted: true})
+	r.Client = interceptor.NewClient(watchClient(t), interceptor.Funcs{
+		Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+			return apierrors.NewNotFound(corev1.Resource("secrets"), wizard.HandoverSecretName)
+		},
+	})
+	var logs bytes.Buffer
+	ctx := log.IntoContext(context.Background(), funcr.New(func(prefix, args string) {
+		logs.WriteString(prefix + args + "\n")
+	}, funcr.Options{}))
+	if _, err := reconcileHandover(ctx, r); err != nil {
+		t.Fatalf("reconcile: %v, want a Secret deleted meanwhile ignored", err)
+	}
+	select {
+	case e := <-r.Recorder.(*events.FakeRecorder).Events:
+		t.Errorf("event %q for a Secret this reconcile did not delete", e)
+	default:
+	}
+	if strings.Contains(logs.String(), "deleted") {
+		t.Errorf("log claims a deletion:\n%s", logs.String())
+	}
+}
+
+func TestUnparseableHandoverCorrectedMeanwhileKept(t *testing.T) {
+	cleanupHandover(t)
+	createHandoverSecret(t, []byte("{"))
+	r := newHandoverReconciler(testClient, &fakeTalos{mounted: true})
+	r.Client = interceptor.NewClient(watchClient(t), interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			corrected := &corev1.Secret{}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(obj), corrected); err != nil {
+				return err
+			}
+			corrected.Data = map[string][]byte{wizard.HandoverSecretKey: handoverJSON(t)}
+			if err := c.Update(ctx, corrected); err != nil {
+				return err
+			}
+			return c.Delete(ctx, obj, opts...)
+		},
+	})
+	if _, err := reconcileHandover(context.Background(), r); !apierrors.IsConflict(errors.Unwrap(err)) {
+		t.Fatalf("reconcile: %v, want a conflict", err)
+	}
+	if !handoverSecretExists(t) {
+		t.Error("the hand-over Secret corrected meanwhile was deleted")
+	}
+	select {
+	case e := <-r.Recorder.(*events.FakeRecorder).Events:
+		t.Errorf("event %q for a Secret this reconcile did not delete", e)
+	default:
 	}
 }
 

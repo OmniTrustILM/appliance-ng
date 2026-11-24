@@ -30,6 +30,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
+	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
@@ -64,10 +65,11 @@ var (
 
 // The archive members besides the manifest.
 const (
-	memberAppliance = "appliance.yaml"
-	memberDatabase  = "database.sql"
-	secretsDir      = "secrets/"
-	databaseManaged = "managed"
+	memberAppliance  = "appliance.yaml"
+	memberDatabase   = "database.sql"
+	secretsDir       = "secrets/"
+	databaseManaged  = "managed"
+	databaseExternal = "external"
 )
 
 // Reasons and messages of the BackupHealthy condition; a message names fixed reasons only.
@@ -127,7 +129,9 @@ type RunnerDeps struct {
 	// Reader reads past the cache: the Appliance, the Platform and the Secrets; the dumper must read past it too.
 	Reader client.Reader
 	Dumper Dumper
-	Audit  AuditWriter
+	// External makes the dumper of the external database the Appliance chooses instead of the managed one.
+	External func(v1alpha1.ExternalDatabase) Dumper
+	Audit    AuditWriter
 	// Dir keeps the local backups.
 	Dir string
 	// Version is the appliance version, written into the file name and the manifest.
@@ -137,7 +141,9 @@ type RunnerDeps struct {
 	// Targets serves the NFS targets: client, configuration, busybox image and namespace. The proxy and the trust
 	// bundle are read from the Appliance at each run.
 	Targets target.Deps
-	Log     *slog.Logger
+	// CBOMStore is the host:port of the CBOM repository's store on the appliance; empty is its Service's cluster IP.
+	CBOMStore string
+	Log       *slog.Logger
 }
 
 type localFile interface {
@@ -256,8 +262,8 @@ func (r *Runner) Busy() bool {
 	return r.running
 }
 
-// Exclusive runs admit, a restore's admission, while no backup runs or passes its checks, and refuses with ErrBusy
-// while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
+// Exclusive runs admit, a restore's admission or a renewal of the manager's ILM certificate, while no backup runs or
+// passes its checks, and refuses with ErrBusy while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
 func (r *Runner) Exclusive(admit func() error) error {
 	r.admission.Lock()
 	defer r.admission.Unlock()
@@ -579,6 +585,36 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// addSecrets adds the Secrets a backup of a holds to aw.
+func (r *Runner) addSecrets(ctx context.Context, aw *Writer, a *v1alpha1.Appliance) error {
+	secrets, err := CollectSecrets(ctx, r.deps.Reader, a, r.deps.KeyedConnectors)
+	if err != nil {
+		return err
+	}
+	for i := range secrets {
+		data, err := yaml.Marshal(&secrets[i])
+		if err != nil {
+			return err
+		}
+		name := secretsDir + secrets[i].Namespace + "/" + secrets[i].Name + ".yaml"
+		if err := aw.Add(name, int64(len(data)), strings.NewReader(string(data))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dumperOf returns the dumper of a's database and the database's kind for the manifest.
+func (r *Runner) dumperOf(a *v1alpha1.Appliance) (Dumper, string, error) {
+	if a.Spec.Platform == nil || a.Spec.Platform.Database == nil {
+		return r.deps.Dumper, databaseManaged, nil
+	}
+	if r.deps.External == nil {
+		return nil, "", errors.New("no dumper for an external database")
+	}
+	return r.deps.External(*a.Spec.Platform.Database), databaseExternal, nil
+}
+
 // writeArchive writes the Appliance, its Secrets and the database dump to w; it fills rec's database state.
 func (r *Runner) writeArchive(ctx context.Context, w io.Writer, a *v1alpha1.Appliance, recipient age.Recipient, rec *v1alpha1.BackupRecord) (string, error) {
 	aw, err := NewWriter(w, recipient)
@@ -595,21 +631,14 @@ func (r *Runner) writeArchive(ctx context.Context, w io.Writer, a *v1alpha1.Appl
 	if err := aw.Add(memberAppliance, int64(len(spec)), strings.NewReader(string(spec))); err != nil {
 		return memberAppliance, err
 	}
-	secrets, err := CollectSecrets(ctx, r.deps.Reader, a, r.deps.KeyedConnectors)
-	if err != nil {
+	if err := r.addSecrets(ctx, aw, a); err != nil {
 		return "secrets", err
 	}
-	for i := range secrets {
-		data, err := yaml.Marshal(&secrets[i])
-		if err != nil {
-			return "secrets", err
-		}
-		name := secretsDir + secrets[i].Namespace + "/" + secrets[i].Name + ".yaml"
-		if err := aw.Add(name, int64(len(data)), strings.NewReader(string(data))); err != nil {
-			return "secrets", err
-		}
+	dumper, database, err := r.dumperOf(a)
+	if err != nil {
+		return "database", err
 	}
-	included, err := r.addDatabase(ctx, aw)
+	included, err := r.addDatabase(ctx, aw, dumper)
 	if err != nil {
 		return "database", err
 	}
@@ -617,12 +646,15 @@ func (r *Runner) writeArchive(ctx context.Context, w io.Writer, a *v1alpha1.Appl
 	if included {
 		rec.Database = v1alpha1.BackupDatabaseIncluded
 	}
+	if err := r.addCBOM(ctx, aw, a.Spec.Platform); err != nil {
+		return "cbom", err
+	}
 	m := Manifest{
 		Appliance:        r.deps.Version,
 		ILM:              a.Status.Versions.ILM,
 		Operator:         a.Status.Versions.Operator,
 		Components:       []string{},
-		Database:         databaseManaged,
+		Database:         database,
 		DatabaseIncluded: included,
 		HostName:         a.Spec.Node.HostName,
 		Time:             rec.Time.UTC(),
@@ -639,14 +671,14 @@ func (r *Runner) writeArchive(ctx context.Context, w io.Writer, a *v1alpha1.Appl
 
 // addDatabase streams the dump into the archive. A database that does not answer before the dump starts is left
 // out; any other failure fails the backup.
-func (r *Runner) addDatabase(ctx context.Context, aw *Writer) (bool, error) {
+func (r *Runner) addDatabase(ctx context.Context, aw *Writer, dumper Dumper) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		pw.CloseWithError(r.deps.Dumper.Dump(ctx, pw))
+		pw.CloseWithError(dumper.Dump(ctx, pw))
 	}()
 	defer func() {
 		_ = pr.CloseWithError(context.Canceled)
@@ -659,6 +691,25 @@ func (r *Runner) addDatabase(ctx context.Context, aw *Writer) (bool, error) {
 		return false, nil
 	}
 	return true, aw.Add(memberDatabase, -1, stream)
+}
+
+// addCBOM adds the objects of the CBOM repository's store on the appliance while the store runs, also while the
+// repository is turned off.
+func (r *Runner) addCBOM(ctx context.Context, aw *Writer, p *v1alpha1.PlatformSpec) error {
+	runs, err := cbom.StoreRuns(ctx, r.deps.Reader, p)
+	if err != nil || !runs {
+		return err
+	}
+	store, err := cbom.OpenStore(ctx, r.deps.Reader, r.deps.CBOMStore)
+	if err != nil {
+		return err
+	}
+	n, err := store.Backup(ctx, aw.Add)
+	if err != nil {
+		return err
+	}
+	r.deps.Log.Info("the CBOM objects are in the backup", "objects", n)
+	return nil
 }
 
 // copyToTargets copies the backup to each named target of the Appliance and prunes the target. Names the Appliance

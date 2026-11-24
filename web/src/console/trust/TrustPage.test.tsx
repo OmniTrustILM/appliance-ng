@@ -170,6 +170,55 @@ describe('TrustPage', () => {
     expect(await screen.findByText(/cannot be reached.*Nothing was added/i)).toBeInTheDocument();
   });
 
+  it('does not claim an add that was not confirmed failed', async () => {
+    const { mock } = stubApi({
+      'GET /appliance/api/v1/trust': [200, { items: [] }],
+      'POST /appliance/api/v1/trust/preview': [200, { items: [ca('Team CA', 'b', { new: true })] }],
+      'POST /appliance/api/v1/trust': [500, { code: 'internal', message: 'Internal error.' }],
+    });
+    renderPage();
+    await screen.findByText(/no additional/i);
+    await userEvent.type(screen.getByLabelText('Or paste the certificates'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add the new certificates' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/not known whether the certificates were added/);
+    expect(alert).not.toHaveTextContent('Nothing was added');
+    mock.mockRejectedValue(new TypeError('down'));
+    await userEvent.click(screen.getByRole('button', { name: 'Add the new certificates' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/cannot be reached.*not known whether the certificates were added/));
+  });
+
+  it('keeps the latest chosen file when an earlier one is read later', async () => {
+    stubApi({ 'GET /appliance/api/v1/trust': [200, { items: [] }] });
+    renderPage();
+    await screen.findByText(/no additional/i);
+    let finish: (text: string) => void = () => undefined;
+    const slow = new File(['slow'], 'slow.pem');
+    Object.defineProperty(slow, 'text', { value: () => new Promise<string>((resolve) => { finish = resolve; }) });
+    await userEvent.upload(screen.getByLabelText(/^Certificate file/), slow);
+    await userEvent.upload(screen.getByLabelText(/^Certificate file/), new File(['fast'], 'fast.pem'));
+    await screen.findByDisplayValue('fast');
+    finish('slow');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByLabelText('Or paste the certificates')).toHaveValue('fast');
+    expect(screen.getByText('fast.pem')).toBeInTheDocument();
+  });
+
+  it('keeps text typed while a chosen file is read', async () => {
+    stubApi({ 'GET /appliance/api/v1/trust': [200, { items: [] }] });
+    renderPage();
+    await screen.findByText(/no additional/i);
+    let finish: (text: string) => void = () => undefined;
+    const slow = new File(['slow'], 'slow.pem');
+    Object.defineProperty(slow, 'text', { value: () => new Promise<string>((resolve) => { finish = resolve; }) });
+    await userEvent.upload(screen.getByLabelText(/^Certificate file/), slow);
+    await userEvent.type(screen.getByLabelText('Or paste the certificates'), 'typed');
+    finish('slow');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByLabelText('Or paste the certificates')).toHaveValue('typed');
+  });
+
   it('fills the bundle from a chosen or dropped file', async () => {
     stubApi({ 'GET /appliance/api/v1/trust': [200, { items: [] }] });
     renderPage();

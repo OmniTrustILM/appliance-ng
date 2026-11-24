@@ -275,17 +275,21 @@ describe('DashboardPage', () => {
       { type: 'ConnectorsReady', status: 'False', reason: 'Progressing', message: 'waiting for these connectors: ejbca-ng-connector' },
       { type: 'PlatformReady', status: 'True', reason: 'Ready' },
       { type: 'CertificateReady', status: 'True', reason: 'Ready' },
+      { type: 'ILMSettingsApplied', status: 'True', reason: 'Applied' },
+      { type: 'CBOMRepositoryApplied', status: 'True', reason: 'Applied' },
     ];
     stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, conditions }] });
     renderPage();
     const platform = (await screen.findByRole('heading', { name: 'Platform', level: 3 })).parentElement as HTMLElement;
     expect(within(platform).getByText('ConnectorsReady')).toBeInTheDocument();
     expect(within(platform).getByText('PlatformReady')).toBeInTheDocument();
+    expect(within(platform).getByText('ILMSettingsApplied')).toBeInTheDocument();
+    expect(within(platform).getByText('CBOMRepositoryApplied')).toBeInTheDocument();
     expect(within(platform).queryByText('NodeConfigured')).not.toBeInTheDocument();
     const node = screen.getByRole('heading', { name: 'Node', level: 3 }).parentElement as HTMLElement;
     expect(within(node).getByText('NodeConfigured')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Certificate', level: 3 })).toBeInTheDocument();
-    expect(screen.getByText('3 of 4 ready')).toBeInTheDocument();
+    expect(screen.getByText('5 of 6 ready')).toBeInTheDocument();
   });
 
   describe('backups', () => {

@@ -40,6 +40,7 @@ function open(routes: Parameters<typeof stubApi>[0]) {
 }
 
 const next = () => userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+const managed = { database: { mode: 'managed' }, messaging: { mode: 'managed' }, identity: { mode: 'managed' } };
 
 describe('WizardFlow', () => {
   it('walks through the steps and submits the platform without mail', async () => {
@@ -60,6 +61,9 @@ describe('WizardFlow', () => {
     expect(screen.getByText(/needs registry credentials, available later/)).toBeInTheDocument();
     await next();
 
+    expect(screen.getByRole('heading', { name: 'Dependencies' })).toBeInTheDocument();
+    await next();
+
     expect(screen.getByRole('heading', { name: 'Mail' })).toBeInTheDocument();
     await next();
 
@@ -70,12 +74,13 @@ describe('WizardFlow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
 
     expect(await screen.findByRole('heading', { name: 'Installing the platform' })).toBeInTheDocument();
-    expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{ hostName: 'ilm.example.test', components: ['ilm-core'] }]);
+    expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{ hostName: 'ilm.example.test', components: ['ilm-core'], dependencies: managed, utils: false }]);
   });
 
   it('sends the mail settings and keeps the password out of the summary', async () => {
     const { sent } = open({ 'PUT /appliance/api/v1/wizard/platform': [202] });
     await screen.findByLabelText('ILM host name');
+    await next();
     await next();
     await next();
     await next();
@@ -94,6 +99,8 @@ describe('WizardFlow', () => {
     expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{
       hostName: 'node1.example.test',
       components: [],
+      dependencies: managed,
+      utils: false,
       mail: { host: 'smtp.example.test', port: 587, security: 'starttls', from: 'ilm@example.test', username: 'mailer', password: 'mail secret' },
     }]);
   });
@@ -105,6 +112,7 @@ describe('WizardFlow', () => {
         mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer', passwordSet: true },
         platform: { hostName: 'ilm.example.test', components: ['scanner'] },
       }],
+      'GET /appliance/api/v1/platform': [200, { dependencies: managed, utils: false }],
       'PUT /appliance/api/v1/wizard/platform': [202],
     });
     expect(await screen.findByRole('heading', { name: 'Installing the platform' })).toBeInTheDocument();
@@ -113,6 +121,7 @@ describe('WizardFlow', () => {
     await next();
     await next();
     expect(screen.getByLabelText('Scanner')).toBeChecked();
+    await next();
     await next();
     expect(screen.getByLabelText('Mail server')).toHaveValue('smtp.example.test');
     expect(screen.getByLabelText('Password (optional)')).toHaveValue('');
@@ -123,6 +132,8 @@ describe('WizardFlow', () => {
     expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{
       hostName: 'ilm.example.test',
       components: ['scanner'],
+      dependencies: managed,
+      utils: false,
       mail: { host: 'smtp.example.test', port: 25, security: 'starttls', from: 'a@b.test', username: 'mailer' },
     }]);
   });
@@ -135,6 +146,7 @@ describe('WizardFlow', () => {
       }],
     });
     await screen.findByLabelText('ILM host name');
+    await next();
     await next();
     await next();
     await next();
@@ -161,11 +173,12 @@ describe('WizardFlow', () => {
         mail: { host: 'smtp.example.test', port: 25, security: 'none', from: 'a@b.test', passwordSet: false },
         platform: { hostName: 'ilm.example.test', components: ['scanner'] },
       }],
+      'GET /appliance/api/v1/platform': [200, { dependencies: managed, utils: false }],
       'PUT /appliance/api/v1/wizard/platform': [400, { code: 'invalid', field, message }],
     });
     await screen.findByRole('heading', { name: 'Installing the platform' });
     await userEvent.click(screen.getByRole('button', { name: 'Change the answers' }));
-    for (let i = 0; i < 4; i++) await next();
+    for (let i = 0; i < 5; i++) await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
     expect(await screen.findByLabelText(label)).toBeInTheDocument();
     expect(screen.getByText(message)).toBeInTheDocument();
@@ -179,7 +192,7 @@ describe('WizardFlow', () => {
   it('leaves for the status page when the submit finds the setup complete', async () => {
     open({ 'PUT /appliance/api/v1/wizard/platform': [409, { code: 'setup_complete', message: 'x' }] });
     await screen.findByLabelText('ILM host name');
-    for (let i = 0; i < 4; i++) await next();
+    for (let i = 0; i < 5; i++) await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
     expect(await screen.findByText('status page')).toBeInTheDocument();
   });
@@ -187,7 +200,7 @@ describe('WizardFlow', () => {
   it('shows a general message for other answers and when the appliance cannot be reached', async () => {
     open({ 'PUT /appliance/api/v1/wizard/platform': [409, { code: 'not_set_up', message: 'x' }] });
     await screen.findByLabelText('ILM host name');
-    for (let i = 0; i < 4; i++) await next();
+    for (let i = 0; i < 5; i++) await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('not at this step');
     // The previous steps can be revisited.
@@ -201,9 +214,19 @@ describe('WizardFlow', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
   });
 
+  it('reports a failed load when the chosen dependencies cannot be read, instead of sending managed ones', async () => {
+    open({
+      'GET /appliance/api/v1/appliance': [200, { ...appliance, platform: { hostName: 'ilm.example.test', components: [] } }],
+      'GET /appliance/api/v1/platform': [500, { code: 'internal', message: 'x' }],
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('cannot be reached');
+    expect(screen.queryByRole('button', { name: 'Change the answers' })).not.toBeInTheDocument();
+  });
+
   it('checks the mail fields before it goes on', async () => {
     open({});
     await screen.findByLabelText('ILM host name');
+    await next();
     await next();
     await next();
     await next();
@@ -229,5 +252,78 @@ describe('WizardFlow', () => {
     await userEvent.clear(await screen.findByLabelText('ILM host name'));
     await next();
     expect(screen.getByLabelText('ILM host name')).toHaveAccessibleDescription(/required/i);
+  });
+
+  it('chooses external dependencies and utils, tests one and sends them', async () => {
+    const { sent } = open({
+      'PUT /appliance/api/v1/wizard/platform': [202],
+      'POST /appliance/api/v1/platform/dependencies/test': [200, { ok: false, reason: 'unreachable' }],
+    });
+    await screen.findByLabelText('ILM host name');
+    await next();
+    await next();
+    await next();
+    expect(screen.getByLabelText(/Managed PostgreSQL/)).toBeChecked();
+    await userEvent.click(screen.getByLabelText(/External PostgreSQL/));
+    await userEvent.type(screen.getByLabelText('Database host'), 'db.example.test');
+    await userEvent.type(screen.getByLabelText('Database name'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Database user name'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Database password'), 'db secret');
+    await userEvent.selectOptions(screen.getByLabelText('Database TLS'), 'verify-full');
+    await userEvent.type(screen.getByLabelText('Database CA certificate'), 'DB CA');
+    await userEvent.click(screen.getByRole('button', { name: 'Test the database connection' }));
+    expect(await screen.findByText(/cannot be reached from the appliance/)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/External RabbitMQ/));
+    await userEvent.type(screen.getByLabelText('Broker host'), 'mq.example.test');
+    await userEvent.type(screen.getByLabelText('Virtual host'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Broker user name'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Broker password'), 'mq secret');
+    await userEvent.click(screen.getByLabelText(/External OIDC provider/));
+    await userEvent.type(screen.getByLabelText('Issuer URL'), 'https://idp.example.test/realms/ilm');
+    await userEvent.type(screen.getByLabelText('Client ID'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Scopes'), 'openid profile');
+    await userEvent.type(screen.getByLabelText('Accepted audiences'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Client secret'), 'idp secret');
+    await userEvent.click(screen.getByLabelText(/Utils service/));
+    await next();
+    await next();
+    expect(screen.getByText(/database db\.example\.test:5432\/ilm, broker mq\.example\.test:5672, identity provider https/)).toBeInTheDocument();
+    expect(screen.getByText('Installed')).toBeInTheDocument();
+    expect(screen.queryByText(/secret/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Install' }));
+    await screen.findByRole('heading', { name: 'Installing the platform' });
+    expect(sent['PUT /appliance/api/v1/wizard/platform']).toEqual([{
+      hostName: 'node1.example.test', components: [], utils: true,
+      dependencies: {
+        database: { mode: 'external', host: 'db.example.test', port: 5432, name: 'ilm', username: 'ilm', password: 'db secret', tlsMode: 'verify-full', ca: 'DB CA' },
+        messaging: { mode: 'external', host: 'mq.example.test', port: 5672, virtualHost: 'ilm', username: 'ilm', password: 'mq secret' },
+        identity: { mode: 'external', issuer: 'https://idp.example.test/realms/ilm', clientId: 'ilm', scopes: ['openid', 'profile'], audiences: ['ilm'], clientSecret: 'idp secret' },
+      },
+    }]);
+    await userEvent.click(screen.getByRole('button', { name: 'Change the answers' }));
+    for (let i = 0; i < 3; i++) await next();
+    expect(screen.getByLabelText('Database password')).toHaveValue('');
+    expect(screen.getAllByText(/One is set/)).toHaveLength(3);
+    expect(screen.getByLabelText('Database CA certificate')).toHaveValue('');
+    expect(screen.getByText('A CA is set. Leave it blank to keep it.')).toBeInTheDocument();
+  });
+
+  it('prefills the chosen dependencies and sends the admin back to a refused one', async () => {
+    open({
+      'GET /appliance/api/v1/appliance': [200, { ...appliance, platform: { hostName: 'ilm.example.test', components: [] } }],
+      'GET /appliance/api/v1/platform': [200, {
+        ilmVersion: '2.20.0', hostName: 'ilm.example.test', components: [], utils: true, setupComplete: false,
+        dependencies: { ...managed, database: { mode: 'external', host: 'db.example.test', port: 5433, name: 'ilm', username: 'ilm', passwordSet: true } },
+      }],
+      'PUT /appliance/api/v1/wizard/platform': [400, { code: 'invalid', field: 'dependencies.database.host', message: 'Host refused.' }],
+    });
+    await screen.findByRole('heading', { name: 'Installing the platform' });
+    await userEvent.click(screen.getByRole('button', { name: 'Change the answers' }));
+    for (let i = 0; i < 5; i++) await next();
+    await userEvent.click(screen.getByRole('button', { name: 'Install' }));
+    expect(await screen.findByLabelText('Database host')).toHaveValue('db.example.test');
+    expect(screen.getByLabelText('Database port')).toHaveValue('5433');
+    expect(screen.getByText('Host refused.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Utils service/)).toBeChecked();
   });
 });

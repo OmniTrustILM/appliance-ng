@@ -129,7 +129,40 @@ describe('CertificatePage', () => {
     await userEvent.upload(screen.getByLabelText(/^Certificate/), pem('CERTIFICATE'));
     await userEvent.upload(screen.getByLabelText(/^Private key/), pem('KEY'));
     await userEvent.click(screen.getByRole('button', { name: 'Upload the certificate' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be reached.*stays in use/i);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/cannot be reached.*not known whether the certificate was stored/i);
+    expect(alert).not.toHaveTextContent('stays in use');
+  });
+
+  it('does not claim an upload the appliance failed to answer was refused', async () => {
+    stubApi({
+      'GET /appliance/api/v1/certificate': info(),
+      'PUT /appliance/api/v1/certificate': [500, { code: 'internal', message: 'Internal error.' }],
+    });
+    render(<CertificatePage />);
+    await screen.findByText('CN=ilm.example.test');
+    await userEvent.upload(screen.getByLabelText(/^Certificate/), pem('CERTIFICATE'));
+    await userEvent.upload(screen.getByLabelText(/^Private key/), pem('KEY'));
+    await userEvent.click(screen.getByRole('button', { name: 'Upload the certificate' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Internal error\. .*not known whether the certificate was stored/);
+    expect(alert).not.toHaveTextContent('stays in use');
+  });
+
+  it('judges the expiry at the time of each read', async () => {
+    const start = Date.now();
+    stubApi({
+      'GET /appliance/api/v1/certificate': info({}, 35),
+      'PUT /appliance/api/v1/certificate': [202],
+    });
+    render(<CertificatePage />);
+    await screen.findByText('CN=ilm.example.test');
+    expect(screen.queryByText(/expires within 30 days/i)).not.toBeInTheDocument();
+    vi.spyOn(Date, 'now').mockReturnValue(start + 10 * day);
+    await userEvent.upload(screen.getByLabelText(/^Certificate/), pem('CERTIFICATE'));
+    await userEvent.upload(screen.getByLabelText(/^Private key/), pem('KEY'));
+    await userEvent.click(screen.getByRole('button', { name: 'Upload the certificate' }));
+    expect(await screen.findByText(/expires within 30 days/i)).toBeInTheDocument();
   });
 
   it('downloads the signing request and then takes the signed certificate', async () => {

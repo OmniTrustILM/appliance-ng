@@ -1,4 +1,5 @@
 import type { components } from '../api/schema';
+import { dependenciesRequest, managedDependencies, type DependenciesAnswers } from '../dependencies/dependencies';
 
 export type MailSecurity = components['schemas']['MailSecurity'];
 export type CatalogueItem = components['schemas']['CatalogueItem'];
@@ -18,10 +19,12 @@ export type MailAnswers = {
 export type Answers = {
   hostName: string;
   components: string[];
+  dependencies: DependenciesAnswers;
+  utils: boolean;
   mail?: MailAnswers;
 };
 
-export type Step = 'host' | 'certificate' | 'components' | 'mail' | 'review' | 'progress';
+export type Step = 'host' | 'certificate' | 'components' | 'dependencies' | 'mail' | 'review' | 'progress';
 
 export type Errors = Partial<Record<string, string>>;
 
@@ -39,20 +42,23 @@ export function mailRequest({ host, port, security, from, username, password }: 
   return { host, port: Number(port), security, from, ...(username && { username }), ...(password && { password }) };
 }
 
-/** The answers the appliance holds; the host name defaults to the node's. */
-export function answersOf(appliance: Appliance): Answers {
+/** The answers the appliance holds; the host name defaults to the node's, the dependencies to managed ones. */
+export function answersOf(appliance: Appliance, dependencies: DependenciesAnswers = managedDependencies, utils = false): Answers {
   const { mail, platform, node } = appliance;
   return {
     hostName: platform?.hostName ?? node.hostName,
     components: platform?.components ?? [],
+    dependencies,
+    utils,
     mail: mail && mailAnswersOf(mail),
   };
 }
 
-/** The request body; an empty user name or password is left out. */
-export function toRequest({ hostName, components, mail }: Answers): components['schemas']['PlatformSettings'] {
-  if (!mail) return { hostName, components };
-  return { hostName, components, mail: mailRequest(mail) };
+/** The request body; an empty user name, password or secret is left out. */
+export function toRequest({ hostName, components, dependencies, utils, mail }: Answers): components['schemas']['PlatformSettings'] {
+  const body = { hostName, components, dependencies: dependenciesRequest(dependencies), utils };
+  if (!mail) return body;
+  return { ...body, mail: mailRequest(mail) };
 }
 
 /** Whether the appliance keeps the password it holds for mail: only for the user name and server it was given for. */
@@ -65,6 +71,7 @@ export function keepsStoredPassword(stored: MailAnswers | undefined, mail: MailA
 export function stepOfField(field: string): Step {
   if (field === 'hostName') return 'host';
   if (field === 'components') return 'components';
+  if (field.startsWith('dependencies.')) return 'dependencies';
   return 'mail';
 }
 

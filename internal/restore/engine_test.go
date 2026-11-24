@@ -23,6 +23,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -39,6 +40,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
@@ -141,6 +143,8 @@ type restoreFixture struct {
 	keycloak *fakeKeycloak
 	// stalled stops the emulated operator from scaling its Deployments back up.
 	stalled atomic.Bool
+	// cbomStore is the host:port of the CBOM store the restore writes to.
+	cbomStore string
 }
 
 // accountsSecrets returns the users Secret and its key Secret holding the named accounts, each with its origin in
@@ -443,7 +447,7 @@ func readyPlatform(t *testing.T, a *v1alpha1.Appliance) {
 func (f *restoreFixture) engine(c client.Client) *Engine {
 	e := New(Deps{
 		Client: c, Dumper: f.dumper, Backups: f.backups, Audit: f.audit, Log: slog.New(slog.NewTextHandler(f.logs, nil)),
-		KeycloakURL: f.keycloak.url,
+		KeycloakURL: f.keycloak.url, CBOMStore: f.cbomStore,
 	})
 	e.retryDelay, e.poll, e.waitTimeout = 0, 5*time.Millisecond, 2*time.Second
 	e.afterStep = func(step string) bool {
@@ -549,7 +553,7 @@ func TestFreshRestore(t *testing.T) {
 	if f.backups.recordedInAdmits != 1 {
 		t.Errorf("restore recorded in %d backup admissions, want 1", f.backups.recordedInAdmits)
 	}
-	want := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "keycloak", "certificate"}
+	want := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "cbom", "start", "keycloak", "certificate"}
 	if !slices.Equal(f.ran, want) {
 		t.Errorf("steps %v, want %v", f.ran, want)
 	}
@@ -698,7 +702,7 @@ func TestInPlaceSkipsPlatformAndCertificate(t *testing.T) {
 	if st := a.Status.Restore; st == nil || st.Step != v1alpha1.RestoreStepDone || !st.InPlace {
 		t.Fatalf("restore = %+v, want done in place; logs:\n%s", st, f.logs)
 	}
-	want := []string{"secrets", "appliance", "stop", "ilmSecrets", "database", "start"}
+	want := []string{"secrets", "appliance", "stop", "ilmSecrets", "database", "cbom", "start"}
 	if !slices.Equal(f.ran, want) {
 		t.Errorf("steps %v, want %v", f.ran, want)
 	}
@@ -835,7 +839,7 @@ func TestRestoreRefusals(t *testing.T) {
 }
 
 func TestRestoreResumesAtEveryStep(t *testing.T) {
-	steps := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "keycloak", "certificate"}
+	steps := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "cbom", "start", "keycloak", "certificate"}
 	for i, crash := range steps {
 		t.Run(crash, func(t *testing.T) {
 			f := newRestoreFixture(t, false)
@@ -976,7 +980,7 @@ func TestRestoreFailureRestartsOperator(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.wg.Wait()
-	if !slices.Equal(f.ran, []string{"database", "start", "keycloak", "certificate"}) {
+	if !slices.Equal(f.ran, []string{"database", "cbom", "start", "keycloak", "certificate"}) {
 		t.Errorf("resumed steps %v", f.ran)
 	}
 	if got := f.dumper.running; len(got) > 0 {
@@ -1407,6 +1411,36 @@ func TestInPlaceRestoreReplacesTheAccounts(t *testing.T) {
 	}
 }
 
+// The manager's ILM identity follows the backup: a backup without it leaves none, so the manager registers anew
+// against the restored database.
+func TestRestoreTakesTheILMIdentityFromTheBackup(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		inPlace bool
+		backed  bool
+	}{{"fresh without", false, false}, {"in place without", true, false}, {"in place with", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t, tc.inPlace)
+			if tc.backed {
+				f.file = buildBackup(t, f.key, backupSpec(), portableSecret("appliance-system", ilmclient.IdentitySecret, corev1.SecretTypeTLS, nil, tlsData("backup-identity")))
+			}
+			mustCreate(t, portableSecret("appliance-system", ilmclient.IdentitySecret, corev1.SecretTypeTLS, nil, tlsData("current-identity")))
+			f.start(t, f.engine(testClient), Options{InPlace: tc.inPlace})
+			if st := getAppliance(t).Status.Restore; st.Step != v1alpha1.RestoreStepDone || st.Message != "" {
+				t.Fatalf("status %+v, want done; logs:\n%s", st, f.logs)
+			}
+			s := &corev1.Secret{}
+			err := testClient.Get(context.Background(), client.ObjectKey{Namespace: "appliance-system", Name: ilmclient.IdentitySecret}, s)
+			switch {
+			case tc.backed && (err != nil || string(s.Data[corev1.TLSCertKey]) != "backup-identity-crt"):
+				t.Errorf("identity %q (%v), want the backup's", s.Data[corev1.TLSCertKey], err)
+			case !tc.backed && !apierrors.IsNotFound(err):
+				t.Errorf("identity %q (%v), want none", s.Data[corev1.TLSCertKey], err)
+			}
+		})
+	}
+}
+
 func TestStartVerifiesTheWholeBackup(t *testing.T) {
 	f := newRestoreFixture(t, false)
 	data, err := os.ReadFile(f.file)
@@ -1614,4 +1648,195 @@ func TestStopIgnoresExitedPods(t *testing.T) {
 	exited("ilm", "ilm-keycloak-old", map[string]string{"app": "keycloak"}, corev1.PodFailed)
 	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
 	f.wantDone(t)
+}
+
+const dependencySecret = "appliance-database"
+
+// externalDatabase is an external database whose credentials are in dependencySecret.
+func externalDatabase(host string) *v1alpha1.ExternalDatabase {
+	return &v1alpha1.ExternalDatabase{Host: host, Port: 5432, Name: "ilm", CredentialsRef: dependencySecret}
+}
+
+// databaseCredentials is the credentials Secret of an external database with password.
+func databaseCredentials(password string) *corev1.Secret {
+	return portableSecret("appliance-system", dependencySecret, "", nil, map[string]string{"username": "ilm", "password": password})
+}
+
+// withExternalDumper makes the engine dump external databases with the fixture's dumper and records the databases.
+func (f *restoreFixture) withExternalDumper(e *Engine) *[]v1alpha1.ExternalDatabase {
+	var chosen []v1alpha1.ExternalDatabase
+	e.deps.External = func(db v1alpha1.ExternalDatabase) backup.Dumper {
+		chosen = append(chosen, db)
+		return loadOnly{f.dumper}
+	}
+	return &chosen
+}
+
+// loadOnly hides the Recreate of a dumper, as the external dumper has none.
+type loadOnly struct{ d *fakeDumper }
+
+func (l loadOnly) Dump(ctx context.Context, w io.Writer) error { return l.d.Dump(ctx, w) }
+func (l loadOnly) Load(ctx context.Context, r io.Reader) error { return l.d.Load(ctx, r) }
+
+func TestFreshRestoreOfAnExternalDatabase(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	spec := backupSpec()
+	spec.Platform.Database = externalDatabase("db.example.com")
+	f.file = buildBackup(t, f.key, spec, databaseCredentials("backup-pw"))
+	// No managed database comes up for an external one.
+	if err := testClient.Delete(context.Background(), unstructuredObject(clusterGVK, "ilm", "ilm-db", map[string]any{})); err != nil {
+		t.Fatal(err)
+	}
+	e := f.engine(testClient)
+	chosen := f.withExternalDumper(e)
+
+	f.start(t, e, Options{})
+
+	f.wantDone(t)
+	if f.dumper.recreates != 0 || len(*chosen) != 1 || (*chosen)[0] != *spec.Platform.Database {
+		t.Errorf("recreates %d, external databases %+v", f.dumper.recreates, *chosen)
+	}
+	if got := string(getSecret(t, "appliance-system", dependencySecret).Data["password"]); got != "backup-pw" {
+		t.Errorf("database password %q, want the backup's", got)
+	}
+}
+
+func TestFreshRestoreWithExternalIdentity(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	spec := backupSpec()
+	spec.Platform.Identity = &v1alpha1.ExternalIdentity{Issuer: "https://idp.example.com", ClientID: "ilm", CredentialsRef: "appliance-identity"}
+	f.file = buildBackup(t, f.key, spec, portableSecret("appliance-system", "appliance-identity", "", nil, map[string]string{"clientSecret": "s"}))
+	ctx := context.Background()
+	// No Keycloak is installed for an external identity provider.
+	for _, obj := range []client.Object{
+		unstructuredObject(keycloakGVK, "ilm", "ilm-keycloak", map[string]any{}),
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "ilm", Name: platform.KeycloakAdminSecret}},
+	} {
+		if err := testClient.Delete(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.keycloak.mu.Lock()
+	f.keycloak.down = true
+	f.keycloak.mu.Unlock()
+
+	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
+
+	f.wantDone(t)
+}
+
+func TestFreshRestoreReplacesDependencies(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	spec := backupSpec()
+	spec.Platform.Database = externalDatabase("old-db.example.com")
+	spec.Platform.Messaging = &v1alpha1.ExternalMessaging{Host: "mq.example.com", Port: 5672, CredentialsRef: "appliance-messaging"}
+	f.file = buildBackup(t, f.key, spec, databaseCredentials("backup-pw"),
+		portableSecret("appliance-system", "appliance-messaging", "", nil, map[string]string{"username": "u", "password": "mq"}))
+	// The credentials entered for the restore, which the backup's must not replace.
+	mustCreate(t, databaseCredentials("entered-pw"))
+	identity := &v1alpha1.ExternalIdentity{Issuer: "https://idp.example.com", ClientID: "ilm", CredentialsRef: "appliance-identity"}
+	e := f.engine(testClient)
+	chosen := f.withExternalDumper(e)
+
+	f.start(t, e, Options{Dependencies: &v1alpha1.RestoreDependencies{
+		Replace:  []string{v1alpha1.DependencyDatabase, v1alpha1.DependencyIdentity},
+		Database: externalDatabase("new-db.example.com"), Identity: identity,
+	}})
+
+	f.wantDone(t)
+	p := getAppliance(t).Spec.Platform
+	if *p.Database != *externalDatabase("new-db.example.com") || p.Messaging == nil || p.Messaging.Host != "mq.example.com" ||
+		p.Identity == nil || p.Identity.Issuer != identity.Issuer {
+		t.Errorf("platform %+v", p)
+	}
+	if got := string(getSecret(t, "appliance-system", dependencySecret).Data["password"]); got != "entered-pw" {
+		t.Errorf("database password %q, want the entered one", got)
+	}
+	if len(*chosen) != 1 || (*chosen)[0].Host != "new-db.example.com" {
+		t.Errorf("external databases %+v", *chosen)
+	}
+}
+
+func TestFreshRestoreChoosesTheManagedDatabase(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	spec := backupSpec()
+	spec.Platform.Database = externalDatabase("db.example.com")
+	f.file = buildBackup(t, f.key, spec, databaseCredentials("backup-pw"))
+	e := f.engine(testClient)
+	chosen := f.withExternalDumper(e)
+
+	f.start(t, e, Options{Dependencies: &v1alpha1.RestoreDependencies{Replace: []string{v1alpha1.DependencyDatabase}}})
+
+	f.wantDone(t)
+	if p := getAppliance(t).Spec.Platform; p.Database != nil {
+		t.Errorf("database %+v, want the managed one", p.Database)
+	}
+	if f.dumper.recreates != 1 || len(*chosen) != 0 {
+		t.Errorf("recreates %d, external databases %+v", f.dumper.recreates, *chosen)
+	}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: "appliance-system", Name: dependencySecret}, &corev1.Secret{}); !apierrors.IsNotFound(err) {
+		t.Errorf("the backup's credentials of the replaced database: %v, want them left out", err)
+	}
+}
+
+func TestInPlaceRestoreKeepsDependencies(t *testing.T) {
+	f := newRestoreFixture(t, true)
+	spec := backupSpec()
+	spec.Platform.Database = externalDatabase("old-db.example.com")
+	f.file = buildBackup(t, f.key, spec, databaseCredentials("backup-pw"))
+	mustCreate(t, databaseCredentials("current-pw"))
+	a := getAppliance(t)
+	a.Spec.Platform.Database = externalDatabase("db.example.com")
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	e := f.engine(testClient)
+	chosen := f.withExternalDumper(e)
+
+	f.start(t, e, Options{InPlace: true})
+
+	if st := getAppliance(t).Status.Restore; st.Step != v1alpha1.RestoreStepDone {
+		t.Fatalf("status %+v, want done; logs:\n%s", st, f.logs)
+	}
+	if p := getAppliance(t).Spec.Platform; p.Database == nil || *p.Database != *externalDatabase("db.example.com") {
+		t.Errorf("database %+v, want the current one", p.Database)
+	}
+	if got := string(getSecret(t, "appliance-system", dependencySecret).Data["password"]); got != "current-pw" {
+		t.Errorf("database password %q, want the current one", got)
+	}
+	if len(*chosen) != 1 || (*chosen)[0].Host != "db.example.com" || f.dumper.recreates != 0 {
+		t.Errorf("external databases %+v, recreates %d", *chosen, f.dumper.recreates)
+	}
+}
+
+func TestRestoreOfAnExternalDatabaseNeedsItsDumper(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	spec := backupSpec()
+	spec.Platform.Database = externalDatabase("db.example.com")
+	f.file = buildBackup(t, f.key, spec, databaseCredentials("backup-pw"))
+	if err := testClient.Delete(context.Background(), unstructuredObject(clusterGVK, "ilm", "ilm-db", map[string]any{})); err != nil {
+		t.Fatal(err)
+	}
+	f.start(t, f.engine(testClient), Options{})
+	if st := getAppliance(t).Status.Restore; st.Step != v1alpha1.RestoreStepDatabase || st.Message != v1alpha1.RestoreFailed {
+		t.Errorf("status %+v, want a failure at the database step", st)
+	}
+}
+
+// TestPlatformNotAvailableBeforeItsKindExists is a fresh restore started while the add-ons still install: until the
+// operator's Platform kind exists, the Platform is not available yet rather than a failure.
+func TestPlatformNotAvailableBeforeItsKindExists(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	c := interceptor.NewClient(testClient, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*otilm.Platform); ok {
+				return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "otilm.com", Kind: "Platform"}}
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+	ok, err := f.engine(c).platformAvailable(context.Background())
+	if ok || err != nil {
+		t.Errorf("platformAvailable without the Platform kind = %t, %v; want false, nil", ok, err)
+	}
 }

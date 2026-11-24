@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
+	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
@@ -56,18 +59,25 @@ type fixture struct {
 
 func writeBackup(t *testing.T, key *age.X25519Identity, ilm string, accounts ...string) []byte {
 	t.Helper()
+	return writeBackupWith(t, key, ilm, nil, accounts...)
+}
+
+// writeBackupWith is writeBackup with the extra members.
+func writeBackupWith(t *testing.T, key *age.X25519Identity, ilm string, extra map[string]string, accounts ...string) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	w, err := backup.NewWriter(&buf, key.Recipient())
 	if err != nil {
 		t.Fatal(err)
 	}
 	members := map[string]string{
-		"appliance.yaml": "kind: Appliance\n",
+		"appliance.yaml": "kind: Appliance\nspec:\n  platform:\n    database: {host: db.example.com, port: 5432, name: ilm, credentialsRef: appliance-database}\n",
 		"database.sql":   "select 1;\n",
 	}
 	if len(accounts) > 0 {
 		members["secrets/appliance-system/appliance-users.yaml"] = usersSecretYAML(t, accounts...)
 	}
+	maps.Copy(members, extra)
 	names := make([]string, 0, len(members))
 	for n := range members {
 		names = append(names, n)
@@ -147,6 +157,13 @@ func TestInspectRejects(t *testing.T) {
 			return rawArchive(t, k, "manifest.json", `{"format":2}`)
 		}, ErrFormatTooNew},
 		{"other ILM version", func(t *testing.T, k *age.X25519Identity) []byte { return writeBackup(t, k, "2.16") }, ErrVersionUnavailable{}},
+		{"crafted CBOM member", func(t *testing.T, k *age.X25519Identity) []byte {
+			key := base64.RawURLEncoding.EncodeToString([]byte("../../etc/x"))
+			return writeBackupWith(t, k, "2.17", map[string]string{cbom.MemberPrefix + key: `{"key":"../../etc/x","size":1}` + "\nx"})
+		}, ErrTampered},
+		{"CBOM member longer than its header says", func(t *testing.T, k *age.X25519Identity) []byte {
+			return writeBackupWith(t, k, "2.17", map[string]string{cbom.MemberPrefix + "YQ": `{"key":"a","size":1}` + "\nxyz"})
+		}, ErrTampered},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,6 +210,9 @@ func TestInspectSummary(t *testing.T) {
 	}
 	if s.Manifest.HostName != "node" || s.Manifest.ILM != "2.17" {
 		t.Errorf("Manifest = %+v", s.Manifest)
+	}
+	if db := s.Platform.Database; db == nil || db.Host != "db.example.com" {
+		t.Errorf("Platform = %+v, want the backup's external database", s.Platform)
 	}
 	if after, _ := os.ReadFile(f.file); !bytes.Equal(before, after) {
 		t.Error("the backup file changed")

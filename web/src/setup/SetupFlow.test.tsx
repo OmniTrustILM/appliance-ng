@@ -63,7 +63,7 @@ describe('SetupFlow', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'correct horse battery');
     await userEvent.type(screen.getByLabelText('Confirm password'), 'correct horse battery');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    await screen.findByText('JBSWY3DPEHPK3PXP');
+    await screen.findByDisplayValue('JBSWY3DPEHPK3PXP');
     await userEvent.type(screen.getByLabelText('Code from the authenticator'), '123456');
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await screen.findByDisplayValue('node1.example.com');

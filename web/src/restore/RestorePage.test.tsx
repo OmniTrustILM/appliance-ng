@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +19,11 @@ const summary = {
   inspection: 'check-1', backup: backupName, inPlace: false, time: '2026-11-01T02:00:00Z', hostName: 'old-node', ilmHostName: 'ilm.old.example.test',
   nodeHostName: 'new-node', ilm: '2.20.0', operator: '1.1.0', appliance: '1.0.0', database: 'managed', databaseIncluded: true,
   accounts: ['admin', 'alice'], clashes: ['admin'], components: ['core'],
+  dependencies: {
+    database: { mode: 'external', host: 'db.old.example.test', port: 5432, name: 'ilm' },
+    messaging: { mode: 'managed' },
+    identity: { mode: 'managed' },
+  },
 };
 const waiting = { setup: 'restore' };
 
@@ -83,6 +88,95 @@ describe('RestorePage', () => {
     expect(sent[START]).toEqual([{ inspection: 'check-1', inPlace: false, ilmHostName: 'ilm.new.example.test', confirm: true }]);
     expect(await screen.findByRole('heading', { name: `Restoring ${backupName}` })).toBeInTheDocument();
     expect(screen.getByText('Load the database').closest('li')).toHaveAttribute('aria-current', 'step');
+  });
+
+  it('keeps the backup\'s dependencies or starts the restore with dependencies chosen anew', async () => {
+    let answer: readonly [number, object?] = [400, { code: 'invalid', field: 'dependencies.database.password', message: 'Enter the password.' }];
+    const { sent } = stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary], [START]: () => answer });
+    renderPage();
+    await uploadAndCheck();
+    expect(await screen.findByText(/database db\.old\.example\.test:5432\/ilm, managed broker, managed Keycloak/)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/Choose the dependencies anew/));
+    expect(screen.getByLabelText('Database host')).toHaveValue('db.old.example.test');
+    await userEvent.type(screen.getByLabelText('Database user name'), 'ilm');
+    await userEvent.click(screen.getByLabelText(/External OIDC provider/));
+    await userEvent.type(screen.getByLabelText('Issuer URL'), 'https://idp.example.test');
+    await userEvent.type(screen.getByLabelText('Client ID'), 'ilm');
+    await userEvent.type(screen.getByLabelText('Client secret'), 'idp secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Restore the backup' }));
+    expect(await screen.findByText('Enter the password.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Database password')).toHaveAttribute('aria-invalid', 'true');
+
+    answer = [202];
+    await userEvent.type(screen.getByLabelText('Database password'), 'db secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Restore the backup' }));
+    await waitFor(() => expect(sent[START]).toHaveLength(2));
+    expect(sent[START]?.[1]).toEqual({
+      inspection: 'check-1', inPlace: false, ilmHostName: 'ilm.old.example.test', confirm: true,
+      dependencies: {
+        database: { mode: 'external', host: 'db.old.example.test', port: 5432, name: 'ilm', username: 'ilm', password: 'db secret' },
+        messaging: { mode: 'managed' },
+        identity: { mode: 'external', issuer: 'https://idp.example.test', clientId: 'ilm', scopes: [], audiences: [], clientSecret: 'idp secret' },
+      },
+    });
+  });
+
+  it('takes no dependency changes while the restore starts', async () => {
+    let answer: (reply: readonly [number]) => void = () => undefined;
+    stubApi({
+      [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary],
+      [START]: () => new Promise<readonly [number]>((resolve) => { answer = resolve; }),
+    });
+    renderPage();
+    await uploadAndCheck();
+    await userEvent.click(await screen.findByLabelText(/Choose the dependencies anew/));
+    await userEvent.click(screen.getByRole('button', { name: 'Restore the backup' }));
+    expect(screen.getByLabelText(/Choose the dependencies anew/)).toBeDisabled();
+    expect(screen.getByLabelText('Database host')).toBeDisabled();
+    expect(screen.getByLabelText(/Managed PostgreSQL/)).toBeDisabled();
+    answer([400]);
+    await waitFor(() => expect(screen.getByLabelText('Database host')).toBeEnabled());
+  });
+
+  it('warns that the dump replaces the content of the external database it loads into', async () => {
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary] });
+    renderPage();
+    await uploadAndCheck();
+    expect(await screen.findByText(/replaces the content of the external database db\.old\.example\.test:5432\/ilm/)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/Choose the dependencies anew/));
+    await userEvent.clear(screen.getByLabelText('Database host'));
+    await userEvent.type(screen.getByLabelText('Database host'), 'db.test.example.test');
+    expect(screen.getByText(/replaces the content of the external database db\.test\.example\.test:5432\/ilm/)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/Managed PostgreSQL/));
+    expect(screen.queryByText(/replaces the content of the external database/)).not.toBeInTheDocument();
+  });
+
+  it('gives no database warning when the backup holds no dump', async () => {
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, { ...summary, database: 'external', databaseIncluded: false }] });
+    renderPage();
+    await uploadAndCheck();
+    expect(await screen.findByText('old-node')).toBeInTheDocument();
+    expect(screen.queryByText(/replaces the content of the external database/)).not.toBeInTheDocument();
+  });
+
+  it('shows a refusal of a dependency that was not chosen anew', async () => {
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary],
+      [START]: [400, { code: 'invalid', field: 'dependencies.database.password', message: 'The backup holds no password.' }] });
+    renderPage();
+    await uploadAndCheck();
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore the backup' }));
+    expect(await screen.findByText('The backup holds no password.')).toBeInTheDocument();
+  });
+
+  it('keeps the backup\'s dependencies when they are not chosen anew', async () => {
+    const { sent } = stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [200, summary], [START]: [202] });
+    renderPage();
+    await uploadAndCheck();
+    await userEvent.click(await screen.findByLabelText(/Choose the dependencies anew/));
+    await userEvent.click(screen.getByLabelText(/Choose the dependencies anew/));
+    expect(screen.queryByLabelText('Database host')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Restore the backup' }));
+    await waitFor(() => expect(sent[START]).toEqual([{ inspection: 'check-1', inPlace: false, ilmHostName: 'ilm.old.example.test', confirm: true }]));
   });
 
   it('fetches a backup from a target entered on the page', async () => {

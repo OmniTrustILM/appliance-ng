@@ -220,3 +220,14 @@ func TestValidateReportsUnusedManagerImage(t *testing.T) {
 		t.Fatalf("errors = %v, want the unused manager image", errs)
 	}
 }
+
+func TestValidateChecksTheChartPins(t *testing.T) {
+	m := &Manifest{Charts: []Chart{{Name: "repo", File: "charts/repo-1.tgz", SHA256: hash("chart")}}}
+	if errs := Validate(m, fstest.MapFS{"charts/repo-1.tgz": {Data: []byte("chart")}}); len(errs) != 0 {
+		t.Fatalf("pinned chart refused: %v", errs)
+	}
+	errs := Validate(m, fstest.MapFS{"charts/repo-1.tgz": {Data: []byte("other")}})
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "charts/repo-1.tgz") {
+		t.Fatalf("errors %v, want the changed chart", errs)
+	}
+}

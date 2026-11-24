@@ -6,6 +6,7 @@ import { Card } from '../components/Card';
 import { PageHeading } from '../components/PageHeading';
 import { SummaryRow } from '../components/SummaryRow';
 import { attempt, failureMessage, unreachable } from '../setup/failure';
+import { dependenciesText } from '../dependencies/dependencies';
 import { toRequest, type Answers, type CatalogueItem } from './answers';
 
 /** Shows the answers and sends them; the admin can still come back and change them until the setup is complete. */
@@ -45,6 +46,8 @@ export function ReviewPage({ answers, catalogue, onBack, onSent, onRefused, onCo
         <SummaryRow term="ILM host name">{answers.hostName}</SummaryRow>
         <SummaryRow term="Certificate">Built-in certificate authority</SummaryRow>
         <SummaryRow term="Components">{titles.length > 0 ? titles.join(', ') : 'None'}</SummaryRow>
+        <SummaryRow term="Dependencies">{dependenciesText(answers.dependencies)}</SummaryRow>
+        <SummaryRow term="Utils service">{answers.utils ? 'Installed' : 'Not installed'}</SummaryRow>
         <SummaryRow term="Mail">{mail ? `${mail.host}:${mail.port} (${mail.security}), from ${mail.from}` : 'No mail'}</SummaryRow>
       </dl>
       {error && <div className="mt-4"><Alert tone="error">{error}</Alert></div>}

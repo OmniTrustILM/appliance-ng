@@ -7,8 +7,10 @@ import { Loading } from '../components/Spinner';
 import { StepIndicator } from '../components/StepIndicator';
 import { attempt, unreachable } from '../setup/failure';
 import { answersOf, keepsStoredPassword, stepOfField, type Answers, type CatalogueItem, type Errors, type MailAnswers, type Step } from './answers';
+import { dependencyAnswersOf, sentDependencies } from '../dependencies/dependencies';
 import { CertificatePage } from './CertificatePage';
 import { ComponentsPage } from './ComponentsPage';
+import { DependenciesPage } from './DependenciesPage';
 import { HostPage } from './HostPage';
 import { MailPage } from './MailPage';
 import { ProgressPage } from './ProgressPage';
@@ -18,6 +20,7 @@ const steps: { step: Step; label: string }[] = [
   { step: 'host', label: 'Host name' },
   { step: 'certificate', label: 'Certificate' },
   { step: 'components', label: 'Components' },
+  { step: 'dependencies', label: 'Dependencies' },
   { step: 'mail', label: 'Mail' },
   { step: 'review', label: 'Review' },
   { step: 'progress', label: 'Installing' },
@@ -26,15 +29,19 @@ const steps: { step: Step; label: string }[] = [
 type Loaded = { answers: Answers; catalogue: CatalogueItem[]; passwordSet: boolean; step: Step };
 
 async function load(): Promise<Loaded | 'complete' | undefined> {
-  const [status, appliance, catalogue] = await Promise.all([
+  const [status, appliance, catalogue, platform] = await Promise.all([
     attempt(() => api.GET('/status')),
     attempt(() => api.GET('/appliance')),
     attempt(() => api.GET('/catalogue')),
+    attempt(() => api.GET('/platform')),
   ]);
   if (status?.data?.setup === 'complete') return 'complete';
   if (!status?.data || !appliance?.data || !catalogue?.data) return undefined;
+  const chosen = platform?.data;
+  // Without the dependencies chosen before, a re-submit would send managed ones.
+  if (appliance.data.platform && !chosen) return undefined;
   return {
-    answers: answersOf(appliance.data),
+    answers: answersOf(appliance.data, chosen && dependencyAnswersOf(chosen.dependencies), chosen?.utils),
     catalogue: catalogue.data.items,
     passwordSet: appliance.data.mail?.passwordSet ?? false,
     // Answers were sent before: show how the installation goes; the admin can still change them.
@@ -87,7 +94,9 @@ export function WizardFlow() {
     // The password was written; the appliance keeps it and this page forgets it.
     setPasswordSet(answers?.mail ? answers.mail.password !== '' || passwordSet : false);
     setStoredMail(answers?.mail);
-    setAnswers((current) => current && { ...current, mail: current.mail && { ...current.mail, password: '' } });
+    setAnswers((current) => current && {
+      ...current, mail: current.mail && { ...current.mail, password: '' }, dependencies: sentDependencies(current.dependencies),
+    });
     setStep('progress');
   }
 
@@ -108,11 +117,14 @@ export function WizardFlow() {
           error={errors.components}
           onChange={change}
           onBack={() => setStep('certificate')}
-          onNext={() => setStep('mail')}
+          onNext={() => setStep('dependencies')}
         />
       )}
+      {step === 'dependencies' && (
+        <DependenciesPage answers={answers} errors={errors} onChange={change} onBack={() => setStep('components')} onNext={() => setStep('mail')} />
+      )}
       {step === 'mail' && (
-        <MailPage answers={answers} passwordSet={passwordSet && keepsStoredPassword(storedMail, answers.mail)} errors={errors} onChange={change} onBack={() => setStep('components')} onNext={() => setStep('review')} />
+        <MailPage answers={answers} passwordSet={passwordSet && keepsStoredPassword(storedMail, answers.mail)} errors={errors} onChange={change} onBack={() => setStep('dependencies')} onNext={() => setStep('review')} />
       )}
       {step === 'review' && (
         <ReviewPage

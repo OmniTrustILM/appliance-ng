@@ -16,6 +16,12 @@ const (
 	ConditionHandoverComplete = "HandoverComplete"
 	ConditionConnectorsReady  = "ConnectorsReady"
 	ConditionBackupHealthy    = "BackupHealthy"
+	// ConditionILMSettingsApplied reports whether the settings the manager keeps in ILM, such as the external OIDC
+	// provider, are written.
+	ConditionILMSettingsApplied = "ILMSettingsApplied"
+	// ConditionCBOMRepositoryApplied reports whether the CBOM repository and its store are applied; it is absent
+	// while the repository was never chosen.
+	ConditionCBOMRepositoryApplied = "CBOMRepositoryApplied"
 )
 
 // Setup phases reported in ApplianceStatus.Setup.
@@ -177,6 +183,142 @@ type PlatformSpec struct {
 	// +optional
 	// +listType=set
 	Components []string `json:"components,omitempty"`
+	// Database is the external database ILM uses; unset is the managed one.
+	// +optional
+	Database *ExternalDatabase `json:"database,omitempty"`
+	// Messaging is the external message broker ILM uses; unset is the managed one.
+	// +optional
+	Messaging *ExternalMessaging `json:"messaging,omitempty"`
+	// Identity is the external OIDC provider ILM signs users in with; unset is the managed Keycloak.
+	// +optional
+	Identity *ExternalIdentity `json:"identity,omitempty"`
+	// Utils installs the utils service.
+	// +optional
+	Utils bool `json:"utils,omitempty"`
+	// CBOM installs the CBOM repository ILM keeps CBOMs in.
+	// +optional
+	CBOM *CBOMSpec `json:"cbom,omitempty"`
+}
+
+// Stores of CBOMSpec.Storage.
+const (
+	CBOMStorageAppliance = "appliance"
+	CBOMStorageS3        = "s3"
+)
+
+// Keys of the credentials Secret that CBOMSpec.CredentialsRef names.
+const (
+	CredentialsAccessKey = "accessKey"
+	CredentialsSecretKey = "secretKey"
+)
+
+// CBOMSpec is the CBOM repository. Turned off, the repository goes; the store on the appliance keeps running with the
+// CBOMs stored before, which backups still hold.
+// +kubebuilder:validation:XValidation:rule="self.storage == 's3' ? has(self.s3) && has(self.credentialsRef) && size(self.credentialsRef) > 0 : !has(self.s3) && (!has(self.credentialsRef) || size(self.credentialsRef) == 0)",message="cbom s3 and credentialsRef must be set exactly when storage is s3"
+type CBOMSpec struct {
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Storage is the S3 store of the CBOMs: one on the appliance's data volume, or an external one.
+	// +kubebuilder:validation:Enum=appliance;s3
+	Storage string `json:"storage"`
+	// S3 is the external bucket; its Prefix is not used.
+	// +optional
+	S3 *S3Target `json:"s3,omitempty"`
+	// CredentialsRef names the Secret in the appliance namespace holding accessKey and secretKey of the external
+	// bucket.
+	// +optional
+	CredentialsRef string `json:"credentialsRef,omitempty"`
+}
+
+// CredentialsClientSecretKey is the key of the Secret that ExternalIdentity.CredentialsRef names; the Secrets of
+// ExternalDatabase and ExternalMessaging use CredentialsUsernameKey and CredentialsPasswordKey.
+const CredentialsClientSecretKey = "clientSecret"
+
+// Keys of the Secret that ExternalIdentity.CredentialsRef names that hold the issuer and the client ID its client
+// secret was given for; the manager sends the client secret to ILM only with that issuer and client ID.
+const (
+	CredentialsIssuerKey   = "issuer"
+	CredentialsClientIDKey = "clientID"
+)
+
+// TLS modes of ExternalDatabase.TLSMode, as libpq and pgjdbc name them.
+const (
+	DatabaseTLSDisable    = "disable"
+	DatabaseTLSRequire    = "require"
+	DatabaseTLSVerifyFull = "verify-full"
+)
+
+// CAKey is the key of the PEM CA bundle in the Secret that ExternalDatabase.CA and ExternalMessaging.CA name.
+const CAKey = "ca.crt"
+
+// ExternalDatabase is a PostgreSQL database outside the appliance.
+// +kubebuilder:validation:XValidation:rule="!has(self.tlsMode) || self.tlsMode != 'verify-full' || has(self.ca)",message="database.ca is required when tlsMode is verify-full"
+type ExternalDatabase struct {
+	// Host is a host name or an IPv4 address.
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9._-]{1,253}$`
+	Host string `json:"host"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+	// Name is the database; its characters are safe in a JDBC URL.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_$.-]{1,63}$`
+	Name string `json:"name"`
+	// CredentialsRef names the Secret in the appliance namespace holding the user name and the password.
+	// +kubebuilder:validation:MinLength=1
+	CredentialsRef string `json:"credentialsRef"`
+	// TLSMode is the sslmode of the connection; empty leaves the drivers' default, which uses TLS when the server
+	// offers it without verifying the server.
+	// +optional
+	// +kubebuilder:validation:Enum=disable;require;verify-full
+	TLSMode string `json:"tlsMode,omitempty"`
+	// CA references the PEM CA bundle that signs the server's certificate; verify-full needs it.
+	// +optional
+	CA *SecretKeyRef `json:"ca,omitempty"`
+}
+
+// ExternalMessaging is a RabbitMQ broker outside the appliance.
+// +kubebuilder:validation:XValidation:rule="(has(self.tls) && self.tls) == has(self.ca)",message="messaging.ca is required exactly when tls is set"
+type ExternalMessaging struct {
+	// Host is a host name or an IPv4 address.
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9._-]{1,253}$`
+	Host string `json:"host"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=255
+	VirtualHost string `json:"virtualHost,omitempty"`
+	// CredentialsRef names the Secret in the appliance namespace holding the user name and the password.
+	// +kubebuilder:validation:MinLength=1
+	CredentialsRef string `json:"credentialsRef"`
+	// TLS connects with AMQPS to Port, verifying the server against CA.
+	// +optional
+	TLS bool `json:"tls,omitempty"`
+	// CA references the PEM CA bundle that signs the broker's certificate; TLS needs it.
+	// +optional
+	CA *SecretKeyRef `json:"ca,omitempty"`
+}
+
+// ExternalIdentity is an OIDC provider outside the appliance.
+type ExternalIdentity struct {
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https://`
+	Issuer string `json:"issuer"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	ClientID string `json:"clientId"`
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=255
+	Scopes []string `json:"scopes,omitempty"`
+	// Audiences are the audiences ILM accepts in the provider's tokens; none accepts any token of the issuer.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=255
+	Audiences []string `json:"audiences,omitempty"`
+	// CredentialsRef names the Secret in the appliance namespace holding the client secret.
+	// +kubebuilder:validation:MinLength=1
+	CredentialsRef string `json:"credentialsRef"`
 }
 
 // BackupSpec configures the targets that receive copies of the backups.

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Alert } from '../../components/Alert';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -6,7 +5,7 @@ import { Card } from '../../components/Card';
 import { PageHeading } from '../../components/PageHeading';
 import { PageWidth } from '../../components/PageWidth';
 import { Loading } from '../../components/Spinner';
-import { pageOf, useAuditSnapshot, type AuditEntry } from './useAuditPage';
+import { useAuditPages, type AuditEntry } from './useAuditPages';
 
 const results = {
   success: { tone: 'ok', label: 'Success' },
@@ -58,35 +57,30 @@ function EntryTable({ entries }: Readonly<{ entries: readonly AuditEntry[] }>) {
 
 /** The audit log, newest first, a page at a time; read-only. */
 export function AuditPage() {
-  const [page, setPage] = useState(0);
-  const { items, error, loading, refresh } = useAuditSnapshot();
-  const current = items && pageOf(items, page);
-  const empty = items?.length === 0;
-
-  function reload() {
-    setPage(0);
-    refresh();
-  }
+  const { shown, error, loading, hasNext, next, previous, refresh } = useAuditPages();
+  const empty = shown?.entries.length === 0;
 
   return (
     <PageWidth wide>
       <Card
-        back={<Button variant="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</Button>}
+        back={<Button variant="secondary" disabled={!shown || shown.page === 0 || loading} onClick={previous}>Previous</Button>}
         actions={(
           <>
-            <Button variant="secondary" busy={loading && !!items} onClick={reload}>Refresh</Button>
-            <Button variant="secondary" disabled={!current?.hasNext} onClick={() => setPage(page + 1)}>Next</Button>
+            <Button variant="secondary" busy={loading && !!shown} onClick={refresh}>Refresh</Button>
+            <Button variant="secondary" disabled={!hasNext || loading} onClick={next}>Next</Button>
           </>
         )}
       >
         <PageHeading eyebrow="Platform" title="Audit log" lead="Sign-ins and changes made in this console, newest first." />
         {error && <Alert tone="error">{error}</Alert>}
-        {!items && !error && <Loading />}
-        {empty && <p className="text-content-muted">Nothing has been recorded yet.</p>}
-        {current && !empty && (
+        {!shown && !error && <Loading />}
+        {empty && (
+          <p className="text-content-muted">{shown.page === 0 ? 'Nothing has been recorded yet.' : 'No older entries are left.'}</p>
+        )}
+        {shown && !empty && (
           <>
-            <EntryTable entries={current.entries} />
-            <p className="mt-3 text-sm text-content-muted">Page {page + 1}</p>
+            <EntryTable entries={shown.entries} />
+            <p className="mt-3 text-sm text-content-muted">Page {shown.page + 1}</p>
           </>
         )}
       </Card>

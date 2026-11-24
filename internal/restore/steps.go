@@ -22,7 +22,9 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
+	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
@@ -152,6 +154,16 @@ func (e *Engine) restoreSystemSecrets(ctx context.Context, j *job) error {
 	if secrets, err = e.mergeAccounts(ctx, j, secrets); err != nil {
 		return err
 	}
+	kept, err := e.keptCredentials(ctx, j)
+	if err != nil {
+		return err
+	}
+	secrets = slices.DeleteFunc(secrets, func(s corev1.Secret) bool {
+		return s.Namespace == kube.SystemNamespace && slices.Contains(kept, s.Name)
+	})
+	if err := e.deleteUnknownIdentity(ctx, secrets); err != nil {
+		return err
+	}
 	if j.status.InPlace {
 		return e.writeSecrets(ctx, slices.DeleteFunc(secrets, keptInPlace))
 	}
@@ -166,6 +178,70 @@ func (e *Engine) restoreSystemSecrets(ctx context.Context, j *job) error {
 			st.RecoveryKit.Confirmed = false
 		}
 	})
+}
+
+// deleteUnknownIdentity deletes the manager's ILM identity when the backup holds none: the restored database does
+// not know its certificate, so the manager registers anew once the restore is over.
+func (e *Engine) deleteUnknownIdentity(ctx context.Context, secrets []corev1.Secret) error {
+	if slices.ContainsFunc(secrets, func(s corev1.Secret) bool {
+		return s.Namespace == kube.SystemNamespace && s.Name == ilmclient.IdentitySecret
+	}) {
+		return nil
+	}
+	identity := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: kube.SystemNamespace, Name: ilmclient.IdentitySecret}}
+	if err := e.deps.Client.Delete(ctx, identity); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete secret %s/%s: %w", kube.SystemNamespace, ilmclient.IdentitySecret, err)
+	}
+	return nil
+}
+
+// keptCredentials names the credentials Secrets of the dependencies whose choice the restore does not take from
+// the backup: on a restore in place those of the current choice; on a fresh one those entered for the dependencies
+// it chooses anew and the backup's of the dependencies these replace. The backup's Secrets of these names are not
+// written.
+func (e *Engine) keptCredentials(ctx context.Context, j *job) ([]string, error) {
+	d := j.status.Dependencies
+	if j.status.InPlace {
+		a, err := e.appliance(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return credentialsOf(a.Spec.Platform, dependencyKinds), nil
+	}
+	if d == nil || len(d.Replace) == 0 {
+		return nil, nil
+	}
+	members, err := readMembers(ctx, j, func(name string) bool { return name == applianceMember })
+	if err != nil {
+		return nil, err
+	}
+	backedUp, err := applianceSpec(members)
+	if err != nil {
+		return nil, err
+	}
+	entered := &v1alpha1.PlatformSpec{Database: d.Database, Messaging: d.Messaging, Identity: d.Identity}
+	return append(credentialsOf(entered, d.Replace), credentialsOf(backedUp.Platform, d.Replace)...), nil
+}
+
+// dependencyKinds are the dependencies a restore chooses.
+var dependencyKinds = []string{v1alpha1.DependencyDatabase, v1alpha1.DependencyMessaging, v1alpha1.DependencyIdentity}
+
+// credentialsOf names the credentials Secrets of the external dependencies of p among kinds.
+func credentialsOf(p *v1alpha1.PlatformSpec, kinds []string) []string {
+	if p == nil {
+		return nil
+	}
+	var names []string
+	if p.Database != nil && slices.Contains(kinds, v1alpha1.DependencyDatabase) {
+		names = append(names, p.Database.CredentialsRef)
+	}
+	if p.Messaging != nil && slices.Contains(kinds, v1alpha1.DependencyMessaging) {
+		names = append(names, p.Messaging.CredentialsRef)
+	}
+	if p.Identity != nil && slices.Contains(kinds, v1alpha1.DependencyIdentity) {
+		names = append(names, p.Identity.CredentialsRef)
+	}
+	return names
 }
 
 // keptInPlace tells whether a restore in place keeps the current Secret instead of the backup's.
@@ -311,7 +387,8 @@ func (e *Engine) deleteRequests(ctx context.Context, namespace, certificate stri
 }
 
 // restoreAppliance replaces the spec with the backup's, except the node section, which belongs to this appliance,
-// and with the ILM host name chosen for the restore.
+// and with the ILM host name chosen for the restore. A restore in place keeps the current dependencies; a fresh one
+// takes those it chooses anew.
 func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 	members, err := readMembers(ctx, j, func(name string) bool { return name == applianceMember })
 	if err != nil {
@@ -328,15 +405,38 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 		}
 		spec := *restored.DeepCopy()
 		spec.Node = a.Spec.Node
+		if spec.Platform == nil {
+			spec.Platform = &v1alpha1.PlatformSpec{}
+		}
 		if host := j.status.ILMHostName; host != "" {
-			if spec.Platform == nil {
-				spec.Platform = &v1alpha1.PlatformSpec{}
-			}
 			spec.Platform.HostName = host
 		}
+		chooseDependencies(spec.Platform, a.Spec.Platform, j.status)
 		a.Spec = spec
 		return e.deps.Client.Update(ctx, a, client.FieldOwner(kube.ManagerFieldManager))
 	})
+}
+
+// chooseDependencies sets the dependencies of the restored platform p: the current ones of a restore in place,
+// the ones a fresh restore chooses anew.
+func chooseDependencies(p, current *v1alpha1.PlatformSpec, st v1alpha1.RestoreStatus) {
+	if st.InPlace {
+		if current == nil {
+			current = &v1alpha1.PlatformSpec{}
+		}
+		p.Database, p.Messaging, p.Identity = current.Database, current.Messaging, current.Identity
+		return
+	}
+	d := st.Dependencies
+	if d.Replaces(v1alpha1.DependencyDatabase) {
+		p.Database = d.Database
+	}
+	if d.Replaces(v1alpha1.DependencyMessaging) {
+		p.Messaging = d.Messaging
+	}
+	if d.Replaces(v1alpha1.DependencyIdentity) {
+		p.Identity = d.Identity
+	}
 }
 
 // restoreILMSecrets writes the backup's Secrets of the platform namespace while the operator and ILM are stopped,
@@ -356,12 +456,23 @@ func (e *Engine) restoreILMSecrets(ctx context.Context, j *job) error {
 	return e.writeSecrets(ctx, secrets)
 }
 
-// restoreDatabase streams the backup's dump into the database, which a managed database first recreates empty. A
-// backup without a dump leaves the database as it is. Like restoreILMSecrets, it stops the operator and ILM again
-// first.
+// restoreDatabase streams the backup's dump into the database the Appliance chooses, which a managed database
+// first recreates empty; an external one takes the dump, made to drop what it replaces, as it is. A backup without a
+// dump leaves the database as it is. Like restoreILMSecrets, it stops the operator and ILM again first.
 func (e *Engine) restoreDatabase(ctx context.Context, j *job) error {
 	if err := e.stop(ctx, j); err != nil {
 		return err
+	}
+	a, err := e.appliance(ctx)
+	if err != nil {
+		return err
+	}
+	dumper := e.deps.Dumper
+	if a.Spec.Platform != nil && a.Spec.Platform.Database != nil {
+		if e.deps.External == nil {
+			return errors.New("no dumper for an external database")
+		}
+		dumper = e.deps.External(*a.Spec.Platform.Database)
 	}
 	f, err := open(ctx, j.status.File)
 	if err != nil {
@@ -372,14 +483,107 @@ func (e *Engine) restoreDatabase(ctx context.Context, j *job) error {
 		if name != databaseMember {
 			return nil
 		}
-		if rc, ok := e.deps.Dumper.(recreator); ok {
+		if rc, ok := dumper.(recreator); ok {
 			if err := rc.Recreate(ctx); err != nil {
 				return err
 			}
 		}
-		return e.deps.Dumper.Load(ctx, r)
+		return dumper.Load(ctx, r)
 	})
 	return refusal(err)
+}
+
+// errCBOMMember ends the search for a member of the CBOM store.
+var errCBOMMember = errors.New("the backup holds CBOM objects")
+
+// restoreCBOM makes the store on the appliance hold exactly the backup's CBOM objects: it writes them back, with
+// their content type and metadata, and deletes the objects the backup does not hold. A backup with CBOM objects
+// brings the store up by creating its volume claim, whether the restored repository is on or off; the appliance
+// controller runs the store while a restore pauses the platform. Without CBOM objects and without a running store
+// there is nothing to do.
+func (e *Engine) restoreCBOM(ctx context.Context, j *job) error {
+	a, err := e.appliance(ctx)
+	if err != nil {
+		return err
+	}
+	held, err := e.holdsCBOM(ctx, j)
+	if err != nil {
+		return err
+	}
+	runs, err := cbom.StoreRuns(ctx, e.deps.Client, a.Spec.Platform)
+	if err != nil || !held && !runs {
+		return err
+	}
+	if held {
+		err := e.deps.Client.Create(ctx, cbom.Claim(), client.FieldOwner(kube.ManagerFieldManager))
+		if client.IgnoreAlreadyExists(err) != nil {
+			return fmt.Errorf("create claim %s/%s: %w", cbom.Namespace, cbom.StoreClaim, err)
+		}
+	}
+	store, err := e.cbomStore(ctx)
+	if err != nil {
+		return err
+	}
+	f, err := open(ctx, j.status.File)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	keep := map[string]bool{}
+	err = backup.Extract(f, j.id, func(name string, r io.Reader) error {
+		key, ok, err := store.Restore(ctx, name, r)
+		if ok && err == nil {
+			keep[key] = true
+		}
+		return err
+	})
+	if err != nil {
+		return refusal(err)
+	}
+	pruned, err := store.Prune(ctx, keep)
+	if err != nil {
+		return err
+	}
+	e.deps.Log.Info("restored the CBOM objects", "objects", len(keep), "deleted", pruned)
+	return nil
+}
+
+func (e *Engine) holdsCBOM(ctx context.Context, j *job) (bool, error) {
+	f, err := open(ctx, j.status.File)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	err = backup.Extract(f, j.id, func(name string, _ io.Reader) error {
+		if cbom.IsMember(name) {
+			return errCBOMMember
+		}
+		return nil
+	})
+	if errors.Is(err, errCBOMMember) {
+		return true, nil
+	}
+	return false, refusal(err)
+}
+
+// cbomStore waits for the store on the appliance to answer with its bucket.
+func (e *Engine) cbomStore(ctx context.Context) (*cbom.Store, error) {
+	var store *cbom.Store
+	err := e.waitFor(ctx, "the CBOM store", func(ctx context.Context) (bool, error) {
+		s, err := cbom.OpenStore(ctx, e.deps.Client, e.deps.CBOMStore)
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if s.Ready(ctx) != nil {
+			return false, nil
+		}
+		store = s
+		return true, nil
+	})
+	return store, err
 }
 
 // restoreCertificate has the built-in certificate issued again for this appliance's host names by the restored root

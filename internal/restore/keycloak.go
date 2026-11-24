@@ -72,6 +72,7 @@ func keycloakHTTPClient() *http.Client {
 // rehostKeycloak moves the URLs of the Keycloak clients of ILM from the backup's ILM host name to this appliance's.
 // The realm comes back with the database, and the operator imports its own realm only once, so without this the
 // clients keep the backup's host name and Keycloak refuses sign-in under the new one. Client secrets stay as they are.
+// An external identity provider is not the appliance's to change.
 func (e *Engine) rehostKeycloak(ctx context.Context, j *job) error {
 	members, err := readMembers(ctx, j, func(name string) bool { return name == applianceMember })
 	if err != nil {
@@ -86,7 +87,7 @@ func (e *Engine) rehostKeycloak(ctx context.Context, j *job) error {
 		return err
 	}
 	from, to := ilmHost(backedUp), ilmHost(a.Spec)
-	if from == to {
+	if from == to || a.Spec.Platform != nil && a.Spec.Platform.Identity != nil {
 		return nil
 	}
 	admin, err := e.liveSecret(ctx, platform.Namespace, platform.KeycloakAdminSecret)

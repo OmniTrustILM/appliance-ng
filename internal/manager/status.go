@@ -168,7 +168,7 @@ func setConnectorsCondition(a *v1alpha1.Appliance, connectors []otilm.Connector)
 		c := &connectors[i]
 		switch {
 		case connectorReady(c):
-		case c.Status.Phase == otilm.ConnectorPhaseFailed:
+		case c.Status.Phase == otilm.ConnectorPhaseFailed || registrationFailed(c):
 			failed = append(failed, c.Name)
 		default:
 			waiting = append(waiting, c.Name)
@@ -186,7 +186,20 @@ func setConnectorsCondition(a *v1alpha1.Appliance, connectors []otilm.Connector)
 	}
 }
 
-// connectorReady reports whether the operator runs the Connector's current generation.
+// registrationFailed reports whether the operator reports the registration of the Connector as failed.
+func registrationFailed(c *otilm.Connector) bool {
+	r := c.Status.Registration
+	return r != nil && r.Status == otilm.RegistrationStatusFailed
+}
+
+// connectorReady reports whether the operator runs the Connector's current generation and, for a Connector that
+// is registered automatically, has recorded its registration. The operator does not refresh the registration
+// status after it records one, so waitingForApproval counts; failed and offline do not. A Connector without
+// registration only has to run.
 func connectorReady(c *otilm.Connector) bool {
-	return c.Status.ObservedGeneration == c.Generation && c.Status.Phase == otilm.ConnectorPhaseRunning
+	if c.Status.ObservedGeneration != c.Generation || c.Status.Phase != otilm.ConnectorPhaseRunning {
+		return false
+	}
+	r := c.Status.Registration
+	return c.Spec.Registration == nil || (r != nil && r.Status != otilm.RegistrationStatusFailed && r.Status != otilm.RegistrationStatusOffline)
 }

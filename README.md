@@ -83,8 +83,8 @@ Sign in with your user name, password and the 6-digit authenticator code (the co
 is also accepted, for clock drift). Five
 failed sign-ins for a user from one address within 15 minutes block that user at that address for 15 minutes; sign-in
 from other addresses stays open. 20 sign-in attempts from one address within 15 minutes, successful or not, block the
-address for 15 minutes. After five failed sign-ins for a user from any address, an address that has failed for that
-user waits 2 seconds after the user's last attempt.
+address for 15 minutes. After five failed sign-ins for a user from any address, every sign-in for that user waits 2
+seconds after the user's last attempt. An IPv6 address counts with the other addresses of its /64.
 A session ends after 30 minutes without activity or after 8 hours, and when the manager restarts.
 
 The console shows the state of the appliance on its start page, the settings below, a system page and the audit log.
@@ -106,6 +106,7 @@ page.
 | Trusted CAs | Add or remove CA certificates | CAs that ILM and the node trust, for example a private image registry | Yes, for the node |
 | Registries | Host, user name, password | Credentials for private image registries | No |
 | Components | ILM host name, components | The public name of ILM and the connectors installed with it | No |
+| Components | CBOM repository, its store on the appliance or an external S3 bucket | Where ILM keeps CBOMs; turned off, the CBOMs stored on the appliance are kept and still backed up | No |
 | Mail | Server, port, security, from, credentials | Mail server that ILM sends notifications through; a button sends a test mail | No |
 | System | Restart, shut down | Restarts or shuts down the node after confirmation | n/a |
 
@@ -113,15 +114,134 @@ The certificate must cover the host names of the node and of ILM. Add the node's
 the console by address without a warning. A signing request creates a key on the appliance and downloads the request;
 you upload the signed certificate later. Going back to the built-in certificate is one button.
 
+## Disk
+
+The disk needs at least 50 GB. The node keeps up to 24 GiB for its own use and 8 GiB for the image cache; the data
+volume takes the rest and holds the database, the CBOM store, the local backups and the audit log. Size the disk for
+your data: a disk enlarged later grows the data volume at the next boot.
+
+If the machine has a second empty disk of at least 20 GB at installation, the data volume goes there instead and the
+system disk keeps only the node. USB disks are never chosen; with several, the largest is used. Keep that disk
+attached: the node does not start the data volume without it.
+
+The dashboard shows the data volume's size and free space and warns when less than a fifth is free.
+
+## Recovery kit
+
+The recovery kit is one file, encrypted with a passphrase you choose when you issue it on the Recovery kit page. It
+holds the private key the backups are encrypted to, a break-glass kubeconfig with the `cluster-admin` role, a
+talosconfig with the `os:admin` role valid for one year, and the appliance's identity. The appliance keeps only the
+public key, so neither it nor anyone else can open a backup without the kit. Store the kit and its passphrase apart.
+
+Backups start once you confirm that the kit is stored; until then sign-in asks for it. The dashboard warns 30 days
+before the kit's talosconfig expires.
+
+- **Issue again** with the current kit and its passphrase: same backup key, a new passphrase and new break-glass
+  credentials. The earlier kubeconfig stops working; the earlier talosconfig stays valid until it expires.
+- **Replace** a lost kit: a new backup key and new break-glass credentials. Backups made before can only be opened
+  with the lost kit, so take a new backup right away.
+
+## Backups
+
+A backup is one file, `<host>-<UTC time>-<appliance version>.ilmbackup`, encrypted to the kit's backup key. It holds
+the appliance's settings and secrets, the console accounts, the ILM secrets, a `pg_dump` of the ILM database and the
+objects of the CBOM store on the appliance. It does not hold the node's own keys, the message broker's queues or the
+audit log.
+
+The Backups page backs up now, lists the last three backups kept on the data volume and downloads them. A backup is
+refused while less than twice the size of the last one is free. Targets receive a copy on their own schedule:
+
+| Target | Settings |
+|---|---|
+| S3 | Endpoint, bucket, prefix, region, access key, secret key, optional CA |
+| SFTP | Host, port, path, user, password or private key; the page shows the server's host key to accept |
+| NFS | Server, export, path, version (4.1 by default); the export must be writable by uid and gid 65532 |
+
+Each target has a schedule (cron, `0 2 * * *` by default, in a time zone you choose) and a retention (14 backups by
+default; only this appliance's backups are deleted). A Test button writes, reads back and deletes a small file. The
+proxy applies to S3 and SFTP. The dashboard shows each target's last copy and error, and warns when a target had no
+copy for twice its interval or when the last restore test is more than 90 days old.
+
+An external database is dumped when the appliance reaches it; otherwise the backup holds the settings only and says
+so. An external S3 store for CBOMs is yours to back up.
+
+## Restore
+
+**Onto a fresh appliance**, which also tests your backups: choose "Restore from a backup" in wizard part 1, answer it
+as for a new appliance and, after the reboot, sign in. The restore page takes the backup, uploaded or fetched from a
+target you enter there, and the recovery kit with its passphrase. It verifies the whole backup and shows what it
+holds. The backup's ILM version must be the one in the image.
+
+- **Rename:** the ILM host name defaults to the backup's; enter another to restore ILM under a new name. The built-in
+  CA issues the certificate for the new names; an uploaded certificate is kept, and the console warns if it does not
+  cover them.
+- **Services:** keep the backup's database, messaging and identity provider, or choose managed or external ones; the
+  database dump loads into either. The dump replaces the content of an external database, which the summary names: to
+  test a backup while the appliance it comes from still runs, choose another database, and another broker or virtual
+  host.
+- **Accounts:** the backup's console accounts are added and the administrator of part 1 is kept; an account of the
+  same name is the backup's.
+
+When the restore is done, issue the recovery kit again from the backup's kit, as the console asks. The restore counts
+as the last restore test. A restore that stopped, for example after a manager restart, is resumed with the kit;
+backups stay refused until a restore is done.
+
+**In place:** the Backups page restores a local backup of the running ILM version onto this appliance. Everything
+since the backup is lost, including CBOMs stored since. The settings, secrets, ILM data and console accounts become
+the backup's, except the node settings, the recovery kit, the administrator who starts the restore, and the database,
+messaging and identity provider this appliance uses with their credentials. The ILM host name stays this appliance's.
+
+## Cluster access
+
+The Cluster access page issues a kubeconfig for the cluster's API server on port 6443 of the node, with the `view`
+or `cluster-admin` role, valid for 1 to 24 hours or long-lived with a name for automation, and revokes it. It also
+issues a talosconfig for the Talos API on port 50000 with the `os:reader` or `os:admin` role, valid for 1 to 8 hours;
+a talosconfig cannot be revoked and is listed until it expires. The appliance keeps neither file. Every issue and
+revocation is in the audit log.
+
+## External services
+
+Wizard part 2 and the Components page choose, for each of these, the managed one installed with ILM or an external
+one. A test button checks an external one before you save. Switching between managed and external after setup moves
+data: take a backup, set up a fresh appliance and choose the new service on the restore page. A restore loads the
+backup's database dump into an external database and replaces its content.
+
+- **Database:** PostgreSQL host, port, database, user and password. The TLS mode is `disable`, `require` or
+  `verify-full` with the CA of the server's certificate; left unset, the drivers use TLS when the server offers it
+  without verifying it. ILM's core and scheduler apply the mode; ILM's auth service and Keycloak encrypt when the
+  server offers TLS but never verify its certificate, so make the server accept only TLS.
+- **Messaging:** RabbitMQ host, port, virtual host, user and password. With TLS, ILM connects with AMQPS to the
+  broker's TLS port, given as the port, and verifies the broker against the CA.
+- **Identity:** an OpenID Connect provider with its issuer, client ID, client secret, scopes and optional audiences;
+  no Keycloak is installed. Without audiences ILM accepts every token the issuer signs, whatever client it was issued
+  for. Signing in to ILM with the administrator certificate keeps working whatever the provider does.
+
+The manager writes the provider and the CBOM repository's address into ILM's settings with its own ILM administrator
+certificate, registered once by the manager and kept in the Secret `appliance-ilm-identity`; the dashboard reports the
+outcome as `ILMSettingsApplied`. If the manager's user is deleted in ILM, delete that Secret and the manager registers
+again.
+
+The same pages install ILM's utils service or leave it out.
+
+## CBOM repository
+
+The CBOM repository keeps the CBOMs ILM stores, either in an S3 store on the data volume or in an external S3 bucket
+(endpoint, bucket, region, access key, secret key, optional CA). ILM reaches it inside the cluster at
+`http://cbom-repository-service.ilm.svc:8080`; it is not published, because it has no authentication of its own.
+Turned off, the repository is removed while the store on the appliance keeps running with its CBOMs.
+
 ## Limitations
 
 - The node's host name and address are read-only after setup. To change the public name, change the ILM host name and
   the certificate. To rename the machine or move it to another address, reinstall it.
 - Only the ILM version in the image is offered.
 - Connectors that implement only the v1 connector interface, such as email-notification-provider 1.3.0 and
-  x509-compliance-provider 1.3.1, run but do not register with ILM.
+  x509-compliance-provider 1.3.1, run but do not register with ILM. The Components page marks them as not registered
+  and shows their URL; register them in ILM with that URL. Other connectors register on their own and count as ready
+  once ILM records the registration, also while it waits for approval.
 - Passkeys are not offered; the administrator uses a password and an authenticator app. There is one role.
-- The utils service and the CBOM repository cannot be configured.
+- The CBOM repository is reachable only by ILM, so ILM's platform settings page shows it as not reachable from the
+  browser.
 
 ## Build
 
@@ -146,9 +266,16 @@ make boot-test MEDIA=iso ARCH=arm64     # MEDIA=iso|qcow2, ARCH=arm64|amd64
 
 The test gives the VM a random setup code as a preset (see First boot), answers wizard part 1 and part 2 with one
 connector, and passes when `GET /status` reports `ready` within 25 minutes, the ILM UI answers 200, the console is
-healthy and reports the setup complete, the connector is registered with ILM, and the serial log holds no key
-material, setup code, password or TOTP seed. It prints `PASS <seconds to ready>` or `FAIL <reason>`. The VM gets 4 CPUs,
-12 GB of memory and a 50 GB disk; its state, including `serial.log`, is in `out/boot/<arch>-<media>/`.
+healthy and reports the setup complete, the manager applied its ILM settings, the connector is registered with ILM,
+the recovery kit opens and works, a backup reaches an SFTP and an S3 server the test runs on the host, cluster access
+works, and the serial log holds no key material, setup code, password or TOTP seed. It prints
+`PASS <seconds to ready>` or `FAIL <reason>`. The VM gets 4 CPUs, 12 GB of memory and a 50 GB disk; its state,
+including `serial.log`, is in `out/boot/<arch>-<media>/`.
+
+With `RESTORE=1` the first VM also creates an ILM group and stores a CBOM in the CBOM repository before the backup. A
+second VM then restores that backup under another ILM host name and the test checks, with the first VM's ILM
+administrator certificate, that the group and the CBOM are back and that Keycloak accepts the restored client. It
+prints `PASS <seconds> restored <seconds>`.
 
 By default `test/boot/drive` answers the wizard through the API. With `E2E=1` the Playwright tests in `test/e2e` answer
 it in Chromium instead and then change settings in the console (DNS servers, a trusted CA, a component, the audit log):

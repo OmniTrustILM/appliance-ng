@@ -43,6 +43,8 @@ const (
 	restorePassphrase = "restore-Passphrase-that-must-stay-inside"
 	restoreS3Secret   = "restore-s3-secret-key-never-leaves"
 	restoreSFTPPass   = "restore-sftp-Pa55word-never-leaves"
+	restoreDBPassword = "restore-db-Pa55word-never-leaves"
+	restoreIDPSecret  = "restore-idp-secret-never-leaves"
 	restoreName       = "old-node-20261101T020000Z-0.1.0.ilmbackup"
 	restoreILMHost    = "ilm.old.example.com"
 	restoreNodeHost   = "old-node"
@@ -750,7 +752,14 @@ func restoreSecretAnswers(t *testing.T, h *harness, s *session, answers *bytes.B
 		h.request(http.MethodPost, pathRestoreList, RestoreTargetRequest{Target: restoreS3Target()}, s),
 		h.inspect("upload", restoreName, kit, restorePassphrase+"-wrong", s),
 		h.inspect("upload", restoreName, kit, restorePassphrase, s),
-		h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s),
+		h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, Dependencies: &DependenciesUpdate{
+			Messaging: &MessagingDependency{Mode: ModeExternal, Host: ptr("mq.example.com"), Username: ptr("ilm")},
+			Identity:  &IdentityDependency{Mode: ModeExternal, Issuer: ptr("https://idp.example.com"), ClientId: ptr("ilm"), ClientSecret: ptr(restoreIDPSecret)},
+		}}, s),
+		h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, Dependencies: &DependenciesUpdate{
+			Database: externalDatabaseBody("db.example.com", ptr(restoreDBPassword)),
+			Identity: &IdentityDependency{Mode: ModeExternal, Issuer: ptr("https://idp.example.com"), ClientId: ptr("ilm"), ClientSecret: ptr(restoreIDPSecret)},
+		}}, s),
 		h.upload(http.MethodPost, pathRestoreResume, map[string][]byte{"kit": kit, "passphrase": []byte(restorePassphrase)}, s),
 		h.request(http.MethodGet, pathRestore, nil, s),
 	} {

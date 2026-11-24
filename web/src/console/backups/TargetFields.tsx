@@ -1,9 +1,9 @@
-import { useId, type ReactNode } from 'react';
+import { useId } from 'react';
 import type { components } from '../../api/schema';
 import { Alert } from '../../components/Alert';
 import { ChoiceField } from '../../components/ChoiceField';
 import { Field, INPUT } from '../../components/Field';
-import { cx } from '../../components/cx';
+import { TextArea } from '../../components/TextArea';
 import { HostKeyStep } from './HostKeyStep';
 import type { Kind, NFSVersion, SetValue, TextKey, Values } from './targetValues';
 
@@ -23,22 +23,6 @@ export function textField(values: Values, set: SetValue) {
   return (key: TextKey, label: string, extra: Partial<Parameters<typeof Field>[0]> = {}) => (
     <Field label={label} name={key} value={values[key]} onChange={(event) => set(key, event.target.value as never)}
       autoComplete="off" spellCheck={false} {...extra} />
-  );
-}
-
-type TextAreaProps = Readonly<{ label: string; name: string; value: string; onChange: (value: string) => void; hint?: ReactNode; error?: string }>;
-
-function TextArea({ label, name, value, onChange, hint, error }: TextAreaProps) {
-  const id = useId();
-  return (
-    <div className="mb-[18px]">
-      <label htmlFor={id} className="mb-1.5 block text-sm font-medium">{label}</label>
-      <textarea id={id} name={name} value={value} onChange={(event) => onChange(event.target.value)} rows={4}
-        spellCheck={false} autoComplete="off" aria-invalid={error ? true : undefined}
-        className={cx(INPUT, 'h-auto py-2 font-mono text-[13px]')} />
-      {hint && <p className="mt-1 text-[13px] text-content-subtle">{hint}</p>}
-      {error && <p className="mt-1.5 text-[13px] text-danger" role="alert">{error}</p>}
-    </div>
   );
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
@@ -28,7 +29,7 @@ type secretRef struct {
 
 // CollectSecrets returns the Secrets a restore needs, without the metadata of the cluster they came from, sorted by
 // namespace and name: every Secret the Appliance references (a missing one is an error), the appliance's own
-// account, key and recipient Secrets, the CA Secrets, and in the platform namespace the CA key pairs, the
+// account, key, recipient and ILM identity Secrets, the CA Secrets, and in the platform namespace the CA key pairs, the
 // administrator certificate, the Keycloak client and administrator Secrets and the key Secret of every Connector and
 // of every connector named in keyed. A removed connector's key Secret stays, and so does what the connector stored
 // with it in the database. Other Secrets that do not exist are skipped.
@@ -86,7 +87,8 @@ func Restorable(a *v1alpha1.Appliance, namespace, name string) bool {
 // connector keys aside.
 func ownRefs() []secretRef {
 	var refs []secretRef
-	for _, name := range []string{auth.UsersSecret, auth.UsersKeySecret, recovery.RecipientSecret} {
+	// The manager's ILM identity matches its user in the database the backup holds.
+	for _, name := range []string{auth.UsersSecret, auth.UsersKeySecret, recovery.RecipientSecret, ilmclient.IdentitySecret} {
 		refs = append(refs, secretRef{namespace: kube.SystemNamespace, name: name})
 	}
 	refs = append(refs, secretRef{namespace: certs.ClusterResourceNamespace, name: certs.RootCAName})
@@ -116,34 +118,65 @@ func dedupe(refs []secretRef) []secretRef {
 // referenced lists the Secrets of the Appliance's spec, all in the appliance namespace.
 func referenced(a *v1alpha1.Appliance) []secretRef {
 	var refs []secretRef
-	add := func(name string) {
+	for _, name := range referencedNames(a.Spec) {
 		if name != "" {
 			refs = append(refs, secretRef{namespace: kube.SystemNamespace, name: name, required: true})
 		}
 	}
-	addKey := func(ref *v1alpha1.SecretKeyRef) {
-		if ref != nil {
-			add(ref.Name)
-		}
-	}
-	spec := a.Spec
-	add(spec.TLS.SecretRef)
-	addKey(spec.Trust)
+	return refs
+}
+
+// referencedNames lists the names of the Secrets spec references, empty for a reference it leaves out.
+func referencedNames(spec v1alpha1.ApplianceSpec) []string {
+	names := []string{spec.TLS.SecretRef, keyName(spec.Trust)}
 	for _, r := range spec.Registries {
-		add(r.CredentialsRef)
+		names = append(names, r.CredentialsRef)
 	}
 	if spec.Mail != nil {
-		add(spec.Mail.CredentialsRef)
+		names = append(names, spec.Mail.CredentialsRef)
 	}
+	names = append(names, platformSecretNames(spec.Platform)...)
 	if spec.Backup != nil {
 		for _, t := range spec.Backup.Targets {
-			add(t.CredentialsRef)
+			names = append(names, t.CredentialsRef)
 			if t.S3 != nil {
-				addKey(t.S3.CA)
+				names = append(names, keyName(t.S3.CA))
 			}
 		}
 	}
-	return refs
+	return names
+}
+
+// platformSecretNames lists the names of the Secrets of the platform's external dependencies and CBOM store.
+func platformSecretNames(p *v1alpha1.PlatformSpec) []string {
+	if p == nil {
+		return nil
+	}
+	var names []string
+	if p.Database != nil {
+		names = append(names, p.Database.CredentialsRef, keyName(p.Database.CA))
+	}
+	if p.Messaging != nil {
+		names = append(names, p.Messaging.CredentialsRef, keyName(p.Messaging.CA))
+	}
+	if p.Identity != nil {
+		names = append(names, p.Identity.CredentialsRef)
+	}
+	if c := p.CBOM; c != nil && c.Storage == v1alpha1.CBOMStorageS3 {
+		names = append(names, c.CredentialsRef)
+		if c.S3 != nil {
+			names = append(names, keyName(c.S3.CA))
+		}
+	}
+	return names
+}
+
+// keyName is the name of the Secret ref names, empty without ref.
+func keyName(ref *v1alpha1.SecretKeyRef) string {
+	if ref == nil {
+		return ""
+	}
+	return ref.Name
 }
 
 // portable copies what a restore applies: name, namespace, labels, annotations, type and data. It drops the

@@ -539,3 +539,133 @@ func TestManagedRecreateFails(t *testing.T) {
 		t.Errorf("error = %v, want the failed recreate", err)
 	}
 }
+
+func TestCheckExternal(t *testing.T) {
+	quickPods(t)
+	runPods(t)
+	for _, tc := range []struct {
+		name          string
+		isReady, psql error
+		want          error
+		// wantExit is the exit code of a psql that did not run the check, reported as it is.
+		wantExit int
+	}{
+		{name: "ok"},
+		{name: "unreachable", isReady: &kube.ExitError{Code: 2}, want: ErrDatabaseUnreachable},
+		{name: "refused", psql: &kube.ExitError{Code: 2}, want: ErrDatabaseAuthFailed},
+		{name: "killed", psql: &kube.ExitError{Code: 137}, wantExit: 137},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var env []corev1.EnvVar
+			var secretData map[string][]byte
+			f := &fakeExec{handler: func(c call, _ io.Writer) error {
+				if c.cmd[0] == "pg_isready" {
+					pod := systemPods(t)[0]
+					env = pod.Spec.Containers[0].Env
+					s := &corev1.Secret{}
+					if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: env[3].ValueFrom.SecretKeyRef.Name}, s); err != nil {
+						t.Fatal(err)
+					}
+					secretData = s.Data
+					return tc.isReady
+				}
+				if !slices.Contains(c.cmd, "SELECT 1") {
+					t.Errorf("command %v", c.cmd)
+				}
+				return tc.psql
+			}}
+			err := checkExternal(context.Background(), testClient, nil, externalCheck{db: externalDB, username: "ilm", password: "db-pw"}, f.exec)
+			var exit *kube.ExitError
+			switch {
+			case tc.wantExit != 0:
+				if !errors.As(err, &exit) || exit.Code != tc.wantExit || errors.Is(err, ErrDatabaseAuthFailed) {
+					t.Fatalf("error = %v, want exit %d", err, tc.wantExit)
+				}
+			case !errors.Is(err, tc.want) || (tc.want == nil && err != nil):
+				t.Fatalf("error = %v, want %v", err, tc.want)
+			}
+			if env[0].Value != "db.example.com" || string(secretData["username"]) != "ilm" || string(secretData["password"]) != "db-pw" {
+				t.Errorf("env %+v, secret keys %d", env, len(secretData))
+			}
+			for _, c := range f.calls {
+				if strings.Contains(strings.Join(c.cmd, " "), "db-pw") {
+					t.Errorf("the password is in the command %v", c.cmd)
+				}
+			}
+			secrets := &corev1.SecretList{}
+			if err := testClient.List(context.Background(), secrets, client.InNamespace("appliance-system")); err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range secrets.Items {
+				if strings.HasPrefix(s.Name, checkPrefix) {
+					t.Errorf("secret %s left behind", s.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckExternalWithTLS(t *testing.T) {
+	quickPods(t)
+	runPods(t)
+	var pod corev1.Pod
+	var ca []byte
+	f := &fakeExec{handler: func(c call, _ io.Writer) error {
+		if c.cmd[0] == "pg_isready" {
+			pod = systemPods(t)[0]
+			s := &corev1.Secret{}
+			if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pod.Spec.Volumes[0].Secret.SecretName}, s); err != nil {
+				t.Fatal(err)
+			}
+			ca = s.Data["ca.crt"]
+		}
+		return nil
+	}}
+	db := externalDB
+	db.TLSMode = "verify-full"
+	if err := checkExternal(context.Background(), testClient, nil, externalCheck{db: db, username: "ilm", password: "db-pw", ca: []byte("PEM CA")}, f.exec); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, e := range pod.Spec.Containers[0].Env {
+		env[e.Name] = e.Value
+	}
+	if env["PGSSLMODE"] != "verify-full" || env["PGSSLROOTCERT"] != "/etc/ilm/db-ca/ca.crt" || string(ca) != "PEM CA" {
+		t.Errorf("env %v, CA %q", env, ca)
+	}
+	if m := pod.Spec.Containers[0].VolumeMounts; len(m) != 1 || m[0].MountPath != "/etc/ilm/db-ca" {
+		t.Errorf("mounts %+v", m)
+	}
+}
+
+func TestCheckExternalVerifyFullRunsOnce(t *testing.T) {
+	quickPods(t)
+	runPods(t)
+	db := externalDB
+	db.TLSMode = "verify-full"
+	var mode string
+	f := &fakeExec{handler: func(c call, _ io.Writer) error {
+		if c.cmd[0] == "pg_isready" {
+			for _, e := range systemPods(t)[0].Spec.Containers[0].Env {
+				if e.Name == "PGSSLMODE" {
+					mode = e.Value
+				}
+			}
+			return nil
+		}
+		return &kube.ExitError{Code: 2}
+	}}
+	err := checkExternal(context.Background(), testClient, nil, externalCheck{db: db, username: "ilm", password: "db-pw", ca: []byte("PEM CA")}, f.exec)
+	if !errors.Is(err, ErrDatabaseAuthFailed) {
+		t.Errorf("error = %v, want ErrDatabaseAuthFailed", err)
+	}
+	var sessions [][]string
+	for _, c := range f.calls {
+		if c.cmd[0] != "pg_isready" {
+			sessions = append(sessions, c.cmd)
+		}
+	}
+	if mode != "verify-full" || len(sessions) != 1 || sessions[0][0] != "psql" {
+		t.Errorf("mode %q, sessions %v; want one psql session in verify-full", mode, sessions)
+	}
+}

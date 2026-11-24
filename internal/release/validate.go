@@ -18,7 +18,7 @@ import (
 
 var imageRefPattern = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]+)?/[^ ]+:[^ ]+$`)
 
-// Validate checks every add-on file against its pinned hash and reports each
+// Validate checks every add-on file and chart archive against its pinned hash and reports each
 // image the files or the connector catalogue use that the manifest does not list,
 // and a manager image placeholder that no add-on uses.
 func Validate(m *Manifest, addons fs.FS) []error {
@@ -36,9 +36,22 @@ func Validate(m *Manifest, addons fs.FS) []error {
 	if m.ManagerImage != "" {
 		manager = normalize(m.ManagerImage)
 	}
+	addonErrs, managerUsed := validateAddons(m.Addons, addons, listed, implicit, manager)
+	errs = append(errs, addonErrs...)
+	errs = append(errs, validateCharts(m.Charts, addons)...)
+	if manager != "" && !managerUsed {
+		errs = append(errs, fmt.Errorf("manager image %s is used by no add-on", m.ManagerImage))
+	}
+	return errs
+}
+
+// validateAddons checks each add-on file against its pinned hash and reports each image it uses that listed lacks,
+// once; implicit names the images used without a registry. It tells whether an add-on uses the manager image.
+func validateAddons(files []AddonFile, addons fs.FS, listed map[string]string, implicit map[string]bool, manager string) ([]error, bool) {
+	var errs []error
 	managerUsed := false
 	reported := map[string]bool{}
-	for _, addon := range m.Addons {
+	for _, addon := range files {
 		data, err := readAddon(addons, addon)
 		if err != nil {
 			errs = append(errs, err)
@@ -61,8 +74,16 @@ func Validate(m *Manifest, addons fs.FS) []error {
 			}
 		}
 	}
-	if manager != "" && !managerUsed {
-		errs = append(errs, fmt.Errorf("manager image %s is used by no add-on", m.ManagerImage))
+	return errs, managerUsed
+}
+
+// validateCharts checks each chart archive against its pinned hash.
+func validateCharts(charts []Chart, addons fs.FS) []error {
+	var errs []error
+	for _, c := range charts {
+		if _, err := readAddon(addons, AddonFile{Name: c.Name, File: c.File, SHA256: c.SHA256}); err != nil {
+			errs = append(errs, fmt.Errorf("chart: %w", err))
+		}
 	}
 	return errs
 }

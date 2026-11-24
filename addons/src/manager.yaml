@@ -192,7 +192,11 @@ subjects:
 # registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
 # dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods. A
 # restore waits for the managed Keycloak, stops it, waits for the ILM pods to go, deletes the CertificateRequests so that
-# cert-manager keeps the restored Secrets, writes those into the live Secrets and loads the dump the same way.
+# cert-manager keeps the restored Secrets, writes those into the live Secrets and loads the dump the same way. The
+# manager issues its own ILM certificate from the administrator CA and registers it once over a port-forward to Core,
+# which answers its bootstrap endpoint only to localhost. The CBOM repository's store keeps its data on a volume claim
+# the manager creates once; turning the repository off deletes its Deployments, Services, the copy of an external
+# store's credentials and the repository's CA Secret.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -204,13 +208,25 @@ rules:
     verbs: [get, create, update, patch]
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [appliance-trust, appliance-registry-credentials, appliance-mail]
+    resourceNames: [appliance-trust, appliance-registry-credentials, appliance-mail, appliance-database, appliance-database-ca,
+      appliance-messaging, appliance-messaging-ca, appliance-cbom-s3, trusted-certificates-cbom-repository]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, create]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [cbom-s3, cbom-repository-deployment]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [services]
+    resourceNames: [cbom-s3, cbom-repository-service]
     verbs: [delete]
   - apiGroups: [""]
     resources: [pods]
     verbs: [list]
   - apiGroups: [""]
-    resources: [pods/exec]
+    resources: [pods/exec, pods/portforward]
     verbs: [create]
   - apiGroups: [postgresql.cnpg.io]
     resources: [clusters]
