@@ -53,11 +53,12 @@ func (c *client) restore(ctx context.Context, o options, cl cluster) error {
 	if err := c.upload(ctx, o.backupFile, name); err != nil {
 		return err
 	}
-	if err := c.inspect(ctx, name, kit, passphrase); err != nil {
+	inspection, err := c.inspect(ctx, name, kit, passphrase)
+	if err != nil {
 		return err
 	}
 	step("start the restore")
-	start := map[string]any{"ilmHostName": o.ilmHost, "inPlace": false, "confirm": true}
+	start := map[string]any{"inspection": inspection, "ilmHostName": o.ilmHost, "inPlace": false, "confirm": true}
 	if err := c.call(ctx, http.MethodPost, restorePath+"/start", start, nil); err != nil {
 		return err
 	}
@@ -119,23 +120,24 @@ func (c *client) upload(ctx context.Context, file, name string) error {
 	return nil
 }
 
-// inspect checks the uploaded backup with the kit and prints what the restore would change.
-func (c *client) inspect(ctx context.Context, name string, kit []byte, passphrase string) error {
+// inspect checks the uploaded backup with the kit, prints what the restore would change and returns the check's
+// inspection, which the start names.
+func (c *client) inspect(ctx context.Context, name string, kit []byte, passphrase string) (string, error) {
 	step("check the backup with the recovery kit")
 	var sum struct {
-		Backup, HostName, IlmHostName, Ilm, Operator, Appliance, Database string
-		DatabaseIncluded                                                  bool
-		Accounts, Clashes, Components                                     []string
+		Inspection, Backup, HostName, IlmHostName, Ilm, Operator, Appliance, Database string
+		DatabaseIncluded                                                              bool
+		Accounts, Clashes, Components                                                 []string
 	}
 	fields := map[string]string{"source": "upload", "name": name, partPassphrase: passphrase}
 	if err := c.multipart(ctx, restorePath+"/inspect", fields, kit, &sum); err != nil {
-		return err
+		return "", err
 	}
 	fmt.Printf("drive: backup %s of %s, ILM %s on %s, operator %s, appliance %s\n",
 		sum.Backup, sum.HostName, sum.Ilm, sum.IlmHostName, sum.Operator, sum.Appliance)
 	fmt.Printf("drive: database %s, included %t, %d account(s), %d clash(es), components %v\n",
 		sum.Database, sum.DatabaseIncluded, len(sum.Accounts), len(sum.Clashes), sum.Components)
-	return nil
+	return sum.Inspection, nil
 }
 
 // waitRestored follows the restore until it is done. A restore that waits for its kit is resumed with it; one that

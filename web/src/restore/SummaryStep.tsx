@@ -26,7 +26,7 @@ export function SummaryStep({ summary, onStarted, onBack }: SummaryStepProps) {
   async function start() {
     setBusy(true);
     setRefusal(undefined);
-    const body = { inPlace: false, ilmHostName: host.trim(), confirm: true };
+    const body = { inspection: summary.inspection, inPlace: false, ilmHostName: host.trim(), confirm: true };
     const refused = refusalOf(await attempt(() => api.POST('/restore/start', { body, signal: timeoutSignal(restoreTimeoutMs) })));
     setBusy(false);
     if (refused) return setRefusal(refused);

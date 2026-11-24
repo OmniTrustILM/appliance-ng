@@ -16,7 +16,7 @@ const RESUME = 'POST /appliance/api/v1/restore/resume';
 const backupName = 'old-node-20261101T020000Z-1.0.0.ilmbackup';
 const passphrase = 'the kit passphrase';
 const summary = {
-  backup: backupName, inPlace: false, time: '2026-11-01T02:00:00Z', hostName: 'old-node', ilmHostName: 'ilm.old.example.test',
+  inspection: 'check-1', backup: backupName, inPlace: false, time: '2026-11-01T02:00:00Z', hostName: 'old-node', ilmHostName: 'ilm.old.example.test',
   nodeHostName: 'new-node', ilm: '2.20.0', operator: '1.1.0', appliance: '1.0.0', database: 'managed', databaseIncluded: true,
   accounts: ['admin', 'alice'], clashes: ['admin'], components: ['core'],
 };
@@ -80,7 +80,7 @@ describe('RestorePage', () => {
     await userEvent.clear(host);
     await userEvent.type(host, 'ilm.new.example.test');
     await userEvent.click(screen.getByRole('button', { name: 'Restore the backup' }));
-    expect(sent[START]).toEqual([{ inPlace: false, ilmHostName: 'ilm.new.example.test', confirm: true }]);
+    expect(sent[START]).toEqual([{ inspection: 'check-1', inPlace: false, ilmHostName: 'ilm.new.example.test', confirm: true }]);
     expect(await screen.findByRole('heading', { name: `Restoring ${backupName}` })).toBeInTheDocument();
     expect(screen.getByText('Load the database').closest('li')).toHaveAttribute('aria-current', 'step');
   });

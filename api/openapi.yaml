@@ -1703,9 +1703,10 @@ paths:
       summary: Restore the backup checked in this session
       description: |
         Starts the restore of the backup this session checked last and answers before it ends; `GET /restore`
-        reports its progress. Needs `confirm` set to true. A restore in place takes a local backup of the running ILM
-        version; a fresh restore an uploaded or fetched one. The whole backup is verified again before anything
-        changes. Refusals with 409: `not_inspected`, `not_local`, `version_unavailable`, `busy`, `setup`,
+        reports its progress. Needs `confirm` set to true and the `inspection` of that check's summary. A restore in
+        place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
+        backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
+        check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
         `upgrade_in_progress`, `backup_running`, and `tampered` or `truncated` for a backup changed since its check.
       security:
         - session: []
@@ -3019,9 +3020,12 @@ components:
           writeOnly: true
     RestoreSummary:
       type: object
-      required: [backup, inPlace, time, hostName, ilmHostName, nodeHostName, ilm, operator, appliance, database,
-        databaseIncluded, accounts, clashes, components]
+      required: [inspection, backup, inPlace, time, hostName, ilmHostName, nodeHostName, ilm, operator, appliance,
+        database, databaseIncluded, accounts, clashes, components]
       properties:
+        inspection:
+          type: string
+          description: Identifies this check of the backup; `POST /restore/start` names it to restore this backup.
         backup:
           type: string
           description: The backup's file name.
@@ -3069,8 +3073,11 @@ components:
             type: string
     RestoreStart:
       type: object
-      required: [inPlace, confirm]
+      required: [inspection, inPlace, confirm]
       properties:
+        inspection:
+          type: string
+          description: The `inspection` of the summary being confirmed.
         inPlace:
           type: boolean
           description: Restore a local backup onto this appliance instead of onto a fresh one.

@@ -1235,6 +1235,9 @@ type RestoreStart struct {
 
 	// InPlace Restore a local backup onto this appliance instead of onto a fresh one.
 	InPlace bool `json:"inPlace"`
+
+	// Inspection The `inspection` of the summary being confirmed.
+	Inspection string `json:"inspection"`
 }
 
 // RestoreState defines model for RestoreState.
@@ -1267,6 +1270,9 @@ type RestoreSummary struct {
 	// IlmHostName The backup's ILM host name, which the restore keeps unless another is given.
 	IlmHostName string `json:"ilmHostName"`
 	InPlace     bool   `json:"inPlace"`
+
+	// Inspection Identifies this check of the backup; `POST /restore/start` names it to restore this backup.
+	Inspection string `json:"inspection"`
 
 	// NodeHostName This node's host name, which the restore keeps.
 	NodeHostName string `json:"nodeHostName"`

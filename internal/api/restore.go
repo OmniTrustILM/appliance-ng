@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +44,9 @@ const (
 
 var (
 	answerNotInspected = refused(http.StatusConflict, "not_inspected", "Check the backup with the recovery kit first.")
-	answerNotLocal     = refused(http.StatusConflict, "not_local",
+	answerSuperseded   = refused(http.StatusConflict, "superseded",
+		"Another backup check in this session replaced this one; check the backup again.")
+	answerNotLocal = refused(http.StatusConflict, "not_local",
 		"A restore in place takes a backup on this appliance's data volume; a fresh restore an uploaded or fetched one.")
 	answerUnconfirmed = refusedField(codeInvalid, fieldConfirm,
 		"Confirm that the backup replaces what the appliance holds now.")
@@ -82,8 +85,10 @@ var (
 )
 
 // inspection is a backup that passed Inspect, kept in memory for the session that checked it until a restore
-// starts from it or another backup is checked. The backup key is never written anywhere.
+// starts from it or another backup is checked. The backup key is never written anywhere. ref identifies the check to
+// the start that confirms its summary.
 type inspection struct {
+	ref     string
 	token   string
 	name    string
 	file    string
@@ -248,9 +253,10 @@ func (s *Server) inspect(ctx context.Context, name string, local bool, parts map
 	if running := a.Status.Versions.ILM; local && running != summary.Manifest.ILM {
 		return versionUnavailable(running, summary.Manifest.ILM), nil
 	}
-	s.keepInspection(&inspection{token: requestFrom(ctx).token, name: name, file: file, local: local, summary: summary, id: kit.BackupKey})
+	in := &inspection{ref: rand.Text(), token: requestFrom(ctx).token, name: name, file: file, local: local, summary: summary, id: kit.BackupKey}
+	s.keepInspection(in)
 	s.deps.Log.Info("backup checked for a restore", "backup", name, "local", local, "ilm", summary.Manifest.ILM)
-	return restoreAnswer{status: http.StatusOK, body: summaryOf(name, local, summary, a.Spec.Node.HostName)}, nil
+	return restoreAnswer{status: http.StatusOK, body: summaryOf(in, a.Spec.Node.HostName)}, nil
 }
 
 // orFailure is the refusal a, or no answer when a call failed instead.
@@ -313,10 +319,10 @@ func (s *Server) userNames(ctx context.Context) ([]string, error) {
 	return auth.UserNames(secret)
 }
 
-func summaryOf(name string, local bool, sum restore.Summary, nodeHost string) RestoreSummary {
-	m := sum.Manifest
+func summaryOf(in *inspection, nodeHost string) RestoreSummary {
+	sum, m := in.summary, in.summary.Manifest
 	return RestoreSummary{
-		Backup: name, InPlace: local, Time: m.Time.UTC(), HostName: m.HostName, IlmHostName: m.ILMHostName, NodeHostName: nodeHost,
+		Inspection: in.ref, Backup: in.name, InPlace: in.local, Time: m.Time.UTC(), HostName: m.HostName, IlmHostName: m.ILMHostName, NodeHostName: nodeHost,
 		Ilm: m.ILM, Operator: m.Operator, Appliance: m.Appliance, Database: RestoreSummaryDatabase(m.Database),
 		DatabaseIncluded: m.DatabaseIncluded, Accounts: nonNil(sum.Accounts), Clashes: nonNil(sum.Clashes), Components: nonNil(sum.Components),
 	}
@@ -364,6 +370,9 @@ func (s *Server) PostRestoreStart(ctx context.Context, req PostRestoreStartReque
 	details["inPlace"] = strconv.FormatBool(req.Body.InPlace)
 	if in == nil {
 		return answered(ctx, details, answerNotInspected), nil
+	}
+	if req.Body.Inspection != in.ref {
+		return answered(ctx, details, answerSuperseded), nil
 	}
 	if !s.restoreMu.TryLock() {
 		return answered(ctx, details, answerRestoreBusy), nil

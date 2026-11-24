@@ -28,9 +28,10 @@ export function InPlaceRestore({ backup, onCancel }: Readonly<{ backup: Backup; 
   const [started, setStarted] = useState(false);
 
   async function restore(kit: File, passphrase: string) {
-    const refused = refusalOf(await attempt(() => inspectBackup('local', backup.name, kit, passphrase)));
-    if (refused) return refused;
-    const body = { inPlace: true, confirm: true };
+    const checked = await attempt(() => inspectBackup('local', backup.name, kit, passphrase));
+    const refused = refusalOf(checked);
+    if (refused || !checked?.data) return refused;
+    const body = { inspection: checked.data.inspection, inPlace: true, confirm: true };
     const failed = refusalOf(await attempt(() => api.POST('/restore/start', { body, signal: timeoutSignal(restoreTimeoutMs) })));
     if (!failed) setStarted(true);
     return failed;

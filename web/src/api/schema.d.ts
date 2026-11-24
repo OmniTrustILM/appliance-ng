@@ -1125,9 +1125,10 @@ export interface paths {
         /**
          * Restore the backup checked in this session
          * @description Starts the restore of the backup this session checked last and answers before it ends; `GET /restore`
-         *     reports its progress. Needs `confirm` set to true. A restore in place takes a local backup of the running ILM
-         *     version; a fresh restore an uploaded or fetched one. The whole backup is verified again before anything
-         *     changes. Refusals with 409: `not_inspected`, `not_local`, `version_unavailable`, `busy`, `setup`,
+         *     reports its progress. Needs `confirm` set to true and the `inspection` of that check's summary. A restore in
+         *     place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
+         *     backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
+         *     check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
          *     `upgrade_in_progress`, `backup_running`, and `tampered` or `truncated` for a backup changed since its check.
          */
         post: operations["postRestoreStart"];
@@ -1825,6 +1826,8 @@ export interface components {
             passphrase: string;
         };
         RestoreSummary: {
+            /** @description Identifies this check of the backup; `POST /restore/start` names it to restore this backup. */
+            inspection: string;
             /** @description The backup's file name. */
             backup: string;
             inPlace: boolean;
@@ -1852,6 +1855,8 @@ export interface components {
             components: string[];
         };
         RestoreStart: {
+            /** @description The `inspection` of the summary being confirmed. */
+            inspection: string;
             /** @description Restore a local backup onto this appliance instead of onto a fresh one. */
             inPlace: boolean;
             /** @description The ILM host name to set; left out, the backup's is kept. */

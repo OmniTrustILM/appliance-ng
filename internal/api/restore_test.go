@@ -184,6 +184,28 @@ func (h *harness) inspect(source, name string, kit []byte, passphrase string, s 
 	}, s)
 }
 
+// inspectionOf is the identifier of the backup check whose summary rec answers.
+func inspectionOf(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	wantStatus(t, rec, http.StatusOK)
+	var sum RestoreSummary
+	decode(t, rec, &sum)
+	if sum.Inspection == "" {
+		t.Fatal("the summary names no inspection")
+	}
+	return sum.Inspection
+}
+
+// checked is the identifier of the backup check the server keeps.
+func (h *harness) checked() string {
+	h.srv.inspectMu.Lock()
+	defer h.srv.inspectMu.Unlock()
+	if h.srv.inspected == nil {
+		return ""
+	}
+	return h.srv.inspected.ref
+}
+
 func wantCode(t *testing.T, rec *httptest.ResponseRecorder, status int, code string) {
 	t.Helper()
 	wantStatus(t, rec, status)
@@ -221,7 +243,7 @@ func TestRestoreStartNeedsInspect(t *testing.T) {
 	start := RestoreStart{Confirm: true, IlmHostName: ptr("ilm.new.example.com")}
 
 	wantCode(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusConflict, "not_inspected")
-	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
+	start.Inspection = inspectionOf(t, h.inspect("upload", restoreName, kit, restorePassphrase, s))
 	other := h.signIn()
 	wantCode(t, h.request(http.MethodPost, pathRestoreStart, start, other), http.StatusConflict, "not_inspected")
 	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{}, s), http.StatusBadRequest, codeInvalid)
@@ -249,6 +271,26 @@ func TestRestoreStartNeedsInspect(t *testing.T) {
 	}
 }
 
+// TestRestoreStartNeedsTheCheckItConfirms is a session that checked two backups, as from two tabs: the summary of
+// the first no longer starts a restore.
+func TestRestoreStartNeedsTheCheckItConfirms(t *testing.T) {
+	h, s, f, _, kit := freshRestore(t)
+	first := inspectionOf(t, h.inspect("upload", restoreName, kit, restorePassphrase, s))
+	second := inspectionOf(t, h.inspect("upload", restoreName, kit, restorePassphrase, s))
+	if first == second {
+		t.Fatal("two checks share one inspection")
+	}
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, Inspection: first}, s), http.StatusConflict, "superseded")
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s), http.StatusConflict, "superseded")
+	if len(f.started) != 0 {
+		t.Fatalf("started %+v from a superseded check", f.started)
+	}
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, Inspection: second}, s), http.StatusAccepted)
+	if len(f.started) != 1 {
+		t.Errorf("started %d restores, want 1", len(f.started))
+	}
+}
+
 func TestInPlaceNeedsSameVersion(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
@@ -270,14 +312,14 @@ func TestInPlaceNeedsSameVersion(t *testing.T) {
 	}
 
 	wantStatus(t, h.inspect("local", same, kit, restorePassphrase, s), http.StatusOK)
-	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s), http.StatusConflict, "not_local")
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s), http.StatusConflict, "not_local")
 	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Versions.ILM = "2.21.0" })
-	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, InPlace: true}, s), http.StatusConflict, "version_unavailable")
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, InPlace: true}, s), http.StatusConflict, "version_unavailable")
 	if len(f.started) != 0 {
 		t.Fatalf("restored in place over another ILM version: %+v", f.started)
 	}
 	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Versions.ILM = running })
-	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, InPlace: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, InPlace: true}, s), http.StatusAccepted)
 	if len(f.started) != 1 || !f.started[0].opts.InPlace || f.started[0].file != filepath.Join(local, same) {
 		t.Errorf("started %+v", f.started)
 	}
@@ -412,12 +454,12 @@ func TestRestoreStartWhileTheBackupChanges(t *testing.T) {
 	h, s, f, _, kit := freshRestore(t)
 	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
 	h.srv.restoreMu.Lock()
-	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s), http.StatusConflict, "busy")
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s), http.StatusConflict, "busy")
 	h.srv.restoreMu.Unlock()
 	if len(f.started) != 0 {
 		t.Errorf("started %+v while an upload held the backup", f.started)
 	}
-	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s), http.StatusAccepted)
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s), http.StatusAccepted)
 }
 
 func TestInspectRefusals(t *testing.T) {
@@ -497,9 +539,9 @@ func TestInspectOpensTheKitInTheKitSlot(t *testing.T) {
 func TestRestoreStartRefusals(t *testing.T) {
 	h, s, f, _, kit := freshRestore(t)
 	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
-	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, IlmHostName: ptr("not a host")}, s),
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, IlmHostName: ptr("not a host")}, s),
 		http.StatusBadRequest, codeInvalid)
-	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, InPlace: true}, s), http.StatusConflict, "not_local")
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true, InPlace: true}, s), http.StatusConflict, "not_local")
 	for err, code := range map[error]string{
 		restore.ErrBusy:              "busy",
 		restore.ErrSetup:             "setup",
@@ -507,10 +549,10 @@ func TestRestoreStartRefusals(t *testing.T) {
 		restore.ErrBackupRunning:     "backup_running",
 	} {
 		f.startErr = err
-		wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s), http.StatusConflict, code)
+		wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s), http.StatusConflict, code)
 	}
 	f.startErr = errors.New("open /data/restore/secret-path: denied")
-	rec := h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s)
+	rec := h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s)
 	wantStatus(t, rec, http.StatusInternalServerError)
 	if strings.Contains(rec.Body.String()+h.logs.String(), "secret-path") {
 		t.Error("the engine's error text left the manager")
@@ -702,7 +744,7 @@ func restoreSecretAnswers(t *testing.T, h *harness, s *session, answers *bytes.B
 		h.request(http.MethodPost, pathRestoreList, RestoreTargetRequest{Target: restoreS3Target()}, s),
 		h.inspect("upload", restoreName, kit, restorePassphrase+"-wrong", s),
 		h.inspect("upload", restoreName, kit, restorePassphrase, s),
-		h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true}, s),
+		h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s),
 		h.upload(http.MethodPost, pathRestoreResume, map[string][]byte{"kit": kit, "passphrase": []byte(restorePassphrase)}, s),
 		h.request(http.MethodGet, pathRestore, nil, s),
 	} {

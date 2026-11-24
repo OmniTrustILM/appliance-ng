@@ -60,7 +60,7 @@ describe('BackupsPage', () => {
     const name = 'appliance-20261120T020000Z-1.0.0.ilmbackup';
     const { sent } = stubApi({
       [BACKUPS]: [200, backups()],
-      'POST /appliance/api/v1/restore/inspect': [200, { backup: name, inPlace: true }],
+      'POST /appliance/api/v1/restore/inspect': [200, { inspection: 'check-1', backup: name, inPlace: true }],
       'POST /appliance/api/v1/restore/start': [202],
     });
     render(<BackupsPage />);
@@ -77,7 +77,7 @@ describe('BackupsPage', () => {
     expect(await screen.findByRole('link', { name: 'Follow the restore' })).toHaveAttribute('href', '/appliance/restore');
     const [inspect] = sent['POST /appliance/api/v1/restore/inspect'] as Record<string, unknown>[];
     expect(inspect).toMatchObject({ source: 'local', name, passphrase: 'the kit passphrase' });
-    expect(sent['POST /appliance/api/v1/restore/start']).toEqual([{ inPlace: true, confirm: true }]);
+    expect(sent['POST /appliance/api/v1/restore/start']).toEqual([{ inspection: 'check-1', inPlace: true, confirm: true }]);
   });
 
   it('shows why a restore in place was refused and starts nothing', async () => {

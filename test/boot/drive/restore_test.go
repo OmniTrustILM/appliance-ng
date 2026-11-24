@@ -95,7 +95,7 @@ func (rc *restoreConsole) serve(t *testing.T) *httptest.Server {
 			return
 		}
 		reply(w, http.StatusOK, map[string]any{
-			"backup": rc.uploadName, "hostName": testHostName, "ilmHostName": testHostName, "nodeHostName": testRestoreHost,
+			"inspection": "check-1", "backup": rc.uploadName, "hostName": testHostName, "ilmHostName": testHostName, "nodeHostName": testRestoreHost,
 			"ilm": "2.20.0", "operator": "1.1.0", "appliance": "0.1.0", "database": "managed", "databaseIncluded": true,
 			"accounts": []string{"admin"}, "clashes": []string{}, "components": []string{"software-cryptography-provider"},
 		})
@@ -199,7 +199,8 @@ func TestDriveRestoreNeverPrintsSecrets(t *testing.T) {
 		rc.inspected["passphrase"] != testPassphrase {
 		t.Errorf("inspected with parts %v, want the uploaded backup, the kit and its passphrase", keys(rc.inspected))
 	}
-	if rc.started["ilmHostName"] != testRestoreHost || rc.started["confirm"] != true || rc.started["inPlace"] != false {
+	if rc.started["ilmHostName"] != testRestoreHost || rc.started["confirm"] != true || rc.started["inPlace"] != false ||
+		rc.started["inspection"] != "check-1" {
 		t.Errorf("started with %v, want a confirmed fresh restore onto %s", rc.started, testRestoreHost)
 	}
 	if rc.resumed["kit"] != string(rc.kit) || rc.resumed["passphrase"] != testPassphrase {
