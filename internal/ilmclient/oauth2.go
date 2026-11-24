@@ -102,10 +102,11 @@ func Discover(ctx context.Context, hc *http.Client, issuer string) (*Discovery, 
 	return d, nil
 }
 
-// allHTTPS tells whether each of the endpoints given is an https URL; ILM sends the client secret to one of them.
+// allHTTPS tells whether each of the endpoints given is an https URL with a host; ILM sends the client secret to one of
+// them.
 func allHTTPS(endpoints ...string) bool {
 	for _, e := range endpoints {
-		if u, err := url.Parse(e); e != "" && (err != nil || u.Scheme != "https") {
+		if u, err := url.Parse(e); e != "" && (err != nil || u.Scheme != "https" || u.Host == "") {
 			return false
 		}
 	}

@@ -279,6 +279,13 @@ func TestDiscoveryChecked(t *testing.T) {
 			t.Fatalf("plain HTTP %s: reason %q of %v", endpoint, Reason(err), err)
 		}
 	}
+	for _, hostless := range []string{"https:///token", "https:token"} {
+		doc = maps.Clone(full)
+		doc["token_endpoint"] = hostless
+		if _, err := Discover(context.Background(), idp.Client(), issuer); Reason(err) != ReasonInvalidIssuer {
+			t.Fatalf("token endpoint %s: reason %q of %v", hostless, Reason(err), err)
+		}
+	}
 	if _, err := Discover(context.Background(), idp.Client(), idp.URL+"/nope"); Reason(err) != ReasonInvalidIssuer {
 		t.Fatalf("no discovery document: reason %q of %v", Reason(err), err)
 	}
