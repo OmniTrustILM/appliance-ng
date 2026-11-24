@@ -72,9 +72,10 @@ type Options struct {
 	User string
 }
 
-// BackupRunner tells whether a backup runs.
+// BackupRunner admits a restore apart from the backups: Exclusive runs admit while no backup runs or passes its
+// checks, and refuses with backup.ErrBusy while one runs.
 type BackupRunner interface {
-	Busy() bool
+	Exclusive(admit func() error) error
 }
 
 // AuditWriter appends entries to the audit log.
@@ -262,15 +263,18 @@ func (e *Engine) admit(ctx context.Context, file string, id age.Identity, opts O
 	if upgrading {
 		return ErrUpgradeInProgress
 	}
-	if e.deps.Backups.Busy() {
+	err = e.deps.Backups.Exclusive(func() error {
+		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) {
+			st.Restore = &v1alpha1.RestoreStatus{
+				Backup: filepath.Base(file), File: file, InPlace: opts.InPlace, ILMHostName: opts.ILMHostName,
+				Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.NewTime(e.now()), StartedBy: opts.User,
+			}
+		})
+	})
+	if errors.Is(err, backup.ErrBusy) {
 		return ErrBackupRunning
 	}
-	return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) {
-		st.Restore = &v1alpha1.RestoreStatus{
-			Backup: filepath.Base(file), File: file, InPlace: opts.InPlace, ILMHostName: opts.ILMHostName,
-			Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.NewTime(e.now()), StartedBy: opts.User,
-		}
-	})
+	return err
 }
 
 // resumable checks that a restore waits to be resumed and that id opens its backup, and records it as running.

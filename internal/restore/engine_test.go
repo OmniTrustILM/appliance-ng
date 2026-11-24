@@ -92,9 +92,23 @@ func (d *fakeDumper) Recreate(ctx context.Context) error {
 	return nil
 }
 
-type fakeBackups struct{ busy bool }
+// fakeBackups admits a restore unless busy and counts the restores recorded during their admission.
+type fakeBackups struct {
+	busy             bool
+	recordedInAdmits int
+}
 
-func (b *fakeBackups) Busy() bool { return b.busy }
+func (b *fakeBackups) Exclusive(admit func() error) error {
+	if b.busy {
+		return backup.ErrBusy
+	}
+	err := admit()
+	a := &v1alpha1.Appliance{}
+	if testClient.Get(context.Background(), client.ObjectKey{Name: v1alpha1.ApplianceName}, a) == nil && a.Status.Restore.Active() {
+		b.recordedInAdmits++
+	}
+	return err
+}
 
 type memAudit struct {
 	mu      sync.Mutex
@@ -527,6 +541,9 @@ func TestFreshRestore(t *testing.T) {
 	f := newRestoreFixture(t, false)
 	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
 	f.wantDone(t)
+	if f.backups.recordedInAdmits != 1 {
+		t.Errorf("restore recorded in %d backup admissions, want 1", f.backups.recordedInAdmits)
+	}
 	want := []string{"secrets", "appliance", "platform", "stop", "ilmSecrets", "database", "start", "certificate"}
 	if !slices.Equal(f.ran, want) {
 		t.Errorf("steps %v, want %v", f.ran, want)

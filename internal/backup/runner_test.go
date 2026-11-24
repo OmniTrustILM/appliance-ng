@@ -1061,6 +1061,51 @@ func TestRunRefusesDuringRestore(t *testing.T) {
 	mustRun(t, f, RunSchedule, nil)
 }
 
+// TestExclusiveAdmitsNoBackupMeanwhile is a restore recorded while a backup asks to start: the backup waits for the
+// restore's admission and then sees the restore.
+func TestExclusiveAdmitsNoBackupMeanwhile(t *testing.T) {
+	f := newFixture(t)
+	done := make(chan error, 1)
+	err := f.runner.Exclusive(func() error {
+		go func() {
+			_, err := f.runner.Run(context.Background(), RunManual, nil)
+			done <- err
+		}()
+		time.Sleep(200 * time.Millisecond)
+		a := getAppliance(t)
+		a.Status.Restore = &v1alpha1.RestoreStatus{Backup: "b.ilmbackup", Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.Now()}
+		return testClient.Status().Update(context.Background(), a)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrRestoreInProgress) {
+		t.Fatalf("backup during the restore's admission: %v, want ErrRestoreInProgress", err)
+	}
+}
+
+func TestExclusiveRefusedWhileABackupRuns(t *testing.T) {
+	f := newFixture(t)
+	f.dumper.started, f.dumper.block = make(chan struct{}, 1), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.runner.Run(context.Background(), RunSchedule, nil)
+		done <- err
+	}()
+	<-f.dumper.started
+	called := false
+	if err := f.runner.Exclusive(func() error { called = true; return nil }); !errors.Is(err, ErrBusy) || called {
+		t.Errorf("Exclusive while a backup runs: %v, called %t; want ErrBusy without the call", err, called)
+	}
+	close(f.dumper.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.Exclusive(func() error { called = true; return nil }); err != nil || !called {
+		t.Errorf("Exclusive after the backup: %v, called %t", err, called)
+	}
+}
+
 func TestRunnerBusy(t *testing.T) {
 	f := newFixture(t)
 	if f.runner.Busy() {

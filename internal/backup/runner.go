@@ -155,6 +155,9 @@ type Runner struct {
 	running bool
 	// pending is a replace or scheduled run that waits for the running backup to end.
 	pending *pendingRun
+	// admission keeps the checks before a backup apart from a restore's admission, so that neither starts unseen by
+	// the other.
+	admission sync.Mutex
 
 	now       func() time.Time
 	sleep     func(ctx context.Context, d time.Duration) error
@@ -253,6 +256,17 @@ func (r *Runner) Busy() bool {
 	return r.running
 }
 
+// Exclusive runs admit, a restore's admission, while no backup runs or passes its checks, and refuses with ErrBusy
+// while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
+func (r *Runner) Exclusive(admit func() error) error {
+	r.admission.Lock()
+	defer r.admission.Unlock()
+	if r.Busy() {
+		return ErrBusy
+	}
+	return admit()
+}
+
 // begin marks a run as started, or keeps a replace or scheduled run for later while another one runs.
 func (r *Runner) begin(reason string, targets []string, opts []RunOption) bool {
 	r.mu.Lock()
@@ -346,7 +360,9 @@ func (r *Runner) run(ctx context.Context, reason string, targets []string, opts 
 
 // admit reads the Appliance and the recipient of the backup and records a refusal.
 func (r *Runner) admit(ctx context.Context, reason string, o runOptions) (*v1alpha1.Appliance, age.Recipient, error) {
+	r.admission.Lock()
 	a, recipient, err := r.prepare(ctx)
+	r.admission.Unlock()
 	if err != nil && a != nil {
 		r.refused(ctx, a, o.user, reason, err)
 	}
