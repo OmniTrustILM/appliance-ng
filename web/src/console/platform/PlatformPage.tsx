@@ -131,30 +131,33 @@ export function PlatformPage() {
   return (
     <PageWidth>
       <form onSubmit={submit} noValidate>
-        <Card actions={<Button type="submit" busy={busy}>Save</Button>}>
-          <PageHeading eyebrow="Platform" title="Components" lead="The ILM host name and the components that are installed with the ILM." />
-          {saved && (
-            <Alert tone="success">
-              The change is saved. The components install in the background; the <Link className={link} to="/">dashboard</Link> shows the progress.
-            </Alert>
-          )}
-          {error && <Alert tone="error">{error}</Alert>}
-          <Field label="ILM version" name="ilmVersion" value={data.ilmVersion} readOnly />
-          <Field label="ILM host name" name="hostName" value={hostName} error={hostError} autoComplete="off" spellCheck={false}
-            onChange={(e) => edit({ hostName: e.target.value })} />
-          <ComponentChoices
-            choices={data.components.map(choiceOf)}
-            chosen={chosen}
-            onToggle={(name, checked) => edit({ chosen: toggled(chosen, name, checked) })}
-          />
-          <ChoiceField type="checkbox" label="Utils service" description="Installs the utils service with the ILM."
-            checked={utils} onChange={(e) => edit({ utils: e.target.checked })} />
-          <CBOMFields answers={cbom} errors={fieldErrors} onChange={(answers) => edit({ cbom: answers })} />
-          <h2 className="mt-6 mb-1.5 text-lg font-semibold">Dependencies</h2>
-          <p className="mb-4 text-content-muted">The database, the message broker and the identity provider ILM uses.</p>
-          <DependencyChoices answers={dependencies} locked={data.setupComplete} errors={fieldErrors}
-            onChange={(answers) => edit({ dependencies: answers })} />
-        </Card>
+        {/* Nothing is edited while a save is pending: its answer clears the secrets it sent. */}
+        <fieldset disabled={busy} className="min-w-0">
+          <Card actions={<Button type="submit" busy={busy}>Save</Button>}>
+            <PageHeading eyebrow="Platform" title="Components" lead="The ILM host name and the components that are installed with the ILM." />
+            {saved && (
+              <Alert tone="success">
+                The change is saved. The components install in the background; the <Link className={link} to="/">dashboard</Link> shows the progress.
+              </Alert>
+            )}
+            {error && <Alert tone="error">{error}</Alert>}
+            <Field label="ILM version" name="ilmVersion" value={data.ilmVersion} readOnly />
+            <Field label="ILM host name" name="hostName" value={hostName} error={hostError} autoComplete="off" spellCheck={false}
+              onChange={(e) => edit({ hostName: e.target.value })} />
+            <ComponentChoices
+              choices={data.components.map(choiceOf)}
+              chosen={chosen}
+              onToggle={(name, checked) => edit({ chosen: toggled(chosen, name, checked) })}
+            />
+            <ChoiceField type="checkbox" label="Utils service" description="Installs the utils service with the ILM."
+              checked={utils} onChange={(e) => edit({ utils: e.target.checked })} />
+            <CBOMFields answers={cbom} errors={fieldErrors} onChange={(answers) => edit({ cbom: answers })} />
+            <h2 className="mt-6 mb-1.5 text-lg font-semibold">Dependencies</h2>
+            <p className="mb-4 text-content-muted">The database, the message broker and the identity provider ILM uses.</p>
+            <DependencyChoices answers={dependencies} locked={data.setupComplete} errors={fieldErrors}
+              onChange={(answers) => edit({ dependencies: answers })} />
+          </Card>
+        </fieldset>
       </form>
     </PageWidth>
   );

@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { stubApi } from '../../setup/test-utils';
+import { hang, stubApi } from '../../setup/test-utils';
 import { PlatformPage } from './PlatformPage';
 
 const component = (name: string, over: object = {}) => ({
@@ -193,6 +193,15 @@ describe('PlatformPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(sent['PUT /appliance/api/v1/platform']).toHaveLength(2));
     expect(JSON.stringify(sent['PUT /appliance/api/v1/platform']?.[1])).not.toContain('new secret');
+  });
+
+  it('takes no edits while a save is pending', async () => {
+    stubApi({ 'GET /appliance/api/v1/platform': platform([], { dependencies: externalDatabase }), 'PUT /appliance/api/v1/platform': hang });
+    open();
+    await userEvent.type(await screen.findByLabelText('Database password'), 'new secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByLabelText('Database password')).toBeDisabled());
+    expect(screen.getByLabelText('ILM host name')).toBeDisabled();
   });
 
   it('shows a refused dependency field next to it', async () => {
