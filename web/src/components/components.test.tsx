@@ -13,6 +13,7 @@ import { Layout } from './Layout';
 import { PageHeading } from './PageHeading';
 import { Loading } from './Spinner';
 import { StepIndicator } from './StepIndicator';
+import { TextArea } from './TextArea';
 
 describe('Layout', () => {
   it('shows the product name and the page in the setup shell', () => {
@@ -63,6 +64,18 @@ describe('Field', () => {
   it('renders the code variant as a text input', () => {
     render(<Field label="Code" name="code" variant="code" />);
     expect(screen.getByLabelText('Code')).not.toHaveAttribute('aria-describedby');
+  });
+});
+
+describe('TextArea', () => {
+  it('describes the text area by hint and error', () => {
+    render(<TextArea label="CA certificates" name="ca" value="" onChange={() => {}} hint="PEM text." error="Not PEM." />);
+    expect(screen.getByLabelText('CA certificates')).toHaveAccessibleDescription('PEM text. Not PEM.');
+  });
+
+  it('has no description without hint and error', () => {
+    render(<TextArea label="CA certificates" name="ca" value="" onChange={() => {}} />);
+    expect(screen.getByLabelText('CA certificates')).not.toHaveAttribute('aria-describedby');
   });
 });
 
