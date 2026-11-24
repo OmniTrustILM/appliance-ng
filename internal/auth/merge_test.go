@@ -39,14 +39,14 @@ func TestMergeUsersBackupWinsAndKeepsCurrent(t *testing.T) {
 	ctx := context.Background()
 	cur, _ := accountStore(t, "current", "admin", "first")
 	bak, _ := accountStore(t, "backup", "admin", "alice")
-	restoredKey := storedSecret(t, bak, UsersKeySecret)
+	currentKey := storedSecret(t, cur, UsersKeySecret)
 
-	merged, err := MergeUsers(storedSecret(t, cur, UsersSecret), storedSecret(t, cur, UsersKeySecret), storedSecret(t, bak, UsersSecret), restoredKey)
+	merged, err := MergeUsers(storedSecret(t, cur, UsersSecret), currentKey, storedSecret(t, bak, UsersSecret), storedSecret(t, bak, UsersKeySecret))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The merged accounts are read with the backup's key, as the cluster holds it after the restore.
-	out := fake.NewClientBuilder().WithObjects(merged, restoredKey.DeepCopy()).Build()
+	// The merged accounts are read with the current key, which the restore keeps.
+	out := fake.NewClientBuilder().WithObjects(merged, currentKey.DeepCopy()).Build()
 	store := NewSecretUserStore(out, "appliance-system")
 	names, err := UserNames(merged)
 	if err != nil || !slices.Equal(names, []string{"admin", "alice", "first"}) {
@@ -72,13 +72,34 @@ func TestMergeUsersAgainGivesTheSameAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An interrupted restore wrote the merged accounts but not yet the key: the merge runs again on them.
+	// An interrupted restore wrote the merged accounts: the merge runs again on them.
 	twice, err := MergeUsers(once, storedSecret(t, cur, UsersKeySecret), restored, restoredKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := NewSecretUserStore(fake.NewClientBuilder().WithObjects(twice, restoredKey.DeepCopy()).Build(), "appliance-system")
-	if u, err := store.Get(ctx, "first"); err != nil || u.TOTPSeed != "current-seed-first" {
+	store := NewSecretUserStore(fake.NewClientBuilder().WithObjects(twice, storedSecret(t, cur, UsersKeySecret)).Build(), "appliance-system")
+	for name, seed := range map[string]string{"first": "current-seed-first", "alice": "backup-seed-alice"} {
+		if u, err := store.Get(ctx, name); err != nil || u.TOTPSeed != seed {
+			t.Errorf("%s = %+v, %v", name, u, err)
+		}
+	}
+}
+
+func TestMergeUsersOpensCurrentSeedsUnderTheBackupsKey(t *testing.T) {
+	cur, _ := accountStore(t, "current", "first")
+	bak, _ := accountStore(t, "backup", "alice")
+	restoredKey := storedSecret(t, bak, UsersKeySecret)
+	// An earlier restore wrote the backup's key after accounts sealed under it.
+	sealed, err := MergeUsers(nil, restoredKey, storedSecret(t, cur, UsersSecret), storedSecret(t, cur, UsersKeySecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := MergeUsers(sealed, storedSecret(t, cur, UsersKeySecret), storedSecret(t, bak, UsersSecret), restoredKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewSecretUserStore(fake.NewClientBuilder().WithObjects(merged, storedSecret(t, cur, UsersKeySecret)).Build(), "appliance-system")
+	if u, err := store.Get(context.Background(), "first"); err != nil || u.TOTPSeed != "current-seed-first" {
 		t.Errorf("first = %+v, %v", u, err)
 	}
 }
@@ -91,6 +112,10 @@ func TestMergeUsersWithoutCurrentAccounts(t *testing.T) {
 	}
 	if names, _ := UserNames(merged); !slices.Equal(names, []string{"alice"}) {
 		t.Errorf("accounts = %v", names)
+	}
+	store := NewSecretUserStore(fake.NewClientBuilder().WithObjects(merged, storedSecret(t, bak, UsersKeySecret)).Build(), "appliance-system")
+	if u, err := store.Get(context.Background(), "alice"); err != nil || u.TOTPSeed != "backup-seed-alice" {
+		t.Errorf("alice = %+v, %v; want it sealed under the backup's key", u, err)
 	}
 }
 
@@ -110,6 +135,7 @@ func TestMergeUsersRefusesUnreadableInput(t *testing.T) {
 		"restored not json":      {current, storedSecret(t, cur, UsersKeySecret), broken, restoredKey},
 		"current not json":       {broken, storedSecret(t, cur, UsersKeySecret), restored, restoredKey},
 		"restored key short":     {current, storedSecret(t, cur, UsersKeySecret), restored, shortKey},
+		"current key short":      {current, shortKey, restored, restoredKey},
 	} {
 		if _, err := MergeUsers(args[0], args[1], args[2], args[3]); err == nil {
 			t.Errorf("%s: merged", name)

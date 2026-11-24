@@ -10,23 +10,41 @@ import (
 )
 
 // MergeUsers returns restored, the accounts Secret of a backup, with the accounts of current it lacks added: on a
-// name clash the restored account wins. Every TOTP seed in the result is sealed under the key of restoredKey, the
-// backup's key Secret, which replaces the current one. A current seed that does not open under currentKey is tried
-// under restoredKey, as after a restore that wrote the merged accounts but not yet the key. current and currentKey
-// may be nil.
+// name clash the restored account wins. Every TOTP seed in the result is sealed under the key of currentKey, which
+// stays, so that the accounts open under the key the appliance holds while the result is written; without a current
+// key under that of restoredKey, the backup's key Secret. A current seed that does not open under currentKey is tried
+// under restoredKey, as after an earlier restore that wrote the backup's key. current and currentKey may be nil.
 func MergeUsers(current, currentKey, restored, restoredKey *corev1.Secret) (*corev1.Secret, error) {
-	target, err := secretCipher(restoredKey)
+	source, err := secretCipher(restoredKey)
 	if err != nil {
 		return nil, err
+	}
+	ciphers, target := []cipher.AEAD{source}, source
+	if currentKey != nil {
+		if target, err = secretCipher(currentKey); err != nil {
+			return nil, err
+		}
+		ciphers = []cipher.AEAD{target, source}
 	}
 	records, err := decodeRecords(restored)
 	if err != nil {
 		return nil, err
 	}
+	if err := sealAll(records, []cipher.AEAD{source}, target); err != nil {
+		return nil, err
+	}
 	if current != nil {
-		if err := addMissing(records, current, currentKey, target); err != nil {
+		existing, err := decodeRecords(current)
+		if err != nil {
 			return nil, err
 		}
+		for name := range records {
+			delete(existing, name)
+		}
+		if err := sealAll(existing, ciphers, target); err != nil {
+			return nil, err
+		}
+		maps.Copy(records, existing)
 	}
 	out := restored.DeepCopy()
 	if err := encodeRecords(out, records); err != nil {
@@ -35,24 +53,9 @@ func MergeUsers(current, currentKey, restored, restoredKey *corev1.Secret) (*cor
 	return out, nil
 }
 
-// addMissing adds the records of current that records lacks, their seeds sealed again under target.
-func addMissing(records map[string]record, current, currentKey *corev1.Secret, target cipher.AEAD) error {
-	existing, err := decodeRecords(current)
-	if err != nil {
-		return err
-	}
-	ciphers := []cipher.AEAD{target}
-	if currentKey != nil {
-		source, err := secretCipher(currentKey)
-		if err != nil {
-			return err
-		}
-		ciphers = []cipher.AEAD{source, target}
-	}
-	for name, r := range existing {
-		if _, ok := records[name]; ok {
-			continue
-		}
+// sealAll seals the seed of every record again under target, opening it under any of ciphers.
+func sealAll(records map[string]record, ciphers []cipher.AEAD, target cipher.AEAD) error {
+	for name, r := range records {
 		seed, err := openWithAny(ciphers, name, r.TOTPSeedEnc)
 		if err != nil {
 			return err

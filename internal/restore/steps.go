@@ -174,8 +174,9 @@ func keptInPlace(s corev1.Secret) bool {
 }
 
 // mergeAccounts replaces the backup's accounts Secret with the merge of the current accounts into it, for a restore
-// in place only the account that started it. A backup without accounts leaves the current accounts and their key as
-// they are.
+// in place only the account that started it. The merged accounts are sealed under the current key, which stays: the
+// accounts Secret is then the only one written, so a restart at any point leaves accounts that open under the key
+// the appliance holds. A backup without accounts leaves the current accounts and their key as they are.
 func (e *Engine) mergeAccounts(ctx context.Context, j *job, secrets []corev1.Secret) ([]corev1.Secret, error) {
 	find := func(name string) int {
 		for i, s := range secrets {
@@ -210,6 +211,9 @@ func (e *Engine) mergeAccounts(ctx context.Context, j *job, secrets []corev1.Sec
 		return nil, fmt.Errorf("merge the console accounts: %w", err)
 	}
 	secrets[users] = *merged
+	if currentKey != nil {
+		secrets = slices.Delete(secrets, key, key+1)
+	}
 	return secrets, nil
 }
 

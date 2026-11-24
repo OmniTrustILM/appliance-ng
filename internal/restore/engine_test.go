@@ -1279,6 +1279,52 @@ func TestKeepRecoveringUntilItSucceeds(t *testing.T) {
 
 // TestInPlaceRestoreReplacesTheAccounts keeps of the current accounts only the administrator who started the
 // restore; the backup's account wins on a name clash.
+// TestAccountsSignInAfterEveryWrite is a restore that a crash may cut off after any of its Secret writes: the
+// accounts on the appliance then must still open under the key on the appliance, or nobody signs in to resume it.
+func TestAccountsSignInAfterEveryWrite(t *testing.T) {
+	for _, inPlace := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inPlace=%t", inPlace), func(t *testing.T) {
+			f := newRestoreFixture(t, inPlace)
+			key := getSecret(t, "appliance-system", auth.UsersKeySecret).Data
+			store := auth.NewSecretUserStore(testClient, "appliance-system")
+			var unreadable []string
+			check := func(obj client.Object, err error) error {
+				if err != nil || obj.GetNamespace() != "appliance-system" || !strings.HasPrefix(obj.GetName(), auth.UsersSecret) {
+					return err
+				}
+				names, nerr := auth.UserNames(getSecret(t, "appliance-system", auth.UsersSecret))
+				if nerr != nil {
+					return nerr
+				}
+				for _, name := range names {
+					if _, gerr := store.Get(context.Background(), name); gerr != nil {
+						unreadable = append(unreadable, obj.GetName()+": "+name)
+					}
+				}
+				return nil
+			}
+			c := interceptor.NewClient(testClient, interceptor.Funcs{
+				Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+					return check(obj, c.Update(ctx, obj, opts...))
+				},
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					return check(obj, c.Create(ctx, obj, opts...))
+				},
+			})
+			f.start(t, f.engine(c), Options{InPlace: inPlace, ILMHostName: newILMHost, User: "first"})
+			if st := getAppliance(t).Status.Restore; st.Step != v1alpha1.RestoreStepDone || st.Message != "" {
+				t.Fatalf("status %+v, want done; logs:\n%s", st, f.logs)
+			}
+			if len(unreadable) > 0 {
+				t.Errorf("accounts unreadable after a write: %v", unreadable)
+			}
+			if got := getSecret(t, "appliance-system", auth.UsersKeySecret).Data; !maps.EqualFunc(got, key, bytes.Equal) {
+				t.Error("the restore replaced the key the accounts are read with")
+			}
+		})
+	}
+}
+
 func TestInPlaceRestoreReplacesTheAccounts(t *testing.T) {
 	for user, want := range map[string]map[string]string{
 		"first": {"admin": "backup", "alice": "backup", "first": "current"},
