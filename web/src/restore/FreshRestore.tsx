@@ -19,12 +19,11 @@ const statusReads = 10;
 const statusReadMs = 300;
 
 /** Waits until the status no longer shows the restore, which it may for a moment after the setup moved on. */
-async function setupLeftRestore() {
-  for (let i = 0; i < statusReads; i++) {
-    const result = await attempt(() => api.GET('/status'));
-    if (result?.data && result.data.setup !== 'restore') return;
-    await new Promise((resolve) => setTimeout(resolve, statusReadMs));
-  }
+async function setupLeftRestore(reads = statusReads): Promise<void> {
+  const result = await attempt(() => api.GET('/status'));
+  if ((result?.data && result.data.setup !== 'restore') || reads <= 1) return;
+  await new Promise((resolve) => setTimeout(resolve, statusReadMs));
+  return setupLeftRestore(reads - 1);
 }
 
 /** The way out of the restore: a new appliance is set up in the wizard instead. */
