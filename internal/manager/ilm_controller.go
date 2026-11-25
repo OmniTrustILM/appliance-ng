@@ -14,6 +14,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -273,17 +274,30 @@ func ILMClient(c client.Client, reader client.Reader, ilm ILMIdentity) func(cont
 	}
 }
 
+// restoreRunning reads past the cache whether a restore runs; the cached Appliance may not show it yet.
+func restoreRunning(ctx context.Context, reader client.Reader) (bool, error) {
+	live := &v1alpha1.Appliance{}
+	err := reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, live)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read the restore status: %w", err)
+	}
+	return live.Status.Restore.Active(), nil
+}
+
 // errRestoring refuses an ILM client while a restore runs, which replaces the manager's identity and ILM's database.
 var errRestoring = errors.New("a restore is running")
 
 // ilmClientOf returns a client of the ILM edge on the node, authenticated as the manager by ilm. It reads the restore
 // status past the cache and refuses while a restore runs, so nothing registers in or writes to the ILM being replaced.
 func ilmClientOf(ctx context.Context, c client.Client, reader client.Reader, ilm ILMIdentity, a *v1alpha1.Appliance) (*ilmclient.Client, error) {
-	live := &v1alpha1.Appliance{}
-	if err := reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, live); err != nil {
-		return nil, fmt.Errorf("read the restore status: %w", err)
+	restoring, err := restoreRunning(ctx, reader)
+	if err != nil {
+		return nil, err
 	}
-	if live.Status.Restore.Active() {
+	if restoring {
 		return nil, errRestoring
 	}
 	ip, ok, err := certs.NodeAddress(ctx, c, a)

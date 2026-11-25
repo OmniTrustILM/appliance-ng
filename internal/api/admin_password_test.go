@@ -338,6 +338,18 @@ func TestSetAdminPasswordKeycloakFails(t *testing.T) {
 	}
 }
 
+func TestSetAdminPasswordWhileAnotherResetRuns(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	k := readyForReset(t, h)
+	h.srv.adminPasswordMu.Lock()
+	wantCode(t, h.request(http.MethodPut, pathAdminPassword, nil, s), http.StatusConflict, "reset_running")
+	h.srv.adminPasswordMu.Unlock()
+	if calls, _ := k.state(); len(calls) != 0 {
+		t.Errorf("Keycloak was called while another reset runs: %q", calls)
+	}
+}
+
 func TestSetAdminPasswordAnswersWithinTheWriteTimeout(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()

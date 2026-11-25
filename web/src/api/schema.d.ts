@@ -495,9 +495,10 @@ export interface paths {
         /**
          * Set a new password for the ILM administrator
          * @description Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
-         *     409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs, and with 409
-         *     `external_identity` when ILM signs users in with an external identity provider. When Keycloak refuses or does
-         *     not answer, the request is answered with 502 and the stored password stays as it was.
+         *     409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs, with 409
+         *     `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
+         *     in with an external identity provider. When Keycloak refuses or does not answer, the request is answered with
+         *     502 and the stored password stays as it was.
          */
         put: operations["putPlatformAdminPassword"];
         /**

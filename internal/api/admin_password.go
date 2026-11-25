@@ -42,6 +42,8 @@ var (
 		Message: "The platform is not ready yet. Try again when it is."}
 	backupRunningConflict = ConflictJSONResponse{Code: "backup_running",
 		Message: "A backup is running. Set a new password once it has finished."}
+	resetRunningConflict = ConflictJSONResponse{Code: "reset_running",
+		Message: "A new password is being set. Try again in a moment."}
 )
 
 // PostPlatformAdminPassword shows the ILM administrator's password once per password. It fails closed: without its
@@ -82,7 +84,10 @@ func (s *Server) PostPlatformAdminPassword(ctx context.Context, _ PostPlatformAd
 // Keycloak took it, stores it marked as shown, since the answer shows it. It fails closed: the audit entry is
 // written before Keycloak is called, and a later failure adds a failure entry.
 func (s *Server) PutPlatformAdminPassword(ctx context.Context, _ PutPlatformAdminPasswordRequestObject) (PutPlatformAdminPasswordResponseObject, error) {
-	s.adminPasswordMu.Lock()
+	// A reset that waited for another one could not show its password within the console's write timeout.
+	if !s.adminPasswordMu.TryLock() {
+		return PutPlatformAdminPassword409JSONResponse{ConflictJSONResponse: resetRunningConflict}, nil
+	}
 	defer s.adminPasswordMu.Unlock()
 	a, err := s.appliance(ctx)
 	if err != nil {

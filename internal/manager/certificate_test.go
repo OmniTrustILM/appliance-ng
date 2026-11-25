@@ -393,6 +393,28 @@ func TestReconcileACMEServesTheBuiltinCertificateUntilIssued(t *testing.T) {
 	}
 }
 
+func TestReconcileACMEIsNotReadyWhileTheBuiltinCertificateIsServed(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{
+		Node:     v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
+		Platform: &v1alpha1.PlatformSpec{HostName: "pki.example.com"},
+		TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{
+			DirectoryURL: acmeDirectory, Solver: v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverHTTP01},
+		}},
+	})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	issue(t)
+
+	// cert-manager reports the certificate ready, but its Secret holds none the appliance can serve.
+	setACMEStatus(t, true, false)
+	runReconcile(t, r)
+	c := condition(t, getAppliance(t), v1alpha1.ConditionCertificateReady)
+	if c.Status != metav1.ConditionFalse || c.Message != messageACMENotServed {
+		t.Errorf("CertificateReady = %+v, want False while the built-in certificate is served", c)
+	}
+}
+
 func TestReconcileACMEWaitsForILM(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
@@ -665,6 +687,32 @@ func TestStaleSourceKeepsTheACMECredentialsTheAPIJustWrote(t *testing.T) {
 		if err := testClient.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: name}, &corev1.Secret{}); err != nil {
 			t.Errorf("Secret %s after the pass: %v", name, err)
 		}
+	}
+}
+
+func TestRestoreKeepsTheACMEAccountKeyItWrote(t *testing.T) {
+	ctx := context.Background()
+	createAppliance(t, v1alpha1.ApplianceSpec{TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin}})
+	stored := &v1alpha1.Appliance{}
+	if err := testClient.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Status.Restore = &v1alpha1.RestoreStatus{Backup: "b.ilmbackup", Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.Now()}
+	if err := testClient.Status().Update(ctx, stored); err != nil {
+		t.Fatal(err)
+	}
+	account := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: certs.Namespace, Name: certs.ACMEAccountSecretName},
+		Data: map[string][]byte{"k": []byte("x")}}
+	if err := testClient.Create(ctx, account); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(ctx, account) })
+	// The restore wrote the backup's Secrets, but the backup's Appliance spec, with source acme, is not installed yet.
+	r := &ApplianceReconciler{Client: testClient, APIReader: testClient, Release: testRelease}
+
+	r.reconcileCertificate(ctx, stored, addons.Progress{})
+	if err := testClient.Get(ctx, client.ObjectKeyFromObject(account), &corev1.Secret{}); err != nil {
+		t.Errorf("the restored ACME account key after the pass: %v", err)
 	}
 }
 

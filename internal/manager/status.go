@@ -40,6 +40,7 @@ const (
 	messagePlatformFailed    = "applying the platform failed, retrying; the manager log has the details"
 	messageCertificateFailed = "requesting the built-in certificate failed, retrying; the manager log has the details"
 	messageACMEFailed        = "requesting the ACME certificate failed, retrying; the manager log has the details"
+	messageACMENotServed     = "the ACME certificate has expired or does not cover the host names yet; the built-in certificate is served"
 )
 
 // platformAvailable is the condition operator v1.1.0 sets when the Platform serves.

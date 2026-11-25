@@ -31,9 +31,7 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 		}
 	}
 	if a.Spec.TLS.Source != v1alpha1.TLSSourceACME {
-		if err := certs.RemoveACME(ctx, r.Client); err != nil {
-			log.FromContext(ctx).Error(err, "remove the ACME certificate")
-		}
+		r.removeACME(ctx)
 	}
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
 		meta.RemoveStatusCondition(&a.Status.Conditions, v1alpha1.ConditionCertificateReady)
@@ -108,6 +106,12 @@ func (r *ApplianceReconciler) reconcileACME(ctx context.Context, a *v1alpha1.App
 	case !ready:
 		return notReady(reasonIssuing, "cert-manager is requesting the ACME certificate")
 	}
+	if served, err := certs.ServedSecretName(ctx, r.APIReader, a); err != nil || served != certs.ACMESecretName {
+		if err != nil {
+			log.FromContext(ctx).Error(err, "check the ACME certificate before serving it")
+		}
+		return notReady(reasonIssuing, messageACMENotServed)
+	}
 	setCondition(a, v1alpha1.ConditionCertificateReady, metav1.ConditionTrue, reasonReady, "the ACME certificate is issued")
 	return 0
 }
@@ -129,4 +133,20 @@ func stepPassed(steps []kube.Step, progress addons.Progress, name string) bool {
 	}
 	target := at(name)
 	return target >= 0 && at(progress.Step) > target
+}
+
+// removeACME deletes the ACME objects and Secrets, except while a restore runs: it writes the backup's Secrets, the
+// ACME account key among them, before the backup's Appliance selects source acme.
+func (r *ApplianceReconciler) removeACME(ctx context.Context) {
+	restoring, err := restoreRunning(ctx, r.APIReader)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "read the restore status before removing the ACME certificate")
+		return
+	}
+	if restoring {
+		return
+	}
+	if err := certs.RemoveACME(ctx, r.Client); err != nil {
+		log.FromContext(ctx).Error(err, "remove the ACME certificate")
+	}
 }
