@@ -190,7 +190,7 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore> [<
   case "$part" in
     # The node address is 10.0.2.15, drive's default --server-name.
     part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway "$GATEWAY" --dns "$DNS" --mode "$setup_mode") ;;
-    part2) args+=(--component "$COMPONENT") ;;
+    part2) args+=(--component "$COMPONENT" --ca-file "$setup_cert") ;;
     check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$host:10443" --ui-addr "$UI_ADDR"
       --credential "$p12_file" --credential-password-file "$p12_password_file") ;;
     kit) args+=(--out "$kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
@@ -245,7 +245,7 @@ browse() { # browse <spec> [<title pattern>]: runs the tests of a test/e2e spec,
     E2E_CONSOLE_URL="$CONSOLE_URL" E2E_HOST_NAME="$UI_HOST" E2E_CODE="$code" E2E_USER="$ADMIN" \
       E2E_PASSWORD="$password" E2E_SEED_FILE="$seed_file" E2E_GATEWAY="$GATEWAY" E2E_DNS="$DNS" \
       E2E_COMPONENT="$CONNECTOR_NAME" E2E_KIT_PASSPHRASE="$kit_passphrase" E2E_KIT_FILE="$kit_file" \
-      npx --no-install playwright test "$spec" --grep "$title") >&2 ||
+      E2E_SETUP_CERT_FILE="$setup_cert" npx --no-install playwright test "$spec" --grep "$title") >&2 ||
     fail "browser test $spec failed"
 }
 

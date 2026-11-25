@@ -1,4 +1,5 @@
-// Shared steps of the browser tests: the inputs run.sh passes, TOTP codes, trust in the built-in CA and sign-in.
+// Shared steps of the browser tests: the inputs run.sh passes, TOTP codes, trust in the console's certificate and
+// sign-in.
 // Nothing here prints the setup code, the password, the TOTP seed or a TOTP code: the boot test log is public.
 import { createHash, createHmac, X509Certificate } from 'node:crypto';
 import { chmodSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
@@ -92,7 +93,7 @@ function consoleOrigin() {
 
 /**
  * Downloads the root CA from the console. It is not verified here: the root CA is trusted on first use and must then
- * pass verifiedCertificate.
+ * pass servedCertificate.
  */
 async function fetchRootCA(): Promise<string> {
   const context = await request.newContext({ ignoreHTTPSErrors: true });
@@ -105,10 +106,14 @@ async function fetchRootCA(): Promise<string> {
   }
 }
 
-/** Connects to the console verifying its certificate against root for host, and returns that certificate. */
-function verifiedCertificate(address: string, port: number, host: string, root: string): Promise<X509Certificate> {
+/**
+ * Connects to the console for host and returns the certificate it presents, verified against root when one is given
+ * and else unverified.
+ */
+function servedCertificate(address: string, port: number, host: string, root?: string): Promise<X509Certificate> {
+  const trust = root ? { ca: root } : { rejectUnauthorized: false };
   return new Promise((resolve, reject) => {
-    const socket = connect({ host: address, port, servername: host, ca: root, timeout: 10_000 }, () => {
+    const socket = connect({ host: address, port, servername: host, ...trust, timeout: 10_000 }, () => {
       const leaf = socket.getPeerX509Certificate();
       socket.end();
       if (leaf) resolve(leaf);
@@ -124,20 +129,32 @@ function spki(certificate: X509Certificate): string {
   return createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
 }
 
+/** The setup certificate of the first-boot service that run.sh saved, if it passed one. */
+function setupCertificate(): X509Certificate | undefined {
+  const path = process.env.E2E_SETUP_CERT_FILE;
+  return path ? new X509Certificate(readFileSync(path)) : undefined;
+}
+
 /**
- * Waits until the console serves a certificate of the built-in CA for its host name, as test/boot/drive does: the
- * root CA comes from the console itself (trusted on first use) and must have issued the certificate the console
- * presented, for the host name. Returns the public key hashes Chromium trusts: the root's, and the verified leaf's
- * for a console that does not send the root in its chain.
+ * Waits until the console serves the setup certificate, which it does until setup is complete, or a certificate of
+ * the built-in CA for its host name, as test/boot/drive does: the root CA comes from the console itself (trusted on
+ * first use) and must have issued the certificate the console presented, for the host name. Returns the public key
+ * hashes Chromium trusts: the setup certificate's, or the root's and the verified leaf's for a console that does not
+ * send the root in its chain.
  */
-async function trustBuiltinCA(): Promise<string[]> {
+async function trustConsole(): Promise<string[]> {
   const { address, port, host } = consoleOrigin();
+  const setup = setupCertificate();
   const deadline = Date.now() + CERTIFICATE_TIMEOUT;
   let root = '';
   for (;;) {
     try {
+      if (setup && (await servedCertificate(address, port, host)).fingerprint256 === setup.fingerprint256) {
+        console.log('the console serves the setup certificate');
+        return [spki(setup)];
+      }
       root ||= await fetchRootCA();
-      const leaf = await verifiedCertificate(address, port, host, root);
+      const leaf = await servedCertificate(address, port, host, root);
       console.log(`console certificate for ${host} issued by ${leaf.issuer.replaceAll('\n', ', ')}`);
       return [spki(new X509Certificate(root)), spki(leaf)];
     } catch (error) {
@@ -149,12 +166,12 @@ async function trustBuiltinCA(): Promise<string[]> {
 
 /**
  * A test with `console`: a page of a Chromium that reaches the console by the appliance's host name and trusts
- * only the certificates of the built-in CA checked by trustBuiltinCA.
+ * only the certificates trustConsole checked.
  */
 export const test = base.extend<{ console: Page }>({
   console: async ({}, use) => {
     const { address, host, url } = consoleOrigin();
-    const pins = await trustBuiltinCA();
+    const pins = await trustConsole();
     const browser = await chromium.launch({
       args: [`--host-resolver-rules=MAP ${host} ${address}`, `--ignore-certificate-errors-spki-list=${pins.join(',')}`],
     });
