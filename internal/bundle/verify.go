@@ -22,17 +22,47 @@ import (
 	appliance "github.com/OmniTrustILM/appliance-ng"
 )
 
+// testKey is the base64 of a PEM public key that replaces cosign.pub in a test build, set with
+// -ldflags "-X github.com/OmniTrustILM/appliance-ng/internal/bundle.testKey=<base64>". A release build leaves it empty.
+var testKey string
+
+const pemPublicKey = "-----BEGIN PUBLIC KEY-----"
+
 var embeddedKey = sync.OnceValue(func() crypto.PublicKey {
-	key, err := ParsePublicKey(appliance.CosignPublicKey)
+	key, err := signingKey(testKey)
 	if err != nil {
-		panic(fmt.Sprintf("embedded cosign.pub: %v", err))
+		panic(err)
 	}
 	return key
 })
 
-// PublicKey returns the bundle signing key embedded from cosign.pub.
+// PublicKey returns the bundle signing key: the test key of a test build, else the key embedded from cosign.pub.
 func PublicKey() crypto.PublicKey {
 	return embeddedKey()
+}
+
+// signingKey parses test, the base64 of a PEM public key, or cosign.pub when test is empty.
+func signingKey(test string) (crypto.PublicKey, error) {
+	if test == "" {
+		key, err := ParsePublicKey(appliance.CosignPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("embedded cosign.pub: %w", err)
+		}
+		return key, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(test)
+	if err != nil {
+		return nil, fmt.Errorf("bundle test key: %w", err)
+	}
+	// The release check finds a test key by the base64 of its first line, so nothing may come before or after it.
+	if _, rest := pem.Decode(data); !bytes.HasPrefix(data, []byte(pemPublicKey)) || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, errors.New("bundle test key: not exactly one PEM public key")
+	}
+	key, err := ParsePublicKey(data)
+	if err != nil {
+		return nil, fmt.Errorf("bundle test key: %w", err)
+	}
+	return key, nil
 }
 
 // ParsePublicKey parses a PEM ECDSA public key as cosign writes it.
@@ -55,34 +85,55 @@ func ParsePublicKey(data []byte) (crypto.PublicKey, error) {
 // every image it lists is present and intact. It returns the metadata and makes the bundle's content available.
 func (b *Bundle) Verify(pub crypto.PublicKey, arch string) (Metadata, error) {
 	b.verified = nil
-	key, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		return Metadata{}, fmt.Errorf("%w: unsupported public key %T", ErrBadSignature, pub)
-	}
-	top, err := b.layoutIndex()
+	v, index, err := b.verifySigned(pub, arch)
 	if err != nil {
 		return Metadata{}, err
-	}
-	indexDesc, index, err := b.bundleIndex(top)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if err := b.checkSignature(key, top, indexDesc.Digest); err != nil {
-		return Metadata{}, err
-	}
-	v, err := b.readMetadata(index)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if v.metadata.Arch != arch {
-		return Metadata{}, fmt.Errorf("%w: %s, not %s", ErrWrongArch, v.metadata.Arch, arch)
 	}
 	if err := b.checkImages(index, v.metadata.Images); err != nil {
 		return Metadata{}, err
 	}
-	v.index = indexDesc.Digest
+	v.images = true
 	b.verified = v
 	return v.metadata, nil
+}
+
+// VerifySigned checks the signature, the metadata and the arch as Verify does, but not the images, for a bundle whose
+// images stay in its registry. Its files and notes are available afterwards, its images are not.
+func (b *Bundle) VerifySigned(pub crypto.PublicKey, arch string) (Metadata, error) {
+	b.verified = nil
+	v, _, err := b.verifySigned(pub, arch)
+	if err != nil {
+		return Metadata{}, err
+	}
+	b.verified = v
+	return v.metadata, nil
+}
+
+func (b *Bundle) verifySigned(pub crypto.PublicKey, arch string) (*verified, *v1.IndexManifest, error) {
+	key, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("%w: unsupported public key %T", ErrBadSignature, pub)
+	}
+	top, err := b.layoutIndex()
+	if err != nil {
+		return nil, nil, err
+	}
+	indexDesc, index, err := b.bundleIndex(top)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := b.checkSignature(key, top, indexDesc.Digest); err != nil {
+		return nil, nil, err
+	}
+	v, err := b.readMetadata(index)
+	if err != nil {
+		return nil, nil, err
+	}
+	if v.metadata.Arch != arch {
+		return nil, nil, fmt.Errorf("%w: %s, not %s", ErrWrongArch, v.metadata.Arch, arch)
+	}
+	v.index = indexDesc.Digest
+	return v, index, nil
 }
 
 func (b *Bundle) layoutIndex() (*v1.IndexManifest, error) {

@@ -1575,6 +1575,162 @@ spec:
                 - complete
                 - restore
                 type: string
+              update:
+                description: Update is the latest update or rollback; unset until
+                  one starts.
+                properties:
+                  backup:
+                    description: Backup is the name of the backup taken before the
+                      update.
+                    type: string
+                  from:
+                    type: string
+                  kind:
+                    enum:
+                    - platform
+                    - system
+                    - rollback
+                    type: string
+                  message:
+                    description: Message is a fixed text, never an error text of a
+                      component.
+                    type: string
+                  pointOfNoReturn:
+                    description: PointOfNoReturn is set once the update can no longer
+                      be abandoned.
+                    type: boolean
+                  startedAt:
+                    format: date-time
+                    type: string
+                  step:
+                    description: Step is the step the update is at.
+                    type: string
+                  to:
+                    type: string
+                required:
+                - from
+                - kind
+                - startedAt
+                - to
+                type: object
+              updates:
+                description: Updates lists the bundles that can be loaded and the
+                  ones loaded; unset until the first check or load.
+                properties:
+                  available:
+                    description: Available are the bundles found online that are newer
+                      than what runs.
+                    items:
+                      description: BundleInfo describes one update bundle.
+                      properties:
+                        arch:
+                          type: string
+                        blocked:
+                          description: Blocked is a fixed reason the bundle cannot
+                            be installed now; unset when it can.
+                          enum:
+                          - olderThanRunning
+                          - operatorOutOfRange
+                          - needsAppliance
+                          - wrongArch
+                          - sameVersion
+                          - invalidMetadata
+                          type: string
+                        ilm:
+                          description: ILM, Operator and MinAppliance are set for
+                            a platform bundle.
+                          type: string
+                        kind:
+                          enum:
+                          - system
+                          - platform
+                          type: string
+                        loadedAt:
+                          format: date-time
+                          type: string
+                        minAppliance:
+                          type: string
+                        needs:
+                          description: Needs is the version that must be installed
+                            first.
+                          type: string
+                        operator:
+                          type: string
+                        operatorRange:
+                          description: OperatorRange is set for a system bundle.
+                          type: string
+                        sizeBytes:
+                          format: int64
+                          type: integer
+                        version:
+                          type: string
+                      required:
+                      - arch
+                      - kind
+                      - version
+                      type: object
+                    type: array
+                  lastCheck:
+                    description: LastCheck is when the online source was last checked.
+                    format: date-time
+                    type: string
+                  lastCheckError:
+                    description: LastCheckError is a fixed reason, never an error
+                      text of the source; unset when the last check succeeded.
+                    type: string
+                  loaded:
+                    description: Loaded are the bundles on the data volume.
+                    items:
+                      description: BundleInfo describes one update bundle.
+                      properties:
+                        arch:
+                          type: string
+                        blocked:
+                          description: Blocked is a fixed reason the bundle cannot
+                            be installed now; unset when it can.
+                          enum:
+                          - olderThanRunning
+                          - operatorOutOfRange
+                          - needsAppliance
+                          - wrongArch
+                          - sameVersion
+                          - invalidMetadata
+                          type: string
+                        ilm:
+                          description: ILM, Operator and MinAppliance are set for
+                            a platform bundle.
+                          type: string
+                        kind:
+                          enum:
+                          - system
+                          - platform
+                          type: string
+                        loadedAt:
+                          format: date-time
+                          type: string
+                        minAppliance:
+                          type: string
+                        needs:
+                          description: Needs is the version that must be installed
+                            first.
+                          type: string
+                        operator:
+                          type: string
+                        operatorRange:
+                          description: OperatorRange is set for a system bundle.
+                          type: string
+                        sizeBytes:
+                          format: int64
+                          type: integer
+                        version:
+                          type: string
+                      required:
+                      - arch
+                      - kind
+                      - version
+                      type: object
+                    type: array
+                type: object
               versions:
                 description: Versions are the component versions running on the appliance.
                 properties:
@@ -1585,6 +1741,10 @@ spec:
                   kubernetes:
                     type: string
                   operator:
+                    type: string
+                  platformBundle:
+                    description: PlatformBundle is the version of the platform bundle
+                      that is running.
                     type: string
                   talos:
                     type: string

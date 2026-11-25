@@ -17,7 +17,7 @@ import (
 // Kinds are the kinds of the documents the appliance manages on the running node.
 var Kinds = []string{
 	network.HostnameKind, network.LinkKind, network.ResolverKind, network.TimeSyncKind, runtime.EnvironmentConfigKind,
-	security.TrustedRootsConfig, cri.RegistryAuthConfig,
+	security.TrustedRootsConfig, cri.RegistryAuthConfig, cri.RegistryMirrorConfig, cri.RegistryTLSConfig,
 }
 
 // Node is what the running node adds to the Appliance for its documents.
@@ -26,6 +26,16 @@ type Node struct {
 	IP string
 	// Link is the running link configuration with the static address; nil with DHCP.
 	Link *network.LinkConfigV1Alpha1
+	// Registry is zot, which the node pulls every image through first; nil until zot is ready.
+	Registry *Registry
+}
+
+// Registry is what the node needs to pull through zot.
+type Registry struct {
+	// CA is the PEM certificate of the CA zot's certificate is issued by.
+	CA []byte
+	// Upstreams are the registries zot holds images of.
+	Upstreams []string
 }
 
 // Secrets is what the Secrets the Appliance references add to its documents.
@@ -45,8 +55,9 @@ type RegistryAuth struct {
 
 // Render returns the documents of the node settings of a for node: the host name, the default route of the static
 // link, the name servers, the time servers, with a proxy the proxy environment, and from secrets the trusted CA
-// certificates and the registry credentials, those of the first entry of a host. The address is never rendered: it
-// is fixed at setup, so the static link keeps the address it runs with and only its route follows the gateway.
+// certificates and the registry credentials, those of the first entry of a host, and once zot is ready the mirrors
+// that send every pull to it first. The address is never rendered: it is fixed at setup, so the static link keeps
+// the address it runs with and only its route follows the gateway.
 func Render(a *v1alpha1.Appliance, node Node, secrets Secrets) ([]config.Document, error) {
 	spec := a.Spec
 	if spec.Node.HostName == "" {
@@ -85,6 +96,9 @@ func Render(a *v1alpha1.Appliance, node Node, secrets Secrets) ([]config.Documen
 			rendered[r.Host] = true
 			docs = append(docs, RegistryAuthConfig(r))
 		}
+	}
+	if node.Registry != nil {
+		docs = append(docs, RegistryMirrors(node.Registry.CA, node.Registry.Upstreams)...)
 	}
 	return docs, nil
 }

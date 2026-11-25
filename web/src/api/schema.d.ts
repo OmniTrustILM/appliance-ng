@@ -495,8 +495,8 @@ export interface paths {
         /**
          * Set a new password for the ILM administrator
          * @description Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
-         *     409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs, with 409
-         *     `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
+         *     409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs,
+         *     `bundle_loading` while an update bundle loads, with 409 `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
          *     in with an external identity provider. When Keycloak refuses or does not answer, the request is answered with
          *     502 and the stored password stays as it was.
          */
@@ -1014,7 +1014,7 @@ export interface paths {
         /**
          * Back up now
          * @description Starts a backup copied to every target and answers before it ends; the status and the audit log record how
-         *     it ends. A backup that may not start is answered with 409: `backup_running`, `no_recovery_kit`,
+         *     it ends. A backup that may not start is answered with 409: `backup_running`, `bundle_loading`, `no_recovery_kit`,
          *     `upgrade_in_progress`, `restore_in_progress` (a restore runs, waits for its kit or failed before it was done)
          *     or `no_space`.
          */
@@ -1256,7 +1256,8 @@ export interface paths {
          *     place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
          *     backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
          *     check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
-         *     `upgrade_in_progress`, `backup_running`, and `tampered` or `truncated` for a backup changed since its check.
+         *     `upgrade_in_progress`, `backup_running`, `bundle_loading`, and `tampered` or `truncated` for a backup changed
+         *     since its check.
          */
         post: operations["postRestoreStart"];
         delete?: never;
@@ -1311,10 +1312,180 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The bundles available online and loaded, and the latest load */
+        get: operations["getUpdates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/updates/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the online repository for newer bundles now
+         * @description Lists the bundles in the online repository that are newer than what runs and verifies each one's signature
+         *     before listing it, at most the ten newest of each kind. A failed check is answered with 200 and
+         *     `lastCheckError`; the bundles found before stay listed unless the repository was read. A check asked for while
+         *     another runs waits for that one and answers with its result.
+         */
+        post: operations["postUpdatesCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/updates/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload a bundle file and load it
+         * @description Streams the body, a bundle file (a tar of its OCI layout), to the data volume and loads it in the background:
+         *     `load` in GET /updates shows how the load ends. The request needs `Content-Length`; a bundle that does not fit
+         *     three times into the free space, once for the file and twice for its load, is refused with 409 `no_space`
+         *     before it is read. Refused with 409 `busy` while a backup, a restore, an update or another load runs. A bundle
+         *     that is not signed with the appliance's key, is damaged, is for another kind or architecture, or cannot be
+         *     installed on what runs is refused with a fixed reason, and nothing of it is kept.
+         */
+        put: operations["putUpdatesUpload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/updates/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Load a bundle from the online repository
+         * @description Loads the bundle in the background, with the checks of an upload: `load` in GET /updates shows how it ends.
+         *     Refused with 409 `busy` while a backup, a restore, an update or another load runs.
+         */
+        post: operations["postUpdatesFetch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/updates/notes/{kind}/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The release notes of a bundle available or loaded
+         * @description Markdown, to be shown as text.
+         */
+        get: operations["getUpdateNotes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        BundleKind: "system" | "platform";
+        UpdateFetch: {
+            kind: components["schemas"]["BundleKind"];
+            /** @description The version, X.Y.Z; the bundle for the appliance's architecture is loaded. */
+            version: string;
+        };
+        Updates: {
+            /**
+             * Format: date-time
+             * @description When the online repository was last checked.
+             */
+            lastCheck?: string;
+            /**
+             * @description Why the last check failed; absent when it succeeded.
+             * @enum {string}
+             */
+            lastCheckError?: "badSignature" | "unreachable" | "timeout" | "failed";
+            /** @description The bundles online that are newer than what runs. */
+            available: components["schemas"]["UpdateBundle"][];
+            /** @description The bundles in the appliance's registry and on its data volume. */
+            loaded: components["schemas"]["UpdateBundle"][];
+            load?: components["schemas"]["BundleLoad"];
+        };
+        UpdateBundle: {
+            kind: components["schemas"]["BundleKind"];
+            version: string;
+            arch: string;
+            /** @description The ILM version of a platform bundle. */
+            ilm?: string;
+            /** @description The ILM operator version of a platform bundle. */
+            operator?: string;
+            /** @description The oldest appliance version a platform bundle installs on. */
+            minAppliance?: string;
+            /** @description The ILM operator versions a system bundle works with. */
+            operatorRange?: string;
+            /**
+             * Format: int64
+             * @description The size of the bundle's images.
+             */
+            sizeBytes: number;
+            /** Format: date-time */
+            loadedAt?: string;
+            /**
+             * @description Why the bundle cannot be installed now; absent when it can.
+             * @enum {string}
+             */
+            blocked?: "olderThanRunning" | "operatorOutOfRange" | "needsAppliance" | "wrongArch" | "sameVersion" | "invalidMetadata";
+            /** @description The appliance version that must be installed first. */
+            needs?: string;
+            /** @description The path of the bundle's release notes in this API. */
+            notes: string;
+        };
+        BundleLoad: {
+            /** @enum {string} */
+            state: "running" | "loaded" | "refused" | "failed";
+            kind: components["schemas"]["BundleKind"];
+            /** @description The version, once known. */
+            version?: string;
+            /** @description Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`, `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `noSpace`, `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`. */
+            reason?: string;
+            /** Format: date-time */
+            startedAt: string;
+        };
         Error: {
             /** @description A machine-readable error code. */
             code: string;
@@ -1533,7 +1704,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore" | "update-check" | "update-upload" | "update-fetch" | "bundle-loaded";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -2366,6 +2537,15 @@ export interface components {
         };
         /** @description The node's Talos API cannot be reached at the moment. */
         ServiceUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description The manager runs without update bundles. */
+        UpdatesUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -4213,6 +4393,137 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    getUpdates: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 1 marks a read the console makes on its own, which does not keep the session from going idle. */
+                "X-Background-Refresh"?: "1";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The update bundles. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Updates"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    postUpdatesCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The check ended. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Updates"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    putUpdatesUpload: {
+        parameters: {
+            query: {
+                /** @description The kind of bundle the file must be. */
+                kind: components["schemas"]["BundleKind"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The bundle is stored and being loaded. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    postUpdatesFetch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateFetch"];
+            };
+        };
+        responses: {
+            /** @description The bundle is being loaded. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    getUpdateNotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["schemas"]["BundleKind"];
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The release notes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/markdown": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["UpdatesUnavailable"];
         };
     };
 }

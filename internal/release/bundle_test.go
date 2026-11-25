@@ -147,6 +147,7 @@ func TestBOMImagesArePlatform(t *testing.T) {
 func TestBOMImageListedWithDigestIsMatched(t *testing.T) {
 	m, files := validManifest()
 	m.Images[5].Ref = bomImages[0] + "@sha256:1234"
+	m.Images[5].ArchDigests = map[string]string{"amd64": testArchDigest, "arm64": testArchDigest}
 
 	if errs := Validate(m, files); len(errs) != 0 {
 		t.Fatalf("want no errors for a digest-qualified bill of materials image, got %v", errs)

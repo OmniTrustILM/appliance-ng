@@ -144,6 +144,7 @@ describe('DashboardPage', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let calls = 0;
     vi.stubGlobal('fetch', vi.fn((request: Request) => {
+      if (!request.url.endsWith('/status')) return Promise.resolve(new Response(null, { status: 404 }));
       if (++calls === 1) {
         return new Promise<Response>((_, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason)));
       }
@@ -164,7 +165,8 @@ describe('DashboardPage', () => {
     await screen.findByText('Setup is complete.');
     unmount();
     await act(() => vi.advanceTimersByTimeAsync(20000));
-    expect(mock).toHaveBeenCalledTimes(1);
+    const statusReads = mock.mock.calls.filter(([request]) => request.url.endsWith('/status'));
+    expect(statusReads).toHaveLength(1);
   });
 
   it('warns when the certificate expires within 30 days and links to the certificate page', async () => {
@@ -362,5 +364,26 @@ describe('DashboardPage', () => {
       expect(await screen.findByText(/backups are not healthy: no backup until the recovery kit is confirmed/i)).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Backups', level: 3 })).toBeInTheDocument();
     });
+  });
+
+  it('notices an available update that can be installed, and not a blocked one', async () => {
+    const bundle = { kind: 'platform', version: '2.1.0', arch: 'amd64', sizeBytes: 1, notes: '/n' };
+    stubApi({
+      'GET /appliance/api/v1/status': [200, status],
+      'GET /appliance/api/v1/updates': [200, { available: [bundle, { ...bundle, kind: 'system', blocked: 'sameVersion' }], loaded: [] }],
+    });
+    renderPage();
+    expect(await screen.findByText(/newer platform update is available/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /updates page/i })).toHaveAttribute('href', '/updates');
+  });
+
+  it('shows no update notice when nothing installable is available or the updates cannot be read', async () => {
+    stubApi({
+      'GET /appliance/api/v1/status': [200, status],
+      'GET /appliance/api/v1/updates': [200, { available: [{ kind: 'system', version: '1.0.0', arch: 'amd64', sizeBytes: 1, notes: '/n', blocked: 'olderThanRunning' }], loaded: [] }],
+    });
+    renderPage();
+    await screen.findByText('Setup is complete.');
+    expect(screen.queryByText(/update is available/i)).not.toBeInTheDocument();
   });
 });

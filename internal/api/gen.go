@@ -121,6 +121,7 @@ const (
 	AuditEntryActionBackupTargetRemove AuditEntryAction = "backup-target-remove"
 	AuditEntryActionBackupTargetSet    AuditEntryAction = "backup-target-set"
 	AuditEntryActionBackupTargetTest   AuditEntryAction = "backup-target-test"
+	AuditEntryActionBundleLoaded       AuditEntryAction = "bundle-loaded"
 	AuditEntryActionCertificateAcme    AuditEntryAction = "certificate-acme"
 	AuditEntryActionCertificateBuiltin AuditEntryAction = "certificate-builtin"
 	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
@@ -154,6 +155,9 @@ const (
 	AuditEntryActionTalosconfigIssue   AuditEntryAction = "talosconfig-issue"
 	AuditEntryActionTrustAdd           AuditEntryAction = "trust-add"
 	AuditEntryActionTrustRemove        AuditEntryAction = "trust-remove"
+	AuditEntryActionUpdateCheck        AuditEntryAction = "update-check"
+	AuditEntryActionUpdateFetch        AuditEntryAction = "update-fetch"
+	AuditEntryActionUpdateUpload       AuditEntryAction = "update-upload"
 	AuditEntryActionWizardPlatform     AuditEntryAction = "wizard-platform"
 )
 
@@ -177,6 +181,8 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionBackupTargetSet:
 		return true
 	case AuditEntryActionBackupTargetTest:
+		return true
+	case AuditEntryActionBundleLoaded:
 		return true
 	case AuditEntryActionCertificateAcme:
 		return true
@@ -243,6 +249,12 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionTrustAdd:
 		return true
 	case AuditEntryActionTrustRemove:
+		return true
+	case AuditEntryActionUpdateCheck:
+		return true
+	case AuditEntryActionUpdateFetch:
+		return true
+	case AuditEntryActionUpdateUpload:
 		return true
 	case AuditEntryActionWizardPlatform:
 		return true
@@ -359,6 +371,48 @@ func (e BackupTargetUpdateType) Valid() bool {
 	case BackupTargetUpdateTypeS3:
 		return true
 	case BackupTargetUpdateTypeSftp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BundleKind.
+const (
+	Platform BundleKind = "platform"
+	System   BundleKind = "system"
+)
+
+// Valid indicates whether the value is a known member of the BundleKind enum.
+func (e BundleKind) Valid() bool {
+	switch e {
+	case Platform:
+		return true
+	case System:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BundleLoadState.
+const (
+	BundleLoadStateFailed  BundleLoadState = "failed"
+	BundleLoadStateLoaded  BundleLoadState = "loaded"
+	BundleLoadStateRefused BundleLoadState = "refused"
+	BundleLoadStateRunning BundleLoadState = "running"
+)
+
+// Valid indicates whether the value is a known member of the BundleLoadState enum.
+func (e BundleLoadState) Valid() bool {
+	switch e {
+	case BundleLoadStateFailed:
+		return true
+	case BundleLoadStateLoaded:
+		return true
+	case BundleLoadStateRefused:
+		return true
+	case BundleLoadStateRunning:
 		return true
 	default:
 		return false
@@ -767,6 +821,60 @@ func (e TalosconfigRequestRole) Valid() bool {
 	}
 }
 
+// Defines values for UpdateBundleBlocked.
+const (
+	InvalidMetadata    UpdateBundleBlocked = "invalidMetadata"
+	NeedsAppliance     UpdateBundleBlocked = "needsAppliance"
+	OlderThanRunning   UpdateBundleBlocked = "olderThanRunning"
+	OperatorOutOfRange UpdateBundleBlocked = "operatorOutOfRange"
+	SameVersion        UpdateBundleBlocked = "sameVersion"
+	WrongArch          UpdateBundleBlocked = "wrongArch"
+)
+
+// Valid indicates whether the value is a known member of the UpdateBundleBlocked enum.
+func (e UpdateBundleBlocked) Valid() bool {
+	switch e {
+	case InvalidMetadata:
+		return true
+	case NeedsAppliance:
+		return true
+	case OlderThanRunning:
+		return true
+	case OperatorOutOfRange:
+		return true
+	case SameVersion:
+		return true
+	case WrongArch:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdatesLastCheckError.
+const (
+	UpdatesLastCheckErrorBadSignature UpdatesLastCheckError = "badSignature"
+	UpdatesLastCheckErrorFailed       UpdatesLastCheckError = "failed"
+	UpdatesLastCheckErrorTimeout      UpdatesLastCheckError = "timeout"
+	UpdatesLastCheckErrorUnreachable  UpdatesLastCheckError = "unreachable"
+)
+
+// Valid indicates whether the value is a known member of the UpdatesLastCheckError enum.
+func (e UpdatesLastCheckError) Valid() bool {
+	switch e {
+	case UpdatesLastCheckErrorBadSignature:
+		return true
+	case UpdatesLastCheckErrorFailed:
+		return true
+	case UpdatesLastCheckErrorTimeout:
+		return true
+	case UpdatesLastCheckErrorUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetBackupsParamsXBackgroundRefresh.
 const (
 	GetBackupsParamsXBackgroundRefreshN1 GetBackupsParamsXBackgroundRefresh = "1"
@@ -806,6 +914,21 @@ const (
 func (e GetStatusParamsXBackgroundRefresh) Valid() bool {
 	switch e {
 	case GetStatusParamsXBackgroundRefreshN1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetUpdatesParamsXBackgroundRefresh.
+const (
+	GetUpdatesParamsXBackgroundRefreshN1 GetUpdatesParamsXBackgroundRefresh = "1"
+)
+
+// Valid indicates whether the value is a known member of the GetUpdatesParamsXBackgroundRefresh enum.
+func (e GetUpdatesParamsXBackgroundRefresh) Valid() bool {
+	switch e {
+	case GetUpdatesParamsXBackgroundRefreshN1:
 		return true
 	default:
 		return false
@@ -1141,6 +1264,25 @@ type Backups struct {
 	Running bool           `json:"running"`
 	Targets []BackupTarget `json:"targets"`
 }
+
+// BundleKind defines model for BundleKind.
+type BundleKind string
+
+// BundleLoad defines model for BundleLoad.
+type BundleLoad struct {
+	Kind BundleKind `json:"kind"`
+
+	// Reason Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`, `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `noSpace`, `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`.
+	Reason    *string         `json:"reason,omitempty"`
+	StartedAt time.Time       `json:"startedAt"`
+	State     BundleLoadState `json:"state"`
+
+	// Version The version, once known.
+	Version *string `json:"version,omitempty"`
+}
+
+// BundleLoadState defines model for BundleLoad.State.
+type BundleLoadState string
 
 // CBOMRepository The CBOM repository ILM keeps CBOMs in, reachable only by ILM. Turned off, the CBOMs stored on the appliance are kept. Left out of an update, the current settings are kept.
 type CBOMRepository struct {
@@ -1957,6 +2099,68 @@ type TrustedCertificateList struct {
 	Items []TrustedCertificate `json:"items"`
 }
 
+// UpdateBundle defines model for UpdateBundle.
+type UpdateBundle struct {
+	Arch string `json:"arch"`
+
+	// Blocked Why the bundle cannot be installed now; absent when it can.
+	Blocked *UpdateBundleBlocked `json:"blocked,omitempty"`
+
+	// Ilm The ILM version of a platform bundle.
+	Ilm      *string    `json:"ilm,omitempty"`
+	Kind     BundleKind `json:"kind"`
+	LoadedAt *time.Time `json:"loadedAt,omitempty"`
+
+	// MinAppliance The oldest appliance version a platform bundle installs on.
+	MinAppliance *string `json:"minAppliance,omitempty"`
+
+	// Needs The appliance version that must be installed first.
+	Needs *string `json:"needs,omitempty"`
+
+	// Notes The path of the bundle's release notes in this API.
+	Notes string `json:"notes"`
+
+	// Operator The ILM operator version of a platform bundle.
+	Operator *string `json:"operator,omitempty"`
+
+	// OperatorRange The ILM operator versions a system bundle works with.
+	OperatorRange *string `json:"operatorRange,omitempty"`
+
+	// SizeBytes The size of the bundle's images.
+	SizeBytes int64  `json:"sizeBytes"`
+	Version   string `json:"version"`
+}
+
+// UpdateBundleBlocked Why the bundle cannot be installed now; absent when it can.
+type UpdateBundleBlocked string
+
+// UpdateFetch defines model for UpdateFetch.
+type UpdateFetch struct {
+	Kind BundleKind `json:"kind"`
+
+	// Version The version, X.Y.Z; the bundle for the appliance's architecture is loaded.
+	Version string `json:"version"`
+}
+
+// Updates defines model for Updates.
+type Updates struct {
+	// Available The bundles online that are newer than what runs.
+	Available []UpdateBundle `json:"available"`
+
+	// LastCheck When the online repository was last checked.
+	LastCheck *time.Time `json:"lastCheck,omitempty"`
+
+	// LastCheckError Why the last check failed; absent when it succeeded.
+	LastCheckError *UpdatesLastCheckError `json:"lastCheckError,omitempty"`
+	Load           *BundleLoad            `json:"load,omitempty"`
+
+	// Loaded The bundles in the appliance's registry and on its data volume.
+	Loaded []UpdateBundle `json:"loaded"`
+}
+
+// UpdatesLastCheckError Why the last check failed; absent when it succeeded.
+type UpdatesLastCheckError string
+
 // Versions defines model for Versions.
 type Versions struct {
 	Appliance  *string `json:"appliance,omitempty"`
@@ -1998,6 +2202,9 @@ type TargetFailed = Error
 
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
+
+// UpdatesUnavailable defines model for UpdatesUnavailable.
+type UpdatesUnavailable = Error
 
 // GetAuditParams defines parameters for GetAudit.
 type GetAuditParams struct {
@@ -2041,6 +2248,21 @@ type GetStatusParams struct {
 
 // GetStatusParamsXBackgroundRefresh defines parameters for GetStatus.
 type GetStatusParamsXBackgroundRefresh string
+
+// GetUpdatesParams defines parameters for GetUpdates.
+type GetUpdatesParams struct {
+	// XBackgroundRefresh 1 marks a read the console makes on its own, which does not keep the session from going idle.
+	XBackgroundRefresh *GetUpdatesParamsXBackgroundRefresh `json:"X-Background-Refresh,omitempty"`
+}
+
+// GetUpdatesParamsXBackgroundRefresh defines parameters for GetUpdates.
+type GetUpdatesParamsXBackgroundRefresh string
+
+// PutUpdatesUploadParams defines parameters for PutUpdatesUpload.
+type PutUpdatesUploadParams struct {
+	// Kind The kind of bundle the file must be.
+	Kind BundleKind `form:"kind" json:"kind"`
+}
 
 // PostAccessKubeconfigJSONRequestBody defines body for PostAccessKubeconfig for application/json ContentType.
 type PostAccessKubeconfigJSONRequestBody = KubeconfigRequest
@@ -2125,6 +2347,9 @@ type PostTrustJSONRequestBody = TrustUpload
 
 // PostTrustPreviewJSONRequestBody defines body for PostTrustPreview for application/json ContentType.
 type PostTrustPreviewJSONRequestBody = TrustUpload
+
+// PostUpdatesFetchJSONRequestBody defines body for PostUpdatesFetch for application/json ContentType.
+type PostUpdatesFetchJSONRequestBody = UpdateFetch
 
 // PutWizardPlatformJSONRequestBody defines body for PutWizardPlatform for application/json ContentType.
 type PutWizardPlatformJSONRequestBody = PlatformSettings
@@ -2405,6 +2630,21 @@ type ServerInterface interface {
 	// DeleteTrust Stop trusting a CA certificate
 	// (DELETE /trust/{sha256})
 	DeleteTrust(w http.ResponseWriter, r *http.Request, sha256 string)
+	// GetUpdates The bundles available online and loaded, and the latest load
+	// (GET /updates)
+	GetUpdates(w http.ResponseWriter, r *http.Request, params GetUpdatesParams)
+	// PostUpdatesCheck Check the online repository for newer bundles now
+	// (POST /updates/check)
+	PostUpdatesCheck(w http.ResponseWriter, r *http.Request)
+	// PostUpdatesFetch Load a bundle from the online repository
+	// (POST /updates/fetch)
+	PostUpdatesFetch(w http.ResponseWriter, r *http.Request)
+	// GetUpdateNotes The release notes of a bundle available or loaded
+	// (GET /updates/notes/{kind}/{version})
+	GetUpdateNotes(w http.ResponseWriter, r *http.Request, kind BundleKind, version string)
+	// PutUpdatesUpload Upload a bundle file and load it
+	// (PUT /updates/upload)
+	PutUpdatesUpload(w http.ResponseWriter, r *http.Request, params PutUpdatesUploadParams)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
 	// (PUT /wizard/platform)
 	PutWizardPlatform(w http.ResponseWriter, r *http.Request)
@@ -3539,6 +3779,143 @@ func (siw *ServerInterfaceWrapper) DeleteTrust(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// GetUpdates operation middleware
+func (siw *ServerInterfaceWrapper) GetUpdates(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUpdatesParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Background-Refresh" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Background-Refresh")]; found {
+		var XBackgroundRefresh GetUpdatesParamsXBackgroundRefresh
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Background-Refresh", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Background-Refresh", valueList[0], &XBackgroundRefresh, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Background-Refresh", Err: err})
+			return
+		}
+
+		params.XBackgroundRefresh = &XBackgroundRefresh
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpdates(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUpdatesCheck operation middleware
+func (siw *ServerInterfaceWrapper) PostUpdatesCheck(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUpdatesCheck(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUpdatesFetch operation middleware
+func (siw *ServerInterfaceWrapper) PostUpdatesFetch(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUpdatesFetch(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpdateNotes operation middleware
+func (siw *ServerInterfaceWrapper) GetUpdateNotes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "kind" -------------
+	var kind BundleKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", r.PathValue("kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "version" -------------
+	var version string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "version", r.PathValue("version"), &version, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "version", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpdateNotes(w, r, kind, version)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUpdatesUpload operation middleware
+func (siw *ServerInterfaceWrapper) PutUpdatesUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutUpdatesUploadParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUpdatesUpload(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PutWizardPlatform operation middleware
 func (siw *ServerInterfaceWrapper) PutWizardPlatform(w http.ResponseWriter, r *http.Request) {
 
@@ -3736,6 +4113,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/start", wrapper.PostRestoreStart)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/resume", wrapper.PostRestoreResume)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/abandon", wrapper.PostRestoreAbandon)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/updates", wrapper.GetUpdates)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/check", wrapper.PostUpdatesCheck)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/updates/upload", wrapper.PutUpdatesUpload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/fetch", wrapper.PostUpdatesFetch)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/updates/notes/{kind}/{version}", wrapper.GetUpdateNotes)
 
 	return m
 }
@@ -3772,6 +4154,8 @@ type SignInLockedJSONResponse LockedError
 type TargetFailedJSONResponse Error
 
 type UnauthorizedJSONResponse Error
+
+type UpdatesUnavailableJSONResponse Error
 
 type GetAccessRequestObject struct {
 }
@@ -8024,6 +8408,363 @@ func (response DeleteTrust409JSONResponse) VisitDeleteTrustResponse(w http.Respo
 	return err
 }
 
+type GetUpdatesRequestObject struct {
+	Params GetUpdatesParams
+}
+
+type GetUpdatesResponseObject interface {
+	VisitGetUpdatesResponse(w http.ResponseWriter) error
+}
+
+type GetUpdates200JSONResponse Updates
+
+func (response GetUpdates200JSONResponse) VisitGetUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpdates401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetUpdates401JSONResponse) VisitGetUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpdates503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response GetUpdates503JSONResponse) VisitGetUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesCheckRequestObject struct {
+}
+
+type PostUpdatesCheckResponseObject interface {
+	VisitPostUpdatesCheckResponse(w http.ResponseWriter) error
+}
+
+type PostUpdatesCheck200JSONResponse Updates
+
+func (response PostUpdatesCheck200JSONResponse) VisitPostUpdatesCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesCheck401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostUpdatesCheck401JSONResponse) VisitPostUpdatesCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesCheck403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostUpdatesCheck403JSONResponse) VisitPostUpdatesCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesCheck503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response PostUpdatesCheck503JSONResponse) VisitPostUpdatesCheckResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesFetchRequestObject struct {
+	Body *PostUpdatesFetchJSONRequestBody
+}
+
+type PostUpdatesFetchResponseObject interface {
+	VisitPostUpdatesFetchResponse(w http.ResponseWriter) error
+}
+
+type PostUpdatesFetch202Response struct {
+}
+
+func (response PostUpdatesFetch202Response) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostUpdatesFetch400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostUpdatesFetch400JSONResponse) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesFetch401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostUpdatesFetch401JSONResponse) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesFetch403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostUpdatesFetch403JSONResponse) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesFetch409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostUpdatesFetch409JSONResponse) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesFetch503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response PostUpdatesFetch503JSONResponse) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpdateNotesRequestObject struct {
+	Kind    BundleKind `json:"kind"`
+	Version string     `json:"version"`
+}
+
+type GetUpdateNotesResponseObject interface {
+	VisitGetUpdateNotesResponse(w http.ResponseWriter) error
+}
+
+type GetUpdateNotes200TextmarkdownResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetUpdateNotes200TextmarkdownResponse) VisitGetUpdateNotesResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/markdown")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetUpdateNotes401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetUpdateNotes401JSONResponse) VisitGetUpdateNotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpdateNotes404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response GetUpdateNotes404JSONResponse) VisitGetUpdateNotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpdateNotes503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response GetUpdateNotes503JSONResponse) VisitGetUpdateNotesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUpdatesUploadRequestObject struct {
+	Params PutUpdatesUploadParams
+	Body   io.Reader
+}
+
+type PutUpdatesUploadResponseObject interface {
+	VisitPutUpdatesUploadResponse(w http.ResponseWriter) error
+}
+
+type PutUpdatesUpload202Response struct {
+}
+
+func (response PutUpdatesUpload202Response) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutUpdatesUpload400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutUpdatesUpload400JSONResponse) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUpdatesUpload401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutUpdatesUpload401JSONResponse) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUpdatesUpload403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutUpdatesUpload403JSONResponse) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUpdatesUpload409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutUpdatesUpload409JSONResponse) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutUpdatesUpload503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response PutUpdatesUpload503JSONResponse) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutWizardPlatformRequestObject struct {
 	Body *PutWizardPlatformJSONRequestBody
 }
@@ -8284,6 +9025,21 @@ type StrictServerInterface interface {
 	// DeleteTrust Stop trusting a CA certificate
 	// (DELETE /trust/{sha256})
 	DeleteTrust(ctx context.Context, request DeleteTrustRequestObject) (DeleteTrustResponseObject, error)
+	// GetUpdates The bundles available online and loaded, and the latest load
+	// (GET /updates)
+	GetUpdates(ctx context.Context, request GetUpdatesRequestObject) (GetUpdatesResponseObject, error)
+	// PostUpdatesCheck Check the online repository for newer bundles now
+	// (POST /updates/check)
+	PostUpdatesCheck(ctx context.Context, request PostUpdatesCheckRequestObject) (PostUpdatesCheckResponseObject, error)
+	// PostUpdatesFetch Load a bundle from the online repository
+	// (POST /updates/fetch)
+	PostUpdatesFetch(ctx context.Context, request PostUpdatesFetchRequestObject) (PostUpdatesFetchResponseObject, error)
+	// GetUpdateNotes The release notes of a bundle available or loaded
+	// (GET /updates/notes/{kind}/{version})
+	GetUpdateNotes(ctx context.Context, request GetUpdateNotesRequestObject) (GetUpdateNotesResponseObject, error)
+	// PutUpdatesUpload Upload a bundle file and load it
+	// (PUT /updates/upload)
+	PutUpdatesUpload(ctx context.Context, request PutUpdatesUploadRequestObject) (PutUpdatesUploadResponseObject, error)
 	// PutWizardPlatform Set the platform host name, its components and the mail server
 	// (PUT /wizard/platform)
 	PutWizardPlatform(ctx context.Context, request PutWizardPlatformRequestObject) (PutWizardPlatformResponseObject, error)
@@ -10037,6 +10793,142 @@ func (sh *strictHandler) DeleteTrust(w http.ResponseWriter, r *http.Request, sha
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteTrustResponseObject); ok {
 		if err := validResponse.VisitDeleteTrustResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUpdates operation middleware
+func (sh *strictHandler) GetUpdates(w http.ResponseWriter, r *http.Request, params GetUpdatesParams) {
+	var request GetUpdatesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUpdates(ctx, request.(GetUpdatesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUpdates")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUpdatesResponseObject); ok {
+		if err := validResponse.VisitGetUpdatesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostUpdatesCheck operation middleware
+func (sh *strictHandler) PostUpdatesCheck(w http.ResponseWriter, r *http.Request) {
+	var request PostUpdatesCheckRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostUpdatesCheck(ctx, request.(PostUpdatesCheckRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostUpdatesCheck")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostUpdatesCheckResponseObject); ok {
+		if err := validResponse.VisitPostUpdatesCheckResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostUpdatesFetch operation middleware
+func (sh *strictHandler) PostUpdatesFetch(w http.ResponseWriter, r *http.Request) {
+	var request PostUpdatesFetchRequestObject
+
+	var body PostUpdatesFetchJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostUpdatesFetch(ctx, request.(PostUpdatesFetchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostUpdatesFetch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostUpdatesFetchResponseObject); ok {
+		if err := validResponse.VisitPostUpdatesFetchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUpdateNotes operation middleware
+func (sh *strictHandler) GetUpdateNotes(w http.ResponseWriter, r *http.Request, kind BundleKind, version string) {
+	var request GetUpdateNotesRequestObject
+
+	request.Kind = kind
+	request.Version = version
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUpdateNotes(ctx, request.(GetUpdateNotesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUpdateNotes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUpdateNotesResponseObject); ok {
+		if err := validResponse.VisitGetUpdateNotesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutUpdatesUpload operation middleware
+func (sh *strictHandler) PutUpdatesUpload(w http.ResponseWriter, r *http.Request, params PutUpdatesUploadParams) {
+	var request PutUpdatesUploadRequestObject
+
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutUpdatesUpload(ctx, request.(PutUpdatesUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutUpdatesUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutUpdatesUploadResponseObject); ok {
+		if err := validResponse.VisitPutUpdatesUploadResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

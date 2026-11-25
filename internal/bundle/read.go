@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"os"
 	"path"
 	"path/filepath"
@@ -36,6 +35,8 @@ type verified struct {
 	metadata Metadata
 	notes    v1.Descriptor
 	files    v1.Descriptor
+	// images is set once every image was checked.
+	images bool
 }
 
 // Open opens the bundle at path, an OCI layout directory or a tar of one. A tar is extracted into a directory next to
@@ -233,38 +234,52 @@ func (b *Bundle) Notes() ([]byte, error) {
 	return b.readBlob(b.verified.notes, maxFilesSize)
 }
 
-// Images yields each image of a verified bundle in metadata order; the image is nil if it cannot be read.
-func (b *Bundle) Images() iter.Seq2[ImageRef, v1.Image] {
-	return func(yield func(ImageRef, v1.Image) bool) {
-		if b.verified == nil {
-			return
-		}
-		index, err := layout.Path(b.dir).ImageIndex()
-		if err == nil {
-			index, err = index.ImageIndex(b.verified.index)
-		}
-		for _, ref := range b.verified.metadata.Images {
-			var img v1.Image
-			if err == nil {
-				img = b.image(index, ref)
-			}
-			if !yield(ref, img) {
-				return
-			}
-		}
-	}
+// Image is an image of a bundle with the image manifest it is stored under.
+type Image struct {
+	Ref   ImageRef
+	Image v1.Image
 }
 
-func (b *Bundle) image(index v1.ImageIndex, ref ImageRef) v1.Image {
-	h, err := v1.NewHash(ref.Digest)
-	if err != nil {
-		return nil
+// Index returns the bundle index of a verified bundle.
+func (b *Bundle) Index() (v1.ImageIndex, error) {
+	if b.verified == nil {
+		return nil, errors.New("the bundle is not verified")
 	}
-	img, err := index.Image(h)
+	index, err := layout.Path(b.dir).ImageIndex()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read the bundle index: %w", err)
 	}
-	return img
+	if index, err = index.ImageIndex(b.verified.index); err != nil {
+		return nil, fmt.Errorf("read the bundle index: %w", err)
+	}
+	return index, nil
+}
+
+// Images returns the images of a bundle that passed Verify, in metadata order.
+func (b *Bundle) Images() ([]Image, error) {
+	index, err := b.Index()
+	if err != nil {
+		return nil, err
+	}
+	if !b.verified.images {
+		return nil, errors.New("the bundle images are not verified")
+	}
+	images := make([]Image, 0, len(b.verified.metadata.Images))
+	for _, ref := range b.verified.metadata.Images {
+		h, err := v1.NewHash(ref.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("read bundle image %s: %w", ref.Ref, err)
+		}
+		img, err := index.Image(h)
+		if err == nil {
+			_, err = img.RawManifest()
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read bundle image %s: %w", ref.Ref, err)
+		}
+		images = append(images, Image{Ref: ref, Image: img})
+	}
+	return images, nil
 }
 
 // openBlob opens the blob d names.

@@ -73,6 +73,9 @@ type Image struct {
 	Bundle string `json:"bundle"`
 	// Arches limits the image to the listed architectures; empty means all.
 	Arches []string `json:"arches,omitempty"`
+	// ArchDigests maps each architecture to the digest of its image manifest when Ref pins a digest. A node pulls
+	// that manifest, which is all a bundle carries, instead of the index Ref may pin.
+	ArchDigests map[string]string `json:"archDigests,omitempty"`
 }
 
 // Database kinds of Connector.Database.

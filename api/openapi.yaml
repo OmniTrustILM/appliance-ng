@@ -56,6 +56,10 @@ tags:
   - name: restore
     description: >-
       The restore of a backup: onto a fresh appliance from an upload or a target, or in place from a local backup.
+  - name: updates
+    description: >-
+      The signed system and platform bundles: those found online that are newer than what runs, and those loaded into
+      the appliance's registry and data volume from an upload or online.
 paths:
   /setup/code:
     post:
@@ -716,8 +720,8 @@ paths:
       summary: Set a new password for the ILM administrator
       description: |
         Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
-        409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs, with 409
-        `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
+        409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs,
+        `bundle_loading` while an update bundle loads, with 409 `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
         in with an external identity provider. When Keycloak refuses or does not answer, the request is answered with
         502 and the stored password stays as it was.
       security:
@@ -1500,7 +1504,7 @@ paths:
       summary: Back up now
       description: |
         Starts a backup copied to every target and answers before it ends; the status and the audit log record how
-        it ends. A backup that may not start is answered with 409: `backup_running`, `no_recovery_kit`,
+        it ends. A backup that may not start is answered with 409: `backup_running`, `bundle_loading`, `no_recovery_kit`,
         `upgrade_in_progress`, `restore_in_progress` (a restore runs, waits for its kit or failed before it was done)
         or `no_space`.
       security:
@@ -1880,7 +1884,8 @@ paths:
         place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
         backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
         check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
-        `upgrade_in_progress`, `backup_running`, and `tampered` or `truncated` for a backup changed since its check.
+        `upgrade_in_progress`, `backup_running`, `bundle_loading`, and `tampered` or `truncated` for a backup changed
+        since its check.
       security:
         - session: []
       requestBody:
@@ -1950,6 +1955,159 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /updates:
+    get:
+      tags: [updates]
+      operationId: getUpdates
+      summary: The bundles available online and loaded, and the latest load
+      security:
+        - session: []
+      parameters:
+        - name: X-Background-Refresh
+          in: header
+          required: false
+          description: 1 marks a read the console makes on its own, which does not keep the session from going idle.
+          schema:
+            type: string
+            enum: ['1']
+      responses:
+        '200':
+          description: The update bundles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Updates'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/check:
+    post:
+      tags: [updates]
+      operationId: postUpdatesCheck
+      summary: Check the online repository for newer bundles now
+      description: |
+        Lists the bundles in the online repository that are newer than what runs and verifies each one's signature
+        before listing it, at most the ten newest of each kind. A failed check is answered with 200 and
+        `lastCheckError`; the bundles found before stay listed unless the repository was read. A check asked for while
+        another runs waits for that one and answers with its result.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The check ended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Updates'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/upload:
+    put:
+      tags: [updates]
+      operationId: putUpdatesUpload
+      summary: Upload a bundle file and load it
+      description: |
+        Streams the body, a bundle file (a tar of its OCI layout), to the data volume and loads it in the background:
+        `load` in GET /updates shows how the load ends. The request needs `Content-Length`; a bundle that does not fit
+        three times into the free space, once for the file and twice for its load, is refused with 409 `no_space`
+        before it is read. Refused with 409 `busy` while a backup, a restore, an update or another load runs. A bundle
+        that is not signed with the appliance's key, is damaged, is for another kind or architecture, or cannot be
+        installed on what runs is refused with a fixed reason, and nothing of it is kept.
+      security:
+        - session: []
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          description: The kind of bundle the file must be.
+          schema:
+            $ref: '#/components/schemas/BundleKind'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '202':
+          description: The bundle is stored and being loaded.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/fetch:
+    post:
+      tags: [updates]
+      operationId: postUpdatesFetch
+      summary: Load a bundle from the online repository
+      description: |
+        Loads the bundle in the background, with the checks of an upload: `load` in GET /updates shows how it ends.
+        Refused with 409 `busy` while a backup, a restore, an update or another load runs.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFetch'
+      responses:
+        '202':
+          description: The bundle is being loaded.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/notes/{kind}/{version}:
+    get:
+      tags: [updates]
+      operationId: getUpdateNotes
+      summary: The release notes of a bundle available or loaded
+      description: Markdown, to be shown as text.
+      security:
+        - session: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/BundleKind'
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The release notes.
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
 components:
   securitySchemes:
     session:
@@ -2040,6 +2198,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    UpdatesUnavailable:
+      description: The manager runs without update bundles.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BackupsUnavailable:
       description: The manager runs without backups.
       content:
@@ -2053,6 +2217,102 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    BundleKind:
+      type: string
+      enum: [system, platform]
+    UpdateFetch:
+      type: object
+      required: [kind, version]
+      properties:
+        kind:
+          $ref: '#/components/schemas/BundleKind'
+        version:
+          type: string
+          description: The version, X.Y.Z; the bundle for the appliance's architecture is loaded.
+    Updates:
+      type: object
+      required: [available, loaded]
+      properties:
+        lastCheck:
+          type: string
+          format: date-time
+          description: When the online repository was last checked.
+        lastCheckError:
+          type: string
+          enum: [badSignature, unreachable, timeout, failed]
+          description: Why the last check failed; absent when it succeeded.
+        available:
+          type: array
+          description: The bundles online that are newer than what runs.
+          items:
+            $ref: '#/components/schemas/UpdateBundle'
+        loaded:
+          type: array
+          description: The bundles in the appliance's registry and on its data volume.
+          items:
+            $ref: '#/components/schemas/UpdateBundle'
+        load:
+          $ref: '#/components/schemas/BundleLoad'
+    UpdateBundle:
+      type: object
+      required: [kind, version, arch, sizeBytes, notes]
+      properties:
+        kind:
+          $ref: '#/components/schemas/BundleKind'
+        version:
+          type: string
+        arch:
+          type: string
+        ilm:
+          type: string
+          description: The ILM version of a platform bundle.
+        operator:
+          type: string
+          description: The ILM operator version of a platform bundle.
+        minAppliance:
+          type: string
+          description: The oldest appliance version a platform bundle installs on.
+        operatorRange:
+          type: string
+          description: The ILM operator versions a system bundle works with.
+        sizeBytes:
+          type: integer
+          format: int64
+          description: The size of the bundle's images.
+        loadedAt:
+          type: string
+          format: date-time
+        blocked:
+          type: string
+          enum: [olderThanRunning, operatorOutOfRange, needsAppliance, wrongArch, sameVersion, invalidMetadata]
+          description: Why the bundle cannot be installed now; absent when it can.
+        needs:
+          type: string
+          description: The appliance version that must be installed first.
+        notes:
+          type: string
+          description: The path of the bundle's release notes in this API.
+    BundleLoad:
+      type: object
+      required: [state, kind, startedAt]
+      properties:
+        state:
+          type: string
+          enum: [running, loaded, refused, failed]
+        kind:
+          $ref: '#/components/schemas/BundleKind'
+        version:
+          type: string
+          description: The version, once known.
+        reason:
+          type: string
+          description: >-
+            Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`,
+            `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `noSpace`, `busy`, `notFound`,
+            `unreachable`, `timeout`, `failed`, or a reason of `blocked`.
+        startedAt:
+          type: string
+          format: date-time
     Error:
       type: object
       required: [code, message]
@@ -2473,7 +2733,7 @@ components:
             kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
             recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
             backup-target-test, backup-host-key-scan, restore-upload, restore-fetch, restore-inspect, restore-start,
-            restore-resume, restore-abandon, restore]
+            restore-resume, restore-abandon, restore, update-check, update-upload, update-fetch, bundle-loaded]
         result:
           type: string
           enum: [success, failure, denied]

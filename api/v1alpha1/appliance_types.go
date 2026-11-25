@@ -487,6 +487,9 @@ type Versions struct {
 	Operator string `json:"operator,omitempty"`
 	// +optional
 	ILM string `json:"ilm,omitempty"`
+	// PlatformBundle is the version of the platform bundle that is running.
+	// +optional
+	PlatformBundle string `json:"platformBundle,omitempty"`
 }
 
 // ApplianceStatus is the observed state of the appliance.
@@ -526,6 +529,78 @@ type ApplianceStatus struct {
 	// +listMapKey=name
 	// +optional
 	Connectors []ConnectorState `json:"connectors,omitempty"`
+	// Updates lists the bundles that can be loaded and the ones loaded; unset until the first check or load.
+	// +optional
+	Updates *UpdatesStatus `json:"updates,omitempty"`
+	// Update is the latest update or rollback; unset until one starts.
+	// +optional
+	Update *UpdateStatus `json:"update,omitempty"`
+}
+
+// UpdatesStatus is the state of the update bundles.
+type UpdatesStatus struct {
+	// LastCheck is when the online source was last checked.
+	// +optional
+	LastCheck *metav1.Time `json:"lastCheck,omitempty"`
+	// LastCheckError is a fixed reason, never an error text of the source; unset when the last check succeeded.
+	// +optional
+	LastCheckError string `json:"lastCheckError,omitempty"`
+	// Available are the bundles found online that are newer than what runs.
+	// +optional
+	Available []BundleInfo `json:"available,omitempty"`
+	// Loaded are the bundles on the data volume.
+	// +optional
+	Loaded []BundleInfo `json:"loaded,omitempty"`
+}
+
+// BundleInfo describes one update bundle.
+type BundleInfo struct {
+	// +kubebuilder:validation:Enum=system;platform
+	Kind    string `json:"kind"`
+	Version string `json:"version"`
+	Arch    string `json:"arch"`
+	// ILM, Operator and MinAppliance are set for a platform bundle.
+	// +optional
+	ILM string `json:"ilm,omitempty"`
+	// +optional
+	Operator string `json:"operator,omitempty"`
+	// +optional
+	MinAppliance string `json:"minAppliance,omitempty"`
+	// OperatorRange is set for a system bundle.
+	// +optional
+	OperatorRange string `json:"operatorRange,omitempty"`
+	// +optional
+	SizeBytes int64 `json:"sizeBytes,omitempty"`
+	// +optional
+	LoadedAt *metav1.Time `json:"loadedAt,omitempty"`
+	// Blocked is a fixed reason the bundle cannot be installed now; unset when it can.
+	// +optional
+	// +kubebuilder:validation:Enum=olderThanRunning;operatorOutOfRange;needsAppliance;wrongArch;sameVersion;invalidMetadata
+	Blocked string `json:"blocked,omitempty"`
+	// Needs is the version that must be installed first.
+	// +optional
+	Needs string `json:"needs,omitempty"`
+}
+
+// UpdateStatus is the progress and outcome of an update or rollback.
+type UpdateStatus struct {
+	// +kubebuilder:validation:Enum=platform;system;rollback
+	Kind string `json:"kind"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Step is the step the update is at.
+	// +optional
+	Step string `json:"step,omitempty"`
+	// Message is a fixed text, never an error text of a component.
+	// +optional
+	Message string `json:"message,omitempty"`
+	// Backup is the name of the backup taken before the update.
+	// +optional
+	Backup    string      `json:"backup,omitempty"`
+	StartedAt metav1.Time `json:"startedAt"`
+	// PointOfNoReturn is set once the update can no longer be abandoned.
+	// +optional
+	PointOfNoReturn bool `json:"pointOfNoReturn,omitempty"`
 }
 
 // ConnectorState is the state of one chosen connector.

@@ -83,6 +83,56 @@ func hasTag(name string) bool {
 	return strings.Contains(name[strings.LastIndex(name, "/")+1:], ":")
 }
 
+// RegistryHosts returns the sorted, unique registries the images are pulled from, in lowercase, as a container
+// runtime names them: docker.io for Docker Hub.
+func (m *Manifest) RegistryHosts() []string {
+	var hosts []string
+	for _, img := range m.Images {
+		hosts = append(hosts, registryHost(img.Ref))
+	}
+	slices.Sort(hosts)
+	return slices.Compact(hosts)
+}
+
+// ArchPins maps the digest each image reference pins to the digest of its image manifest for arch, for the images
+// whose manifest for arch has another digest.
+func (m *Manifest) ArchPins(arch string) map[string]string {
+	pins := map[string]string{}
+	for _, img := range m.Images {
+		if d, ok := img.ArchDigests[arch]; ok && d != img.Digest {
+			pins[img.Digest] = d
+		}
+	}
+	return pins
+}
+
+// registryHost is the registry ref is pulled from, in lowercase.
+func registryHost(ref string) string {
+	host, _, _ := strings.Cut(Repository(imageName(ref)), "/")
+	return strings.ToLower(host)
+}
+
+// Repository returns the repository of name, an image name without tag and digest, as a container runtime resolves
+// it: a name without a registry host, or with index.docker.io, is on Docker Hub, docker.io, and a single-component
+// Docker Hub name is in library.
+func Repository(name string) string {
+	host, path, ok := strings.Cut(name, "/")
+	switch {
+	case !ok:
+		return dockerHub + "/library/" + name
+	case !isRegistry(host):
+		return dockerHub + "/" + name
+	case host == dockerHub || host == "index.docker.io":
+		if !strings.Contains(path, "/") {
+			path = "library/" + path
+		}
+		return dockerHub + "/" + path
+	}
+	return name
+}
+
+const dockerHub = "docker.io"
+
 // RegistryHost is the registry the connector's image is pulled from, in lowercase.
 func (c Connector) RegistryHost() string {
 	host, _, _ := strings.Cut(normalize(c.Image), "/")

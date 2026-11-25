@@ -55,10 +55,12 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 	sftpKey := backupTargetAnswers(t, h, s, &answers)
 	restoreKey := restoreSecretAnswers(t, h, s, &answers)
 	cbomAnswers(t, h, s, &answers)
+	updateAnswers(t, h, s, &answers)
 
 	for _, path := range []string{
 		"/appliance/api/v1/appliance", "/appliance/api/v1/status", "/appliance/api/v1/audit", "/appliance/api/v1/session", "/appliance/api/v1/catalogue", pathCertificate,
 		pathTrust, pathRegistries, pathTestRegistry, pathMail, pathPlatform, pathAccess, pathRecoveryKit, pathBackups, pathRestore,
+		pathUpdates,
 	} {
 		rec := h.request(http.MethodGet, path, nil, s)
 		wantStatus(t, rec, http.StatusOK)
@@ -106,6 +108,8 @@ func TestNoSecretLeavesTheManager(t *testing.T) {
 		"restore IdP secret":  restoreIDPSecret,
 		"CBOM access key":     cbomAccessKey,
 		"CBOM secret key":     cbomSecretKey,
+		"zot password":        zotPassword,
+		"registry pull pw":    registryPullPassword,
 	}
 	for where, data := range map[string]string{
 		"API answers":   answers.String(),

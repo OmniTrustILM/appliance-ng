@@ -396,6 +396,8 @@ func (s *Server) startKitBackup(a *v1alpha1.Appliance, user string) {
 	go func() {
 		_, err := s.deps.Backups.Run(context.Background(), backup.RunReplace, targets, backup.ByUser(user))
 		switch {
+		case errors.Is(err, backup.ErrHeld):
+			s.deps.Log.Info("the backup for the confirmed recovery kit starts once the update bundle has loaded")
 		case errors.Is(err, backup.ErrBusy):
 			s.deps.Log.Info("the backup for the confirmed recovery kit starts after the running one")
 		case err != nil:

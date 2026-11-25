@@ -31,6 +31,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/restore"
 	"github.com/OmniTrustILM/appliance-ng/internal/storage"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
+	"github.com/OmniTrustILM/appliance-ng/internal/update"
 )
 
 const (
@@ -108,6 +109,12 @@ type Deps struct {
 	ILM func(ctx context.Context, a *v1alpha1.Appliance) (*ilmclient.Client, error)
 	// KeycloakURL is the base URL of the managed Keycloak; empty is the cluster IP of its Service.
 	KeycloakURL string
+	// Updates loads update bundles and Finder finds them online; without both the update operations are
+	// unavailable.
+	Updates Updater
+	Finder  UpdateFinder
+	// UpdatesDir keeps an uploaded bundle until it is loaded.
+	UpdatesDir string
 }
 
 // Server serves the manager's API under auth.APIBase.
@@ -249,6 +256,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPost, restorePath+"/resume"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreResume)))
 	mux.Handle(route(http.MethodPost, restorePath+"/abandon"), change(AuditEntryActionRestoreAbandon))
 	mux.Handle(route(http.MethodPost, restorePath+"/list"), withWriteDeadline(targetTestWriteTimeout(), protected))
+	mux.Handle(route(http.MethodPut, updatesUploadPath), withStreamDeadlines(change(AuditEntryActionUpdateUpload)))
+	mux.Handle(route(http.MethodPost, updatesPath+"/check"), withWriteDeadline(update.CheckTimeout+update.RecordTimeout+answerMargin, change(AuditEntryActionUpdateCheck)))
+	mux.Handle(route(http.MethodPost, updatesPath+"/fetch"), change(AuditEntryActionUpdateFetch))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
 }
@@ -314,8 +324,11 @@ func withRequest(next http.Handler) http.Handler {
 // bundles, re-issuing the recovery kit uploads the kit, backup targets carry private keys and CA bundles, and a
 // restore takes the kit, a target and the backup itself.
 func bodyLimit(path string) int64 {
-	if path == restoreUploadPath {
+	switch path {
+	case restoreUploadPath:
 		return maxRestoreUpload
+	case updatesUploadPath:
+		return maxBundleUpload
 	}
 	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue", backupTargetsPath, restorePath} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {

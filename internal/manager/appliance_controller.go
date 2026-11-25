@@ -282,6 +282,11 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 			return ctrl.Result{}, err
 		}
 	}
+	// zot's Deployment mounts the Secret, so the add-on pass would wait for it forever without it.
+	if err := ensureRegistrySecret(ctx, r.Client); err != nil {
+		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, messageAddonsFailed)
+		return ctrl.Result{}, err
+	}
 	progress, err := r.addonsProgress(ctx, a)
 	if err != nil {
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, messageAddonsFailed)

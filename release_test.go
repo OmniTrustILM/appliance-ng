@@ -1,10 +1,13 @@
 package appliance
 
 import (
+	"io/fs"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/OmniTrustILM/appliance-ng/internal/addons"
 	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
@@ -74,5 +77,50 @@ func TestBundlesCarry3aImages(t *testing.T) {
 	}
 	if !slices.Contains(refs(release.BundlePlatform), cbom.RepositoryImage) {
 		t.Errorf("the platform bundle lacks %s", cbom.RepositoryImage)
+	}
+}
+
+func TestCiliumPinnedToTheManifestOfTheArch(t *testing.T) {
+	m, err := release.Parse(ReleaseManifest, "release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		data, err := fs.ReadFile(addons.Pinned(os.DirFS("addons"), m.ArchPins(arch)), "cilium.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		images, err := release.ImagesIn(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, img := range m.Images {
+			if strings.HasPrefix(img.Ref, "quay.io/cilium/") {
+				wantArchManifest(t, arch, img, images)
+			}
+		}
+	}
+}
+
+// wantArchManifest checks that images reference img by the digest of its manifest for arch, never by its index.
+func wantArchManifest(t *testing.T, arch string, img release.Image, images []string) {
+	t.Helper()
+	name, _, _ := strings.Cut(img.Ref, "@")
+	if want := name + "@" + img.ArchDigests[arch]; !slices.Contains(images, want) {
+		t.Errorf("%s: cilium.yaml lacks %s", arch, want)
+	}
+	if slices.ContainsFunc(images, func(ref string) bool { return strings.HasSuffix(ref, img.Digest) }) {
+		t.Errorf("%s: cilium.yaml still references the index %s", arch, img.Digest)
+	}
+}
+
+func TestMirrorUpstreamsOfTheRelease(t *testing.T) {
+	m, err := release.Parse(ReleaseManifest, "release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docker.io", "ghcr.io", "hub.omnitrustregistry.com", "quay.io", "registry.k8s.io"}
+	if got := m.RegistryHosts(); !slices.Equal(got, want) {
+		t.Errorf("RegistryHosts() = %v, want %v", got, want)
 	}
 }

@@ -248,3 +248,57 @@ func TestImagesIn(t *testing.T) {
 		t.Fatalf("ImagesIn = %v, %v", got, err)
 	}
 }
+
+const testArchDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func TestValidateArchDigests(t *testing.T) {
+	const pinned = "@sha256:1234"
+	cases := []struct {
+		name   string
+		change func(img *Image)
+		want   string
+	}{
+		{name: "pinned ref with every arch", change: func(img *Image) {
+			img.Ref += pinned
+			img.ArchDigests = map[string]string{"amd64": testArchDigest, "arm64": testArchDigest}
+		}},
+		{name: "pinned ref limited to an arch", change: func(img *Image) {
+			img.Ref += pinned
+			img.Arches = []string{"arm64"}
+			img.ArchDigests = map[string]string{"arm64": testArchDigest}
+		}},
+		{name: "pinned ref without per-arch digests", change: func(img *Image) {
+			img.Ref += pinned
+		}, want: "no archDigests entry for amd64"},
+		{name: "pinned ref lacking an arch", change: func(img *Image) {
+			img.Ref += pinned
+			img.ArchDigests = map[string]string{"amd64": testArchDigest}
+		}, want: "no archDigests entry for arm64"},
+		{name: "malformed per-arch digest", change: func(img *Image) {
+			img.Ref += pinned
+			img.ArchDigests = map[string]string{"amd64": testArchDigest, "arm64": "sha256:12"}
+		}, want: "archDigests arm64"},
+		{name: "per-arch digest of an arch the image is not for", change: func(img *Image) {
+			img.Ref += pinned
+			img.Arches = []string{"amd64"}
+			img.ArchDigests = map[string]string{"amd64": testArchDigest, "arm64": testArchDigest}
+		}, want: "archDigests arm64"},
+		{name: "per-arch digests without a pinned ref", change: func(img *Image) {
+			img.ArchDigests = map[string]string{"amd64": testArchDigest, "arm64": testArchDigest}
+		}, want: "does not pin a digest"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, files := validManifest()
+			tc.change(&m.Images[5])
+			errs := Validate(m, files)
+			if tc.want == "" {
+				if len(errs) != 0 {
+					t.Fatalf("Validate: %v, want no errors", errs)
+				}
+				return
+			}
+			assertOneError(t, errs, m.Images[5].Ref, tc.want)
+		})
+	}
+}

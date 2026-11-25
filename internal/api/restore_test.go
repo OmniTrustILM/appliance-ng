@@ -557,6 +557,7 @@ func TestRestoreStartRefusals(t *testing.T) {
 		restore.ErrSetup:             "setup",
 		restore.ErrUpgradeInProgress: "upgrade_in_progress",
 		restore.ErrBackupRunning:     "backup_running",
+		restore.ErrBundleLoading:     codeBundleLoading,
 	} {
 		f.startErr = err
 		wantCode(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Inspection: h.checked(), Confirm: true}, s), http.StatusConflict, code)

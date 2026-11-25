@@ -563,6 +563,12 @@ func TestPostBackups(t *testing.T) {
 		t.Errorf("busy entry %+v", e)
 	}
 
+	f.startErr = backup.ErrHeld
+	wantCode(t, h.request(http.MethodPost, pathBackups, nil, s), http.StatusConflict, codeBundleLoading)
+	if e := h.entries(); e[len(e)-1].Details["failed"] != "refused: "+codeBundleLoading {
+		t.Errorf("bundle loading entry %+v", e[len(e)-1])
+	}
+
 	f.startErr = errors.New(targetLeak)
 	rec := h.request(http.MethodPost, pathBackups, nil, s)
 	wantStatus(t, rec, http.StatusInternalServerError)

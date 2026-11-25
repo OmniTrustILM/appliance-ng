@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot test: boots the appliance offline, drives the onboarding wizard through its API and waits until it is ready.
 #
-#   [E2E=1] [RESTORE=1] run.sh <iso|qcow2> <arch>
+#   [E2E=1] [RESTORE=1] [BUNDLE=1] run.sh <iso|qcow2> <arch>
 #
 # The VM gets a random setup code preset through SMBIOS. While the node waits in maintenance mode, no resource Talos
 # serves without credentials may show the preset. test/boot/drive then answers both wizard parts, checks the
@@ -16,6 +16,10 @@
 # With RESTORE=1 the first VM also turns the CBOM repository on and stores a CBOM through ILM before the backup, and a
 # second VM restores the first one's backup under another ILM host name; see test/boot/drive for its checks. The leak check then also covers the second VM's serial log, the credential's password and the ILM client's
 # secret.
+# With BUNDLE=1 drive then uploads the signed platform bundle file BUNDLE_FILE (default
+# out/<arch>/platform-test.tar, made by test/boot/bundle.sh with the key whose public key the images were built
+# with as BUNDLE_TEST_KEY), waits until it is loaded, runs a pod from the bundle's curl image by the address of the
+# appliance's registry and checks that a copy with one changed byte is refused; see test/boot/drive.
 # Prints "PASS <seconds to ready>" (with RESTORE=1 "PASS <seconds> restored <seconds>") or "FAIL <reason>"; exits 0
 # or 1. The VMs are always stopped.
 # VM state is kept in out/boot/<arch>-<media>/ (the second VM's in out/boot/<arch>-<media>-restore/) and recreated on
@@ -50,16 +54,22 @@ GATEWAY=10.0.2.2
 DNS=10.0.2.3
 E2E="${E2E:-0}"
 RESTORE="${RESTORE:-0}"
+BUNDLE="${BUNDLE:-0}"
 # The second VM's node and ILM host name, which the restore sets instead of the backup's, and its administrator,
 # whose name differs from the backup's account so that the restore adds that account instead of replacing this one.
 RESTORE_HOST=restored.appliance.internal
 RESTORE_ADMIN=restorer
 TALOSCTL="${TALOSCTL:-talosctl}"
+# The appliance's registry, by whose address the bundle's curl image is pulled: the image cache holds the release's
+# images under their upstream names only, so only a loaded bundle serves it.
+ZOT=127.0.0.1:5443
 
 usage() { sed -n '4p' "$0" >&2; exit 2; }
 [[ $# -eq 2 ]] || usage
 media="$1" arch="$2"
 case "$media" in iso) mode=iso ;; qcow2) mode=disk ;; *) usage ;; esac
+bundle_file="${BUNDLE_FILE:-$REPO/out/$arch/platform-test.tar}"
+bundle_image=""
 
 export CPUS=4 MEM=12G DISK=50G
 first_dir="$REPO/out/boot/$arch-$media"
@@ -182,7 +192,7 @@ capture_setup_certificate() {
   fail "could not read the certificate of the first-boot service"
 }
 
-drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore> [<SFTP host key fingerprint>]
+drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bundle-load> [<SFTP host key fingerprint>]
   local part="$1"
   local fingerprint="${2:-}"
   local args=(--url "$CONSOLE_URL" --user "$admin" --password "$password" --seed-file "$seed_file"
@@ -200,6 +210,8 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore> [<
     access) args+=(--kube-addr "$KUBE_API" --apid "$APID") ;;
     restore) args+=(--backup "$backup_file" --kit "$kit_file" --passphrase-file "$kit_passphrase_file"
       --ilm-host "$RESTORE_HOST" --out "$restored_kit_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
+    bundle-load) args+=(--file "$bundle_file" --image "$bundle_image" --kit "$kit_file"
+      --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     *) fail "unknown wizard part $part" ;;
   esac
   "$drive" "$part" "${args[@]}" >&2 || fail "drive $part failed"
@@ -363,6 +375,15 @@ mkdir -p "$dir"
 if [[ "$E2E" == 1 ]]; then
   [[ -d "$REPO/test/e2e/node_modules/@playwright/test" ]] || fail "test/e2e has no node_modules: run npm ci there"
 fi
+if [[ "$BUNDLE" == 1 ]]; then
+  [[ -f "$bundle_file" ]] || fail "$bundle_file not found, make it with test/boot/bundle.sh"
+  # shellcheck disable=SC2016 # yq and build/lib.sh are expanded by the inner shell
+  curl_refs="$(cd "$REPO" && ARCH="$arch" bash -c 'source build/lib.sh &&
+    yq ".images[] | select(.ref | test(\"^hub\\.omnitrustregistry\\.com/ilm/curl:\")) | .ref" release.yaml')" ||
+    fail "could not read release.yaml"
+  [[ -n "$curl_refs" && "$curl_refs" != *$'\n'* ]] || fail "release.yaml does not name exactly one curl image"
+  bundle_image="$ZOT/$curl_refs"
+fi
 trap 'rm -f "$kit_file" "$kit_passphrase_file" "$sftp_password_file" "$s3_secret_file" "$p12_file" \
     "$p12_password_file" "$restored_kit_file" "$client_secret_file"
   if [[ -n "$targets_pid" ]]; then kill "$targets_pid" 2>/dev/null || true; fi
@@ -392,6 +413,7 @@ fi
 serve_targets
 drive_wizard backup "$targets_fingerprint"
 drive_wizard access
+if [[ "$BUNDLE" == 1 ]]; then drive_wizard bundle-load; fi
 first_ready=$ready
 if [[ "$RESTORE" == 1 ]]; then restore_test; fi
 

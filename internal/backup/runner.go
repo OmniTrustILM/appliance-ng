@@ -47,6 +47,8 @@ const (
 var (
 	// ErrBusy refuses a backup while another one runs.
 	ErrBusy = errors.New("a backup is running")
+	// ErrHeld refuses an operation while an update bundle loads; it is an ErrBusy.
+	ErrHeld = fmt.Errorf("%w: an update bundle is loading", ErrBusy)
 	// ErrUpgradeInProgress refuses a backup while the operator upgrades the platform.
 	ErrUpgradeInProgress = errors.New("the platform is being upgraded")
 	// ErrRestoreInProgress refuses a backup while a restore runs, waits for its kit or failed before it was done.
@@ -159,6 +161,8 @@ type Runner struct {
 	// mu guards running and pending.
 	mu      sync.Mutex
 	running bool
+	// held is set while a long operation, such as a bundle load, holds the runner.
+	held bool
 	// pending is a replace or scheduled run that waits for the running backup to end.
 	pending *pendingRun
 	// admission keeps the checks before a backup apart from a restore's admission, so that neither starts unseen by
@@ -227,8 +231,8 @@ func runOpts(opts []RunOption) runOptions {
 // leaves no file. A replace or scheduled run refused with ErrBusy starts once the running backup ends, with the background context:
 // the backup encrypted to a confirmed new kit must not wait for the next schedule, and a target due must get its copy.
 func (r *Runner) Run(ctx context.Context, reason string, targets []string, opts ...RunOption) (v1alpha1.BackupRecord, error) {
-	if !r.begin(reason, targets, opts) {
-		return v1alpha1.BackupRecord{}, ErrBusy
+	if err := r.begin(reason, targets, opts); err != nil {
+		return v1alpha1.BackupRecord{}, err
 	}
 	defer r.end()
 	return r.run(ctx, reason, targets, opts...)
@@ -237,8 +241,8 @@ func (r *Runner) Run(ctx context.Context, reason string, targets []string, opts 
 // Start makes the checks of Run and, once they pass, takes the backup in the background with the background
 // context. It returns the refusals of Run; how the backup ends goes to the status, the audit log and the log.
 func (r *Runner) Start(ctx context.Context, reason string, targets []string, opts ...RunOption) error {
-	if !r.begin(reason, targets, opts) {
-		return ErrBusy
+	if err := r.begin(reason, targets, opts); err != nil {
+		return err
 	}
 	o := runOpts(opts)
 	a, recipient, err := r.admit(ctx, reason, o)
@@ -263,28 +267,69 @@ func (r *Runner) Busy() bool {
 }
 
 // Exclusive runs admit, a restore's admission or a renewal of the manager's ILM certificate, while no backup runs or
-// passes its checks, and refuses with ErrBusy while a backup runs. A backup that asks to start meanwhile makes its checks once admit has returned.
+// passes its checks, and refuses with ErrBusy while a backup runs or a long operation holds the runner. A backup that asks to start meanwhile makes its checks once admit has returned.
 func (r *Runner) Exclusive(admit func() error) error {
 	r.admission.Lock()
 	defer r.admission.Unlock()
+	if r.holding() {
+		return ErrHeld
+	}
 	if r.Busy() {
 		return ErrBusy
 	}
 	return admit()
 }
 
-// begin marks a run as started, or keeps a replace or scheduled run for later while another one runs.
-func (r *Runner) begin(reason string, targets []string, opts []RunOption) bool {
+// Hold marks a long operation, such as a bundle load, as running until release is called: meanwhile backups and
+// Exclusive refuse with ErrBusy, and a replace or scheduled backup waits for the release. It refuses with ErrBusy
+// at once while a backup runs, another operation holds the runner or Exclusive admits one.
+func (r *Runner) Hold() (release func(), err error) {
+	if !r.admission.TryLock() {
+		return nil, ErrBusy
+	}
+	defer r.admission.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.running {
-		if reason == RunReplace || reason == RunSchedule {
-			r.queue(reason, targets, opts)
-		}
-		return false
+	if r.held {
+		return nil, ErrHeld
 	}
-	r.running = true
-	return true
+	if r.running {
+		return nil, ErrBusy
+	}
+	r.held = true
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			r.held = false
+			r.mu.Unlock()
+			r.startPending()
+		})
+	}, nil
+}
+
+func (r *Runner) holding() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.held
+}
+
+// begin marks a run as started, or refuses it with ErrBusy while another one runs and with ErrHeld while a long
+// operation holds the runner; a replace or scheduled run is kept for later then.
+func (r *Runner) begin(reason string, targets []string, opts []RunOption) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.running && !r.held {
+		r.running = true
+		return nil
+	}
+	if reason == RunReplace || reason == RunSchedule {
+		r.queue(reason, targets, opts)
+	}
+	if r.held {
+		return ErrHeld
+	}
+	return ErrBusy
 }
 
 // queue keeps a run for when the running backup ends. Runs that wait together become one run to all their targets:
@@ -303,15 +348,31 @@ func (r *Runner) queue(reason string, targets []string, opts []RunOption) {
 		}
 	}
 	r.pending = next
+	if r.held {
+		r.deps.Log.Info("an update bundle is loading; the next backup starts when it ends", "reason", next.reason, "targets", next.targets)
+		return
+	}
 	r.deps.Log.Info("a backup is running; the next one starts when it ends", "reason", next.reason, "targets", next.targets)
 }
 
 // end ends a run and starts the run that waits for it.
 func (r *Runner) end() {
 	r.mu.Lock()
+	r.running = false
+	r.mu.Unlock()
+	r.startPending()
+}
+
+// startPending starts the run that waits, unless a run is running or a long operation holds the runner.
+func (r *Runner) startPending() {
+	r.mu.Lock()
 	next := r.pending
-	r.pending = nil
-	r.running = next != nil
+	if r.running || r.held {
+		next = nil
+	}
+	if next != nil {
+		r.pending, r.running = nil, true
+	}
 	r.mu.Unlock()
 	if next == nil {
 		return
@@ -327,7 +388,7 @@ func (r *Runner) end() {
 // Describe is a fixed description of an error of Run, safe for a log: the refusal or failure it is, or the
 // Kubernetes reason of a failed read.
 func Describe(err error) string {
-	for _, known := range []error{ErrBusy, ErrUpgradeInProgress, ErrRestoreInProgress, ErrNoKit, ErrNoSpace, ErrFailed} {
+	for _, known := range []error{ErrHeld, ErrBusy, ErrUpgradeInProgress, ErrRestoreInProgress, ErrNoKit, ErrNoSpace, ErrFailed} {
 		if errors.Is(err, known) {
 			return known.Error()
 		}

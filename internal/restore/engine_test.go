@@ -97,12 +97,16 @@ func (d *fakeDumper) Recreate(ctx context.Context) error {
 // fakeBackups admits a restore unless busy and counts the restores recorded during their admission.
 type fakeBackups struct {
 	busy             bool
+	held             bool
 	recordedInAdmits int
 }
 
 func (b *fakeBackups) Exclusive(admit func() error) error {
 	if b.busy {
 		return backup.ErrBusy
+	}
+	if b.held {
+		return backup.ErrHeld
 	}
 	err := admit()
 	a := &v1alpha1.Appliance{}
@@ -803,6 +807,11 @@ func TestRestoreRefusals(t *testing.T) {
 		t.Errorf("during a backup: %v, want ErrBackupRunning", err)
 	}
 	f.backups.busy = false
+	f.backups.held = true
+	if err := e.Start(ctx, f.file, f.key, Options{}); !errors.Is(err, ErrBundleLoading) {
+		t.Errorf("during a bundle load: %v, want ErrBundleLoading", err)
+	}
+	f.backups.held = false
 	if err := e.Start(ctx, f.file, f.key, Options{InPlace: true}); !errors.Is(err, ErrSetup) {
 		t.Errorf("in place on a fresh appliance: %v, want ErrSetup", err)
 	}

@@ -1108,6 +1108,50 @@ func TestExclusiveRefusedWhileABackupRuns(t *testing.T) {
 	}
 }
 
+// TestHoldRefusesOthersAtOnce refuses Exclusive, a manual backup and another hold at once while a long operation
+// holds the runner, keeps a scheduled backup for its release, and refuses a hold while a backup runs.
+func TestHoldRefusesOthersAtOnce(t *testing.T) {
+	f := newFixture(t)
+	release, err := f.runner.Hold()
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := f.runner.Exclusive(func() error { called = true; return nil }); !errors.Is(err, ErrHeld) || !errors.Is(err, ErrBusy) || called {
+		t.Errorf("Exclusive while held: %v, called %t; want ErrHeld, an ErrBusy, without the call", err, called)
+	}
+	if _, err := f.runner.Run(context.Background(), RunManual, nil); !errors.Is(err, ErrHeld) {
+		t.Errorf("manual backup while held: %v, want ErrHeld", err)
+	}
+	if _, err := f.runner.Hold(); !errors.Is(err, ErrHeld) {
+		t.Errorf("second Hold: %v, want ErrHeld", err)
+	}
+	if got := Describe(ErrHeld); got != ErrHeld.Error() {
+		t.Errorf("Describe(ErrHeld) = %q", got)
+	}
+	f.dumper.started, f.dumper.block = make(chan struct{}, 1), make(chan struct{})
+	if _, err := f.runner.Run(context.Background(), RunSchedule, nil); !errors.Is(err, ErrHeld) {
+		t.Errorf("scheduled backup while held: %v, want ErrHeld and a wait", err)
+	}
+	release()
+	release()
+	<-f.dumper.started
+	if _, err := f.runner.Hold(); !errors.Is(err, ErrBusy) || errors.Is(err, ErrHeld) {
+		t.Errorf("Hold while the scheduled backup runs: %v, want ErrBusy", err)
+	}
+	close(f.dumper.block)
+	deadline := time.Now().Add(10 * time.Second)
+	for f.runner.Busy() {
+		if time.Now().After(deadline) {
+			t.Fatal("the scheduled backup did not end")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := f.runner.Exclusive(func() error { called = true; return nil }); err != nil || !called {
+		t.Errorf("Exclusive after the release: %v, called %t", err, called)
+	}
+}
+
 func TestRunnerBusy(t *testing.T) {
 	f := newFixture(t)
 	if f.runner.Busy() {

@@ -26,6 +26,8 @@
 //	drive cbom --create|--check --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> --credential <p12> --credential-password-file <file> --ui-url <url>
 //	            --ui-addr <host:port>
+//	drive bundle-load --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --file <bundle tar> --image <ref> --kit <file> --passphrase-file <file> [--kube-addr <host:port>]
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
@@ -67,6 +69,8 @@
 // appliance, waits until the CBOMRepositoryApplied and ILMSettingsApplied conditions are True and uploads a CBOM
 // through ILM. --check waits for both conditions and checks that ILM lists that CBOM and reads its content from the
 // repository.
+// bundle-load loads the platform bundle in --file, runs a pod from --image with the kubeconfig of the kit in --kit,
+// and checks that a damaged copy of the file is refused. It prints sizes, states and reasons only.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 trusts that certificate too while the
@@ -170,6 +174,8 @@ func main() {
 	fs.StringVar(&o.credential, "credential", "", "PKCS#12 file of the ILM administrator (check, ilm-marker)")
 	fs.StringVar(&o.credentialPasswordFile, "credential-password-file", "", "file holding the password of --credential (check, ilm-marker)")
 	fs.StringVar(&o.clientSecretOut, "client-secret-out", "", "file the ILM client's secret is written to (ilm-marker --check)")
+	fs.StringVar(&o.bundleFile, "file", "", "platform bundle file to load (bundle-load)")
+	fs.StringVar(&o.image, "image", "", "curl image only the appliance's registry serves after the load (bundle-load)")
 	fs.BoolVar(&o.create, "create", false, "create the marker group (ilm-marker)")
 	fs.BoolVar(&o.check, "check", false, "check the marker group and Keycloak after a restore (ilm-marker)")
 	args := os.Args[2:]
@@ -184,7 +190,7 @@ func main() {
 	run, ok := map[string]func(context.Context, options) error{
 		cmdPart1: part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
 		cmdBackup: backupNow, "serve-targets": serveTargets, cmdRestore: restoreBackup, "ilm-marker": ilmMarker,
-		cmdCBOM: cbomCommand,
+		cmdCBOM: cbomCommand, cmdBundleLoad: bundleLoad,
 	}[cmd]
 	if !ok {
 		usage()
@@ -194,8 +200,11 @@ func main() {
 		os.Exit(2)
 	}
 	timeout := 30 * time.Minute
-	if cmd == cmdRestore {
+	switch cmd {
+	case cmdRestore:
 		timeout = certificateTimeout + restoreTimeout
+	case cmdBundleLoad:
+		timeout = 2*bundleLoadTimeout + podTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -207,7 +216,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore|bundle-load --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive ilm-marker|cbom --create|--check --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
@@ -223,6 +232,7 @@ type options struct {
 	sftpPasswordFile, s3SecretFile, sftpFingerprint             string
 	guestHost, mode, backupFile, ilmHost                        string
 	credential, credentialPasswordFile, clientSecretOut         string
+	bundleFile, image                                           string
 	create, check                                               bool
 }
 
@@ -267,6 +277,8 @@ func (o options) validateCommand(cmd string) error {
 		return errors.New("--backup, --kit, --passphrase-file, --ilm-host and --out are required")
 	case cmd == cmdCBOM && (o.credential == "" || o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--credential, --credential-password-file, --ui-url and --ui-addr are required")
+	case cmd == cmdBundleLoad && (o.bundleFile == "" || o.image == "" || o.kitFile == "" || o.passphraseFile == ""):
+		return errors.New("--file, --image, --kit and --passphrase-file are required")
 	case cmd == cmdCBOM && o.create == o.check:
 		return errors.New("one of --create and --check is required")
 	}

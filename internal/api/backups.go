@@ -64,6 +64,7 @@ func targetTestWriteTimeout() time.Duration {
 
 var (
 	refusedBackupRunning = ConflictJSONResponse{Code: "backup_running", Message: "A backup is running; try again once it has finished."}
+	refusedBundleLoading = ConflictJSONResponse{Code: codeBundleLoading, Message: "An update bundle is loading; try again once it has finished."}
 	refusedBackupNoKit   = ConflictJSONResponse{Code: "no_recovery_kit",
 		Message: "Issue the recovery kit and confirm that it is stored safely first: backups are encrypted to its key."}
 	refusedBackupUpgrade = ConflictJSONResponse{Code: "upgrade_in_progress", Message: "The platform is being upgraded; back up once the upgrade has finished."}
@@ -266,6 +267,9 @@ func (s *Server) PostBackups(ctx context.Context, _ PostBackupsRequestObject) (P
 	case err == nil:
 		s.deps.Log.Info("backup started from the console", "user", req.user, "targets", len(names))
 		return PostBackups202Response{}, nil
+	case errors.Is(err, backup.ErrHeld):
+		recordDetails(ctx, map[string]string{"reason": backup.RunManual, "failed": "refused: " + codeBundleLoading})
+		return PostBackups409JSONResponse{ConflictJSONResponse: refusedBundleLoading}, nil
 	case errors.Is(err, backup.ErrBusy):
 		recordDetails(ctx, map[string]string{"reason": backup.RunManual, "failed": "refused: Busy"})
 		return PostBackups409JSONResponse{ConflictJSONResponse: refusedBackupRunning}, nil

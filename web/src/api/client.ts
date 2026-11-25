@@ -32,6 +32,16 @@ export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler;
 }
 
+/** Adds the session's CSRF token to a request made outside the client, such as an upload that reports its progress. */
+export function signRequest(request: XMLHttpRequest) {
+  if (csrfToken) request.setRequestHeader('X-CSRF-Token', csrfToken);
+}
+
+/** Runs what happens when a request made outside the client finds the session gone. */
+export function sessionExpired() {
+  onUnauthorized();
+}
+
 // Wizard part 1 has its own session, and the sign-in calls answer 401 to report a failed or missing sign-in.
 function leavesUnauthorizedToCaller(path: string) {
   return path.startsWith(`${apiBase}/setup/`) || path === `${apiBase}/session`;

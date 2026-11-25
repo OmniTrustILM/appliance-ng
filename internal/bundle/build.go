@@ -39,8 +39,6 @@ const (
 	operatorFile = "ilm-operator.yaml"
 )
 
-var arches = []string{"amd64", "arm64"}
-
 // Inputs are what a bundle carries besides the images of release.yaml.
 type Inputs struct {
 	// Files is the repository root the manifests are read from.
@@ -59,7 +57,7 @@ func Build(ctx context.Context, m *release.Manifest, kind, arch string, in Input
 	if !ok {
 		return Metadata{}, fmt.Errorf("unknown bundle kind %q", kind)
 	}
-	if !slices.Contains(arches, arch) {
+	if !slices.Contains(release.Arches, arch) {
 		return Metadata{}, fmt.Errorf("unknown arch %q", arch)
 	}
 	builtImages, err := parseBuilt(kind, in.Built)
@@ -127,6 +125,9 @@ func fetchImages(ctx context.Context, imgs []release.Image, arch string) ([]Imag
 		ref, err := imageRef(img.Ref, image)
 		if err != nil {
 			return nil, nil, fmt.Errorf("image %s: %w", img.Ref, err)
+		}
+		if want, ok := img.ArchDigests[arch]; ok && ref.Digest != want {
+			return nil, nil, fmt.Errorf("image %s: the linux/%s manifest is %s, the release manifest pins %s", img.Ref, arch, ref.Digest, want)
 		}
 		slog.InfoContext(ctx, "bundle image", "ref", ref.Ref, "digest", ref.Digest, "size", ref.Size)
 		refs = append(refs, ref)

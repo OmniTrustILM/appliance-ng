@@ -1,0 +1,17 @@
+name: Free disk space
+description: Removes unused runner software and Docker images and fails unless 40 GB stay free for the image build or a boot test VM.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        docker image prune --all --force >/dev/null || true
+        df -h / "$GITHUB_WORKSPACE"
+        for path in / "$GITHUB_WORKSPACE"; do
+          free_gb="$(df --block-size=1G --output=avail "$path" | tail -n 1 | tr -d ' ')"
+          if [ "$free_gb" -lt 40 ]; then
+            echo "::error::Only ${free_gb} GB free on the filesystem of $path after clean-up; at least 40 GB are needed."
+            exit 1
+          fi
+        done
