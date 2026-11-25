@@ -60,7 +60,7 @@ export function ApplyingPage({ address }: Readonly<{ address?: string }>) {
     };
   }, [sameHost]);
 
-  const url = `https://${address}:8443/`;
+  const url = `https://${encodeURIComponent(address ?? '')}:8443/`;
   return (
     <Card>
       <PageHeading eyebrow="Setup" title="Installing" />

@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -21,8 +19,9 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
-// AdminPasswordShownAnnotation holds the hex SHA-256 of the password in platform.AdminPasswordSecret that was shown;
-// a new password does not match it and can be shown once more.
+// AdminPasswordShownAnnotation is "true" once the password in platform.AdminPasswordSecret was shown. Only the console
+// writes a new password, marked in the same update; a restored Secret carries no annotations, so its password can be
+// shown once more.
 const AdminPasswordShownAnnotation = "appliance.otilm.com/admin-password-shown" //nolint:gosec // an annotation name, not a credential
 
 const (
@@ -171,16 +170,10 @@ func (s *Server) adminPasswordSecret(ctx context.Context) (*corev1.Secret, error
 	if err := s.deps.Reader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.AdminPasswordSecret}, secret); err != nil {
 		return nil, err
 	}
-	if secret.Annotations[AdminPasswordShownAnnotation] == passwordSum(secret) {
+	if secret.Annotations[AdminPasswordShownAnnotation] == "true" {
 		return nil, errPasswordShown
 	}
 	return secret, nil
-}
-
-// passwordSum returns the hex SHA-256 of the password in the Secret.
-func passwordSum(secret *corev1.Secret) string {
-	sum := sha256.Sum256(secret.Data[adminPasswordKey])
-	return hex.EncodeToString(sum[:])
 }
 
 // markPasswordShown records in platform.AdminPasswordSecret that its password was shown, failing with
@@ -219,6 +212,6 @@ func (s *Server) patchAdminPassword(ctx context.Context, secret *corev1.Secret, 
 	if secret.Annotations == nil {
 		secret.Annotations = map[string]string{}
 	}
-	secret.Annotations[AdminPasswordShownAnnotation] = passwordSum(secret)
+	secret.Annotations[AdminPasswordShownAnnotation] = "true"
 	return s.deps.Client.Patch(ctx, secret, patch, client.FieldOwner(FieldManager))
 }

@@ -150,7 +150,8 @@ func apply(ctx context.Context, c client.Client, u *unstructured.Unstructured) e
 	return nil
 }
 
-// issuerFingerprint hashes the Issuer settings acme and the data of the Secrets spec references for it.
+// issuerFingerprint hashes the Issuer settings acme and the versions of the Secrets spec references for it, so it
+// changes with their data without hashing it.
 func issuerFingerprint(ctx context.Context, c client.Reader, acme map[string]any, spec v1alpha1.ACMESpec) (string, error) {
 	var secrets []string
 	if spec.EABKeyID != "" {
@@ -168,11 +169,11 @@ func issuerFingerprint(ctx context.Context, c client.Reader, acme map[string]any
 		inputs = append(inputs, spec.ILMProfile)
 	}
 	for _, name := range secrets {
-		data, err := secretData(ctx, c, name)
+		version, err := secretVersion(ctx, c, name)
 		if err != nil {
 			return "", err
 		}
-		inputs = append(inputs, data)
+		inputs = append(inputs, name+"@"+version)
 	}
 	encoded, err := json.Marshal(inputs)
 	if err != nil {
@@ -316,7 +317,25 @@ func RemoveACME(ctx context.Context, c client.Client) error {
 }
 
 // secretData returns the data of the Secret name in Namespace, nil when it does not exist.
+// secretVersion returns the resource version of the Secret name in Namespace, or "" when it does not exist.
+func secretVersion(ctx context.Context, r client.Reader, name string) (string, error) {
+	sec, err := readSecret(ctx, r, name)
+	if sec == nil {
+		return "", err
+	}
+	return sec.ResourceVersion, nil
+}
+
 func secretData(ctx context.Context, r client.Reader, name string) (map[string][]byte, error) {
+	sec, err := readSecret(ctx, r, name)
+	if sec == nil {
+		return nil, err
+	}
+	return sec.Data, nil
+}
+
+// readSecret reads the Secret name in Namespace, or nil when it does not exist.
+func readSecret(ctx context.Context, r client.Reader, name string) (*corev1.Secret, error) {
 	s := &corev1.Secret{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: name}, s)
 	switch {
@@ -325,7 +344,7 @@ func secretData(ctx context.Context, r client.Reader, name string) (map[string][
 	case err != nil:
 		return nil, fmt.Errorf("read secret %s/%s: %w", Namespace, name, err)
 	}
-	return s.Data, nil
+	return s, nil
 }
 
 func anySlice(s []string) []any {

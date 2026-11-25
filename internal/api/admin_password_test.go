@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -112,11 +110,6 @@ func adminPasswordSecret(t *testing.T) *corev1.Secret {
 	return s
 }
 
-func sha256Hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
 // readyForReset makes the Appliance with the managed Keycloak and a ready platform, the Keycloak administrator's
 // Secret and the administrator password's Secret, and points the server at a fake Keycloak.
 func readyForReset(t *testing.T, h *harness) *fakeKeycloak {
@@ -188,7 +181,7 @@ func TestAdminPasswordShownOnce(t *testing.T) {
 	if got.User != "admin" || got.Password != firstAdminPassword {
 		t.Errorf("answer %+v, want admin and the Secret's password", got)
 	}
-	if a := adminPasswordSecret(t).Annotations[AdminPasswordShownAnnotation]; a != sha256Hex(firstAdminPassword) {
+	if a := adminPasswordSecret(t).Annotations[AdminPasswordShownAnnotation]; a != "true" {
 		t.Errorf("annotation %q, want the password's SHA-256", a)
 	}
 	wantStatus(t, h.request(http.MethodPost, pathAdminPassword, nil, s), http.StatusGone)
@@ -263,7 +256,7 @@ func TestSetAdminPassword(t *testing.T) {
 		t.Errorf("answer %+v, want admin and the password Keycloak got", got)
 	}
 	secret := adminPasswordSecret(t)
-	if string(secret.Data["password"]) != got.Password || secret.Annotations[AdminPasswordShownAnnotation] != sha256Hex(got.Password) {
+	if string(secret.Data["password"]) != got.Password || secret.Annotations[AdminPasswordShownAnnotation] != "true" {
 		t.Errorf("the Secret does not hold the new password marked as shown")
 	}
 	wantStatus(t, h.request(http.MethodPost, pathAdminPassword, nil, s), http.StatusGone)
