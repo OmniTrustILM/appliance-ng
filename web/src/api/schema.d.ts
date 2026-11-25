@@ -281,6 +281,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the console accepts a sign-in
+         * @description Public, so it needs no session. The setup page asks it while the appliance installs and starts.
+         */
+        get: operations["getReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ca.pem": {
         parameters: {
             query?: never;
@@ -396,6 +416,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/certificate/acme": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Get the certificate from an ACME server
+         * @description Selects an automatic certificate, requested from an ACME server of your own or from the ACME profile of this
+         *     appliance's ILM. Answered with 400 and a message that names the problem when the directory is not an https
+         *     URL, neither or both of `directoryUrl` and `ilm` are given, the external account binding lacks its key ID or
+         *     HMAC key, or the DNS provider or one of its settings is unknown or missing. The HMAC key and the DNS
+         *     credentials are stored as Secrets and never returned. The uploaded certificate and a pending signing request
+         *     stay until the built-in certificate is selected.
+         */
+        put: operations["putCertificateAcme"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/certificate/acme/ilm-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The RA profiles and vault profiles of ILM for its ACME profile
+         * @description Lists the enabled RA profiles that can issue the certificate and the enabled vault profiles that can hold
+         *     the ACME account key. Answered with 409 while ILM is not ready or does not answer.
+         */
+        get: operations["getCertificateAcmeIlmOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/platform/admin-credential": {
         parameters: {
             query?: never;
@@ -412,6 +478,35 @@ export interface paths {
          *     with 410 until the platform renews the certificate.
          */
         post: operations["postPlatformAdminCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/platform/admin-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set a new password for the ILM administrator
+         * @description Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
+         *     409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs, and with 409
+         *     `external_identity` when ILM signs users in with an external identity provider. When Keycloak refuses or does
+         *     not answer, the request is answered with 502 and the stored password stays as it was.
+         */
+        put: operations["putPlatformAdminPassword"];
+        /**
+         * Show the ILM administrator's password, once
+         * @description Returns the user name and password of the ILM administrator in the managed Keycloak. Each password is shown
+         *     once; later requests are answered with 410 until a new password is set. Answered with 404 before the
+         *     password exists and with 409 `external_identity` when ILM signs users in with an external identity provider.
+         */
+        post: operations["postPlatformAdminPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1191,6 +1286,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/restore/abandon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set up a new appliance instead of restoring
+         * @description Gives up the restore a fresh appliance waits for and moves its setup to `part2`, the wizard's second part.
+         *     Refused with 409 `not_restoring` unless setup is `restore`, and with 409 `restore_started` once a restore
+         *     was started on this appliance, which then has to be installed again to set up a new appliance, and with 409
+         *     `handover_pending` while the appliance is still taking over the setup answers, and with 409 `busy` while
+         *     another restore operation runs.
+         */
+        post: operations["postRestoreAbandon"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1223,6 +1342,10 @@ export interface components {
         LockedError: components["schemas"]["Error"] & {
             /** @description Seconds until the next attempt is accepted. */
             retryAfter: number;
+        };
+        Readiness: {
+            /** @description True once the administrator is imported and the console accepts a sign-in. */
+            signIn: boolean;
         };
         CsrfToken: {
             csrfToken: string;
@@ -1409,7 +1532,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -1417,20 +1540,97 @@ export interface components {
             result: "success" | "failure" | "denied";
             /** @description The Appliance fields the request changed, as JSON paths; never their values. */
             paths: string[];
-            /** @description What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the `recipient` public key and the talosconfig's `expires`; never a token, certificate, key or passphrase. */
+            /** @description What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the `recipient` public key and the talosconfig's `expires`, and for the ACME certificate its `provider` and `solver`; never a token, certificate, key or passphrase. */
             details?: {
                 [key: string]: string;
             };
         };
         CertificateInfo: {
             /**
-             * @description `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.
+             * @description `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one, `acme` for one an ACME server issues.
              * @enum {string}
              */
-            source: "builtin" | "secret";
+            source: "builtin" | "secret" | "acme";
             /** @description A signing request waits for its certificate. */
             csrPending: boolean;
             certificate?: components["schemas"]["CertificateDetails"];
+            acme?: components["schemas"]["AcmeInfo"];
+        };
+        /** @description The ACME settings, present when the source is `acme`. Never a secret value. */
+        AcmeInfo: {
+            directoryUrl?: string;
+            email?: string;
+            eabKeyId?: string;
+            /** @description The HMAC key of the external account binding is stored. */
+            eabHmacSet?: boolean;
+            /** @description The stored PEM CA bundle for the ACME server. */
+            caBundle?: string;
+            solver: components["schemas"]["AcmeSolverInfo"];
+            ilm?: components["schemas"]["AcmeIlm"];
+            /** @description Why the certificate is not issued yet, while it is not. */
+            lastError?: string;
+        };
+        AcmeSolverInfo: {
+            /** @enum {string} */
+            type: "http01" | "dns01";
+            dns01?: components["schemas"]["AcmeDns01Info"];
+        };
+        AcmeDns01Info: {
+            provider: string;
+            config: {
+                [key: string]: string;
+            };
+            /** @description The credentials that are stored, by name. */
+            credentialKeys: string[];
+        };
+        AcmeIlm: {
+            raProfileUuid: string;
+            vaultUuid: string;
+            vaultProfileUuid: string;
+        };
+        AcmeIlmOptions: {
+            raProfiles: components["schemas"]["AcmeIlmRaProfile"][];
+            vaultProfiles: components["schemas"]["AcmeIlmVaultProfile"][];
+        };
+        AcmeIlmRaProfile: {
+            uuid: string;
+            name: string;
+        };
+        AcmeIlmVaultProfile: {
+            uuid: string;
+            name: string;
+            vaultUuid: string;
+        };
+        /** @description How the host names are proven; `http01` when omitted. Ignored with `ilm`. */
+        AcmeSolverSettings: {
+            /** @enum {string} */
+            type: "http01" | "dns01";
+            dns01?: components["schemas"]["AcmeDns01Settings"];
+        };
+        AcmeDns01Settings: {
+            /** @description One of rfc2136, cloudflare, route53, azuredns, clouddns, digitalocean, acmedns, akamai. */
+            provider: string;
+            /** @description The provider's settings that are not secret. */
+            config?: {
+                [key: string]: string;
+            };
+            /** @description The provider's secret settings. */
+            credentials?: {
+                [key: string]: string;
+            };
+        };
+        /** @description Either `directoryUrl` for an ACME server of your own or `ilm` for the ACME profile of this appliance's ILM, not both. */
+        AcmeSettings: {
+            /** @description The https directory of the ACME server. */
+            directoryUrl?: string;
+            email?: string;
+            /** @description Needs `eabHmac`. */
+            eabKeyId?: string;
+            eabHmac?: string;
+            /** @description PEM certificates that sign the ACME server's certificate. */
+            caBundle?: string;
+            solver?: components["schemas"]["AcmeSolverSettings"];
+            ilm?: components["schemas"]["AcmeIlm"];
         };
         /** @description The certificate in use; absent until the built-in certificate is issued. */
         CertificateDetails: {
@@ -1472,12 +1672,27 @@ export interface components {
              */
             chain?: string;
         };
+        AdminPassword: {
+            /** @description The user name of the ILM administrator. */
+            user: string;
+            /**
+             * Format: password
+             * @description The password; the appliance shows it once.
+             */
+            password: string;
+        };
         AdminCredentialRequest: {
             /**
              * Format: password
              * @description The password that encrypts the PKCS#12 file. Like a console password, it has at least 12 characters, is not one of the most common passwords and does not contain the user name.
              */
             password: string;
+            /**
+             * @description `compatible` encrypts the file with 3DES and a SHA-1 MAC, which macOS Keychain, Windows and Java import; `modern` uses AES-256 and a SHA-256 MAC, which they may refuse.
+             * @default compatible
+             * @enum {string}
+             */
+            format: "compatible" | "modern";
         };
         AuditLog: {
             items: components["schemas"]["AuditEntry"][];
@@ -1621,11 +1836,11 @@ export interface components {
             name: string;
             title: string;
             /**
-             * @description Whether ILM registers the component by itself once it runs. False for a component that speaks only
-             *     interface v1, which is registered by hand in ILM with `url`.
+             * @description Whether the component is registered in ILM once it runs: ILM's operator registers it, or the appliance
+             *     does for a component that speaks only interface v1, at `url`.
              */
             registered: boolean;
-            /** @description The in-cluster address to register a component that is not registered by itself with. */
+            /** @description The in-cluster address the appliance registers a component that speaks only interface v1 with. */
             url?: string;
             /** @description Whether the component's image comes from a registry that needs credentials. */
             private: boolean;
@@ -1634,6 +1849,13 @@ export interface components {
             needsCredentials: boolean;
             /** @description A component that sends mail while no mail server is set. */
             needsMail: boolean;
+            /**
+             * @description Set for a chosen component the manager reports on.
+             * @enum {string}
+             */
+            state?: "ready" | "waiting" | "failed";
+            /** @description Why a failed component failed, in plain words. */
+            problem?: string;
         };
         PlatformState: {
             ilmVersion: string;
@@ -2584,6 +2806,26 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
         };
     };
+    getReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether signing in works. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
+            };
+        };
+    };
     getCaPem: {
         parameters: {
             query?: never;
@@ -2724,6 +2966,54 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    putCertificateAcme: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcmeSettings"];
+            };
+        };
+        responses: {
+            /** @description The settings are stored; the platform requests the certificate shortly. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getCertificateAcmeIlmOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The profiles to choose from. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcmeIlmOptions"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     postPlatformAdminCredential: {
         parameters: {
             query?: never;
@@ -2751,6 +3041,63 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            410: components["responses"]["Gone"];
+        };
+    };
+    putPlatformAdminPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The administrator's user name and new password. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPassword"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            /** @description Keycloak refused the new password or did not answer; the message is fixed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    postPlatformAdminPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The administrator's user name and password. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPassword"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             410: components["responses"]["Gone"];
         };
     };
@@ -3841,6 +4188,27 @@ export interface operations {
                 content?: never;
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    postRestoreAbandon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The restore is given up; setup continues with part 2. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];

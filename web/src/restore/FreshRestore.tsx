@@ -1,6 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
+import { api } from '../api/client';
 import type { components } from '../api/schema';
+import { Alert } from '../components/Alert';
 import { Button } from '../components/Button';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { attempt } from '../setup/failure';
 import { KitForm } from './KitForm';
 import { inspectBackup, refusalOf } from './restoreApi';
@@ -9,6 +13,36 @@ import { SummaryStep } from './SummaryStep';
 import { useLatest } from './useLatest';
 
 type Summary = components['schemas']['RestoreSummary'];
+
+/** The way out of the restore: a new appliance is set up in the wizard instead. */
+function SetUpNew() {
+  const navigate = useNavigate();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string>();
+
+  async function abandon() {
+    setBusy(true);
+    const result = await attempt(() => api.POST('/restore/abandon'));
+    setBusy(false);
+    setAsking(false);
+    const refused = refusalOf(result);
+    if (refused) return setRefusal(refused.message);
+    void navigate('/wizard/');
+  }
+
+  return (
+    <div className="mt-6 border-t border-divider pt-4">
+      {refusal && <Alert tone="error">{refusal}</Alert>}
+      <Button variant="secondary" busy={busy} onClick={() => setAsking(true)}>Set up a new appliance instead</Button>
+      {asking && (
+        <ConfirmDialog title="Set up a new appliance?" confirmLabel="Set up a new appliance" onConfirm={() => void abandon()} onCancel={() => setAsking(false)}>
+          The backup is not restored. You choose the ILM components in the setup wizard.
+        </ConfirmDialog>
+      )}
+    </div>
+  );
+}
 
 /** The restore onto this fresh appliance: the backup, the kit that opens it, then what the restore does. */
 export function FreshRestore({ onStarted }: Readonly<{ onStarted: () => void }>) {
@@ -40,8 +74,14 @@ export function FreshRestore({ onStarted }: Readonly<{ onStarted: () => void }>)
         <KitForm label="Check the backup" submitLabel="Check the backup" onSubmit={check}>
           <Button variant="secondary" onClick={startOver}>Choose another backup</Button>
         </KitForm>
+        <SetUpNew />
       </>
     );
   }
-  return <SourceStep onReady={setName} />;
+  return (
+    <>
+      <SourceStep onReady={setName} />
+      <SetUpNew />
+    </>
+  );
 }

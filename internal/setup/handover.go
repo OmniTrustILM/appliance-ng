@@ -1,5 +1,7 @@
 package setup
 
+import "github.com/OmniTrustILM/appliance-ng/internal/certs"
+
 // HandoverVersion is the version of the hand-over file format.
 const HandoverVersion = 1
 
@@ -21,6 +23,15 @@ type HandoverFile struct {
 		PasswordHash string `json:"passwordHash"`
 		TOTPSeed     string `json:"totpSeed"`
 	} `json:"admin"`
+	// TLS is the certificate and key the setup server served, so that the console serves the same until setup is
+	// complete. A file of an older first-boot has none.
+	TLS *HandoverTLS `json:"tls,omitempty"`
+}
+
+// HandoverTLS is the setup certificate and its key, PEM encoded.
+type HandoverTLS struct {
+	CertPEM string `json:"certPEM"`
+	KeyPEM  string `json:"keyPEM"`
 }
 
 // NodeAnswers are the node settings of wizard part 1, validated. An empty Address keeps the address DHCP delivers.
@@ -47,3 +58,7 @@ const (
 	HandoverSecretName      = "appliance-handover"
 	HandoverSecretKey       = "handover.json"
 )
+
+// SetupTLSSecretName is the TLS Secret in HandoverSecretNamespace that holds the setup certificate until setup is
+// complete.
+const SetupTLSSecretName = certs.SetupSecretName

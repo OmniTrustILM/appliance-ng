@@ -40,12 +40,12 @@ describe('ProgressPage', () => {
     expect(await screen.findByRole('link', { name: /root certificate/i })).toHaveAttribute('href', '/appliance/api/v1/ca.pem');
   });
 
-  it('says before the switch that the console certificate is about to change', async () => {
+  it('says the console certificate changes when the setup is complete', async () => {
     stubApi({
       'GET /appliance/api/v1/status': [200, { ...base, conditions: [{ type: 'CertificateReady', status: 'True', reason: 'Ready' }] }],
     });
     render(<ProgressPage onBack={vi.fn()} onComplete={vi.fn()} />);
-    expect(await screen.findByText(/switches from its self-signed certificate/i)).toBeInTheDocument();
+    expect(await screen.findByText(/When the setup is complete, the console switches from its self-signed certificate/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /root certificate/i })).toBeInTheDocument();
   });
 

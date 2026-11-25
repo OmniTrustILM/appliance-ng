@@ -30,7 +30,7 @@ type secretRef struct {
 // CollectSecrets returns the Secrets a restore needs, without the metadata of the cluster they came from, sorted by
 // namespace and name: every Secret the Appliance references (a missing one is an error), the appliance's own
 // account, key, recipient and ILM identity Secrets, the CA Secrets, and in the platform namespace the CA key pairs, the
-// administrator certificate, the Keycloak client and administrator Secrets and the key Secret of every Connector and
+// administrator certificate and password, the Keycloak client and administrator Secrets and the key Secret of every Connector and
 // of every connector named in keyed. A removed connector's key Secret stays, and so does what the connector stored
 // with it in the database. Other Secrets that do not exist are skipped.
 func CollectSecrets(ctx context.Context, c client.Reader, a *v1alpha1.Appliance, keyed []string) ([]corev1.Secret, error) {
@@ -93,7 +93,7 @@ func ownRefs() []secretRef {
 	}
 	refs = append(refs, secretRef{namespace: certs.ClusterResourceNamespace, name: certs.RootCAName})
 	platformSecrets := []string{
-		platform.EdgeCASecret, platform.AdminCASecret, platform.AdminCertificateSecret, platform.OIDCClientSecret,
+		platform.EdgeCASecret, platform.AdminCASecret, platform.AdminCertificateSecret, platform.AdminPasswordSecret, platform.OIDCClientSecret,
 		platform.KeycloakAdminSecret,
 	}
 	for _, name := range platformSecrets {
@@ -129,6 +129,9 @@ func referenced(a *v1alpha1.Appliance) []secretRef {
 // referencedNames lists the names of the Secrets spec references, empty for a reference it leaves out.
 func referencedNames(spec v1alpha1.ApplianceSpec) []string {
 	names := []string{spec.TLS.SecretRef, keyName(spec.Trust)}
+	if spec.TLS.Source == v1alpha1.TLSSourceACME {
+		names = append(names, acmeSecretNames(spec.TLS.ACME)...)
+	}
 	for _, r := range spec.Registries {
 		names = append(names, r.CredentialsRef)
 	}
@@ -143,6 +146,22 @@ func referencedNames(spec v1alpha1.ApplianceSpec) []string {
 				names = append(names, keyName(t.S3.CA))
 			}
 		}
+	}
+	return names
+}
+
+// acmeSecretNames lists the Secrets of a custom ACME directory: the binding's HMAC key and the DNS credentials. The
+// ILM profile's binding is left out, as the manager generates a new one.
+func acmeSecretNames(a *v1alpha1.ACMESpec) []string {
+	if a == nil || a.ILMProfile != nil {
+		return nil
+	}
+	var names []string
+	if a.EABSecretRef != nil {
+		names = append(names, a.EABSecretRef.Name)
+	}
+	if d := a.Solver.DNS01; d != nil && d.CredentialsSecretRef != nil {
+		names = append(names, d.CredentialsSecretRef.Name)
 	}
 	return names
 }

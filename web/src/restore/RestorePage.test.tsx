@@ -1,8 +1,9 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../setup/test-utils';
+import { WizardFlow } from '../wizard/WizardFlow';
 import { RestorePage, progressRefreshMs } from './RestorePage';
 
 const STATE = 'GET /appliance/api/v1/restore';
@@ -12,6 +13,7 @@ const FETCH = 'POST /appliance/api/v1/restore/fetch';
 const INSPECT = 'POST /appliance/api/v1/restore/inspect';
 const START = 'POST /appliance/api/v1/restore/start';
 const RESUME = 'POST /appliance/api/v1/restore/resume';
+const ABANDON = 'POST /appliance/api/v1/restore/abandon';
 
 const backupName = 'old-node-20261101T020000Z-1.0.0.ilmbackup';
 const passphrase = 'the kit passphrase';
@@ -383,5 +385,56 @@ describe('RestorePage', () => {
     renderPage();
     const note = await screen.findByText(/no restore is in progress/i);
     expect(within(note).getByRole('link', { name: 'Backups' })).toHaveAttribute('href', '/backups');
+  });
+
+  describe('setting up a new appliance instead', () => {
+    const status = 'GET /appliance/api/v1/status';
+    const wizardApi = {
+      'GET /appliance/api/v1/appliance': [200, { node: { hostName: 'node1.example.test' }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
+      'GET /appliance/api/v1/catalogue': [200, { items: [{ name: 'ilm-core', title: 'ILM core', private: false }] }],
+    } as const;
+
+    function renderRoutes() {
+      return render(
+        <MemoryRouter initialEntries={['/restore']}>
+          <Routes>
+            <Route path="/restore" element={<RestorePage />} />
+            <Route path="/wizard/*" element={<WizardFlow />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    }
+
+    it('confirms, gives the restore up and lands in the wizard without a bounce back', async () => {
+      let setup = 'restore';
+      const { sent } = stubApi({
+        [STATE]: [200, waiting],
+        [status]: () => [200, { setup, conditions: [], versions: {}, rebootRequired: false }],
+        [ABANDON]: () => {
+          setup = 'part2';
+          return [204];
+        },
+        ...wizardApi,
+      });
+      renderRoutes();
+      await userEvent.click(await screen.findByRole('button', { name: 'Set up a new appliance instead' }));
+      expect(sent[ABANDON]).toBeUndefined();
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText('The backup is not restored. You choose the ILM components in the setup wizard.')).toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Set up a new appliance' }));
+      expect(await screen.findByLabelText('ILM host name')).toHaveValue('node1.example.test');
+      expect(sent[ABANDON]).toHaveLength(1);
+      expect(screen.queryByRole('heading', { name: 'Restore a backup' })).not.toBeInTheDocument();
+    });
+
+    it('shows the message of the appliance when it refuses', async () => {
+      const message = 'A restore was started on this appliance; install it again to set up a new appliance.';
+      stubApi({ [STATE]: [200, waiting], [ABANDON]: [409, { code: 'restore_started', message }] });
+      renderRoutes();
+      await userEvent.click(await screen.findByRole('button', { name: 'Set up a new appliance instead' }));
+      await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Set up a new appliance' }));
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument();
+    });
   });
 });

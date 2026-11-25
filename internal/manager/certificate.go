@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -19,10 +20,21 @@ import (
 // certManagerStep is the add-on step after which cert-manager issues certificates.
 const certManagerStep = "cert-manager"
 
-// reconcileCertificate requests the built-in certificate once cert-manager runs and reports it in CertificateReady.
-// It returns how soon to look again, zero when the add-on pass or a watched object will. A failure does not hold up
-// the platform: the edge serves its internal certificate until the built-in one is issued.
+// reconcileCertificate requests the built-in certificate once cert-manager runs, for source acme also the ACME one,
+// and reports the selected one in CertificateReady. It returns how soon to look again, zero when the add-on pass or a
+// watched object will. A failure does not hold up the platform: the edge serves its internal certificate until the
+// built-in one is issued.
 func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alpha1.Appliance, progress addons.Progress) time.Duration {
+	if !ilmPreset(a) {
+		if err := removeACMENetworkPolicy(ctx, r.Client); err != nil {
+			log.FromContext(ctx).Error(err, "remove the network policy of the ILM ACME profile")
+		}
+	}
+	if a.Spec.TLS.Source != v1alpha1.TLSSourceACME {
+		if err := certs.RemoveACME(ctx, r.Client); err != nil {
+			log.FromContext(ctx).Error(err, "remove the ACME certificate")
+		}
+	}
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
 		meta.RemoveStatusCondition(&a.Status.Conditions, v1alpha1.ConditionCertificateReady)
 		return 0
@@ -46,6 +58,12 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 		return addonsRequeue
 	}
 	ready, err := r.ensureCertificate(ctx, a, ip)
+	if a.Spec.TLS.Source == v1alpha1.TLSSourceACME {
+		if err != nil {
+			log.FromContext(ctx).Error(err, "request the built-in certificate, the fallback of the ACME one")
+		}
+		return r.reconcileACME(ctx, a, ip)
+	}
 	switch {
 	case err != nil:
 		log.FromContext(ctx).Error(err, "request the built-in certificate")
@@ -56,6 +74,41 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 		return addonsRequeue
 	}
 	setCondition(a, v1alpha1.ConditionCertificateReady, metav1.ConditionTrue, reasonReady, "the built-in certificate is issued")
+	return 0
+}
+
+// reconcileACME requests the ACME certificate and reports it in CertificateReady. Until it is issued, the built-in
+// certificate is served, and a failure holds up nothing else. For the ILM profile, ILM's directory is reached in the
+// cluster, and the certificate also covers the node address ip.
+func (r *ApplianceReconciler) reconcileACME(ctx context.Context, a *v1alpha1.Appliance, ip netip.Addr) time.Duration {
+	notReady := func(reason, message string) time.Duration {
+		setCondition(a, v1alpha1.ConditionCertificateReady, metav1.ConditionFalse, reason, message)
+		return addonsRequeue
+	}
+	if a.Spec.TLS.ACME == nil {
+		return notReady(reasonFailed, "the ACME settings are missing")
+	}
+	spec, directory, ips := *a.Spec.TLS.ACME, a.Spec.TLS.ACME.DirectoryURL, []netip.Addr(nil)
+	if p := spec.ILMProfile; p != nil {
+		keyID, wait := r.prepareILMACME(ctx, a, ip)
+		if wait != nil {
+			return notReady(wait.reason, wait.message)
+		}
+		spec.EABKeyID, spec.EABSecretRef = keyID, &corev1.LocalObjectReference{Name: certs.ACMEILMEABSecretName}
+		directory, ips = ilmACMEDirectory(p), []netip.Addr{ip}
+	}
+	ready, problem, err := certs.EnsureACME(ctx, r.Client, spec, directory, certs.Hosts(a), ips)
+	switch {
+	case err != nil:
+		log.FromContext(ctx).Error(err, "request the ACME certificate")
+		return notReady(reasonFailed, messageACMEFailed)
+	case problem != "":
+		log.FromContext(ctx).Info("the ACME certificate is not issued", "problem", problem)
+		return notReady(reasonFailed, problem)
+	case !ready:
+		return notReady(reasonIssuing, "cert-manager is requesting the ACME certificate")
+	}
+	setCondition(a, v1alpha1.ConditionCertificateReady, metav1.ConditionTrue, reasonReady, "the ACME certificate is issued")
 	return 0
 }
 

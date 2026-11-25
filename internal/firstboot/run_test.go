@@ -404,7 +404,7 @@ type fakeWizard struct {
 	ips   []netip.Addr
 }
 
-var wizardLines = []string{"ILM appliance v-test setup", "Open https://10.0.2.15:8443/appliance/setup/"}
+var wizardLines = []string{"OmniTrust ILM Appliance v-test", "Open https://10.0.2.15:8443/appliance/setup/"}
 
 func (w *fakeWizard) Run(ctx context.Context, ip netip.Addr, show func([]string)) (machineconfig.Input, error) {
 	w.mu.Lock()
@@ -507,6 +507,15 @@ func (h *harness) running() bool {
 	default:
 		return true
 	}
+}
+
+func containsAll(s string, parts []string) bool {
+	for _, p := range parts {
+		if !strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {
@@ -889,8 +898,8 @@ func TestRunNeverLogsSecrets(t *testing.T) {
 	h.start(t)
 
 	h.waitState(t, StateReady)
-	wantLine := "ILM appliance v-test: https://ilm.appliance.internal (node 10.0.2.15), state ready\n"
-	eventually(t, "console line in state ready", func() bool { return strings.Contains(h.console.String(), wantLine) })
+	wantLines := []string{"https://ilm.appliance.internal (node 10.0.2.15)\n", "State: ready\n"}
+	eventually(t, "console screen in state ready", func() bool { return containsAll(h.console.String(), wantLines) })
 	h.stop(t)
 
 	for name, out := range map[string]string{"log": h.log.String(), "console": h.console.String(), "status": fmt.Sprint(h.store.Get())} {

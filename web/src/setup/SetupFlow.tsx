@@ -8,7 +8,7 @@ import { AdminPage } from './AdminPage';
 import { ApplyingPage } from './ApplyingPage';
 import { CodePage } from './CodePage';
 import { attempt, unreachable } from './failure';
-import { ModePage } from './ModePage';
+import { ModePage, type Mode } from './ModePage';
 import { NodePage } from './NodePage';
 import { ReviewPage, type Answers } from './ReviewPage';
 import { TotpPage } from './TotpPage';
@@ -29,6 +29,8 @@ const steps: { step: Step; label: string }[] = [
 export function SetupFlow() {
   const [step, setStep] = useState<Step>();
   const [error, setError] = useState<string>();
+  const [mode, setMode] = useState<Mode>();
+  const [modeReturn, setModeReturn] = useState<'admin' | 'apply'>('admin');
   const [user, setUser] = useState<string>();
   const [node, setNode] = useState<Answers['node']>();
   const [address, setAddress] = useState<string>();
@@ -48,6 +50,8 @@ export function SetupFlow() {
 
   const expired = useCallback(() => {
     setCsrfToken(undefined);
+    setMode(undefined);
+    setModeReturn('admin');
     setStep('code');
   }, []);
 
@@ -58,8 +62,20 @@ export function SetupFlow() {
     <PageWidth>
       <StepIndicator steps={steps.map(({ label }) => label)} current={steps.findIndex((s) => s.step === step)} />
       {step === 'code' && <CodePage onDone={() => setStep('mode')} />}
-      {step === 'mode' && <ModePage onDone={() => setStep('admin')} onExpired={expired} />}
-      {step === 'admin' && <AdminPage onDone={(name) => { setUser(name); setStep('totp'); }} onExpired={expired} />}
+      {step === 'mode' && (
+        <ModePage
+          initial={mode}
+          onDone={(chosen) => { setMode(chosen); setStep(modeReturn); }}
+          onExpired={expired}
+        />
+      )}
+      {step === 'admin' && (
+        <AdminPage
+          onBack={() => { setModeReturn('admin'); setStep('mode'); }}
+          onDone={(name) => { setUser(name); setStep('totp'); }}
+          onExpired={expired}
+        />
+      )}
       {step === 'totp' && <TotpPage onDone={() => setStep('node')} onExpired={expired} />}
       {step === 'node' && (
         <NodePage
@@ -71,6 +87,8 @@ export function SetupFlow() {
       {step === 'apply' && (
         <ReviewPage
           answers={user && node ? { user, node } : undefined}
+          mode={mode}
+          onChangeMode={() => { setModeReturn('apply'); setStep('mode'); }}
           onBack={() => setStep('node')}
           onDone={() => setStep('applying')}
           onExpired={expired}

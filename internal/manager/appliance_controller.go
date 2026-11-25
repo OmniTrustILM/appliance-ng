@@ -126,6 +126,8 @@ type ApplianceReconciler struct {
 	// OperatorLock, when set, is held while the add-on pass applies a step, which may write the ILM operator's
 	// Deployment; a restore holds it while it scales the operator.
 	OperatorLock sync.Locker
+	// ILM registers the v1 connectors in ILM; it is the identity the ILM settings controller uses.
+	ILM ILMIdentity
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -274,6 +276,12 @@ func (r *ApplianceReconciler) removeExpiredAccess(ctx context.Context) {
 }
 
 func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Appliance) (ctrl.Result, error) {
+	// A restore completes the setup without part 2, so every reconcile of a complete setup removes the Secret.
+	if a.Status.Setup == v1alpha1.SetupComplete {
+		if err := r.removeSetupCertificate(ctx); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	progress, err := r.addonsProgress(ctx, a)
 	if err != nil {
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, messageAddonsFailed)
@@ -320,14 +328,35 @@ func (r *ApplianceReconciler) reconcileOperated(ctx context.Context, a *v1alpha1
 		return ctrl.Result{}, err
 	case !ready:
 		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonProgressing, message)
-		return requeue(certificate), nil
+		return requeueOperated(a, certificate), nil
 	}
 	setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionTrue, reasonReady, message)
 	if a.Status.Setup == v1alpha1.SetupPart2 {
+		if err := r.removeSetupCertificate(ctx); err != nil {
+			return ctrl.Result{}, err
+		}
 		a.Status.Setup = v1alpha1.SetupComplete
 		log.FromContext(ctx).Info("setup complete")
 	}
-	return requeue(certificate), nil
+	return requeueOperated(a, certificate), nil
+}
+
+// requeueOperated repeats the pass soon while a Connector is waiting: the pods that show why one fails are not
+// watched, and the operator keeps a Connector with a failing pod deploying.
+func requeueOperated(a *v1alpha1.Appliance, certificate time.Duration) ctrl.Result {
+	if slices.ContainsFunc(a.Status.Connectors, func(c v1alpha1.ConnectorState) bool { return c.State == connectorStateWaiting }) {
+		return ctrl.Result{RequeueAfter: addonsRequeue}
+	}
+	return requeue(certificate)
+}
+
+// removeSetupCertificate deletes the setup certificate Secret, which the console serves until the setup is complete.
+func (r *ApplianceReconciler) removeSetupCertificate(ctx context.Context) error {
+	setupCert := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: certs.SetupSecretName}}
+	if err := r.Client.Delete(ctx, setupCert); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("remove the setup certificate Secret: %w", err)
+	}
+	return nil
 }
 
 // requeue repeats the add-on pass after resync, or sooner when the certificate asks for it.
@@ -412,6 +441,9 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	if ok {
 		nodeIP = ip.String()
 	}
+	if err := ensureAdminPassword(ctx, r.Client); err != nil {
+		return false, "", err
+	}
 	p, connectors, err := platform.Render(a, r.Release, secrets, nodeIP)
 	if err != nil {
 		return false, "", fmt.Errorf("render the platform: %w", err)
@@ -440,13 +472,17 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	if err := r.restartAuth(ctx, a); err != nil {
 		return false, "", err
 	}
-	setConnectorsCondition(a, observed)
 	current := &otilm.Platform{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(applied.Object, current); err != nil {
 		return false, "", fmt.Errorf("read the applied Platform: %w", err)
 	}
 	keepKnown(&a.Status.Versions.ILM, current.Status.ObservedVersion)
 	ready, message := platformReady(current)
+	states := connectorStates(observed, r.connectorPods(ctx, observed))
+	outcome := r.reconcileV1Registrations(ctx, a, runningConnectors(observed, states), offlineConnectors(states), ready)
+	states = withRegistrations(states, outcome)
+	setConnectorsCondition(a, states, outcome.Awaiting)
+	a.Status.Connectors = waitingStates(states, outcome.Awaiting)
 	return ready, message, nil
 }
 
@@ -698,19 +734,23 @@ func (r *ApplianceReconciler) copyCredentials(ctx context.Context, a *v1alpha1.A
 	return name, nil
 }
 
-// tlsSecret returns the Secret the spec references for TLS, or the built-in certificate's Secret once cert-manager
-// issued it; nil means the built-in certificate is not issued yet.
+// tlsSecret returns the Secret the spec references for TLS, or the issued certificate's Secret of cert-manager: the
+// ACME one once valid, else the built-in one; nil means no certificate is issued yet.
 func (r *ApplianceReconciler) tlsSecret(ctx context.Context, a *v1alpha1.Appliance) (*corev1.Secret, error) {
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
 		return systemSecret(ctx, r.Client, a.Spec.TLS.SecretRef)
 	}
+	name, err := certs.ServedSecretName(ctx, r.Client, a)
+	if err != nil {
+		return nil, err
+	}
 	s := &corev1.Secret{}
-	err := r.Client.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: certs.SecretName}, s)
+	err = r.Client.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: name}, s)
 	switch {
 	case apierrors.IsNotFound(err):
 		return nil, nil
 	case err != nil:
-		return nil, fmt.Errorf(errReadSecret, certs.Namespace, certs.SecretName, err)
+		return nil, fmt.Errorf(errReadSecret, certs.Namespace, name, err)
 	case len(s.Data[corev1.TLSCertKey]) == 0 || len(s.Data[corev1.TLSPrivateKeyKey]) == 0:
 		return nil, nil
 	}

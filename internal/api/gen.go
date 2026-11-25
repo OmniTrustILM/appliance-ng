@@ -38,6 +38,60 @@ func (e AccessCredentialKind) Valid() bool {
 	}
 }
 
+// Defines values for AcmeSolverInfoType.
+const (
+	AcmeSolverInfoTypeDns01  AcmeSolverInfoType = "dns01"
+	AcmeSolverInfoTypeHttp01 AcmeSolverInfoType = "http01"
+)
+
+// Valid indicates whether the value is a known member of the AcmeSolverInfoType enum.
+func (e AcmeSolverInfoType) Valid() bool {
+	switch e {
+	case AcmeSolverInfoTypeDns01:
+		return true
+	case AcmeSolverInfoTypeHttp01:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AcmeSolverSettingsType.
+const (
+	AcmeSolverSettingsTypeDns01  AcmeSolverSettingsType = "dns01"
+	AcmeSolverSettingsTypeHttp01 AcmeSolverSettingsType = "http01"
+)
+
+// Valid indicates whether the value is a known member of the AcmeSolverSettingsType enum.
+func (e AcmeSolverSettingsType) Valid() bool {
+	switch e {
+	case AcmeSolverSettingsTypeDns01:
+		return true
+	case AcmeSolverSettingsTypeHttp01:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminCredentialRequestFormat.
+const (
+	Compatible AdminCredentialRequestFormat = "compatible"
+	Modern     AdminCredentialRequestFormat = "modern"
+)
+
+// Valid indicates whether the value is a known member of the AdminCredentialRequestFormat enum.
+func (e AdminCredentialRequestFormat) Valid() bool {
+	switch e {
+	case Compatible:
+		return true
+	case Modern:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ApplianceSettingsTlsSource.
 const (
 	ApplianceSettingsTlsSourceBuiltin ApplianceSettingsTlsSource = "builtin"
@@ -59,12 +113,15 @@ func (e ApplianceSettingsTlsSource) Valid() bool {
 // Defines values for AuditEntryAction.
 const (
 	AuditEntryActionAdminCredential    AuditEntryAction = "admin-credential"
+	AuditEntryActionAdminPasswordReset AuditEntryAction = "admin-password-reset"
+	AuditEntryActionAdminPasswordShown AuditEntryAction = "admin-password-shown"
 	AuditEntryActionBackup             AuditEntryAction = "backup"
 	AuditEntryActionBackupDownload     AuditEntryAction = "backup-download"
 	AuditEntryActionBackupHostKeyScan  AuditEntryAction = "backup-host-key-scan"
 	AuditEntryActionBackupTargetRemove AuditEntryAction = "backup-target-remove"
 	AuditEntryActionBackupTargetSet    AuditEntryAction = "backup-target-set"
 	AuditEntryActionBackupTargetTest   AuditEntryAction = "backup-target-test"
+	AuditEntryActionCertificateAcme    AuditEntryAction = "certificate-acme"
 	AuditEntryActionCertificateBuiltin AuditEntryAction = "certificate-builtin"
 	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
 	AuditEntryActionCertificateSigned  AuditEntryAction = "certificate-signed"
@@ -85,6 +142,7 @@ const (
 	AuditEntryActionRegistryRemove     AuditEntryAction = "registry-remove"
 	AuditEntryActionRegistrySet        AuditEntryAction = "registry-set"
 	AuditEntryActionRestore            AuditEntryAction = "restore"
+	AuditEntryActionRestoreAbandon     AuditEntryAction = "restore-abandon"
 	AuditEntryActionRestoreFetch       AuditEntryAction = "restore-fetch"
 	AuditEntryActionRestoreInspect     AuditEntryAction = "restore-inspect"
 	AuditEntryActionRestoreResume      AuditEntryAction = "restore-resume"
@@ -104,6 +162,10 @@ func (e AuditEntryAction) Valid() bool {
 	switch e {
 	case AuditEntryActionAdminCredential:
 		return true
+	case AuditEntryActionAdminPasswordReset:
+		return true
+	case AuditEntryActionAdminPasswordShown:
+		return true
 	case AuditEntryActionBackup:
 		return true
 	case AuditEntryActionBackupDownload:
@@ -115,6 +177,8 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionBackupTargetSet:
 		return true
 	case AuditEntryActionBackupTargetTest:
+		return true
+	case AuditEntryActionCertificateAcme:
 		return true
 	case AuditEntryActionCertificateBuiltin:
 		return true
@@ -155,6 +219,8 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionRegistrySet:
 		return true
 	case AuditEntryActionRestore:
+		return true
+	case AuditEntryActionRestoreAbandon:
 		return true
 	case AuditEntryActionRestoreFetch:
 		return true
@@ -319,6 +385,7 @@ func (e CBOMStorage) Valid() bool {
 
 // Defines values for CertificateInfoSource.
 const (
+	CertificateInfoSourceAcme    CertificateInfoSource = "acme"
 	CertificateInfoSourceBuiltin CertificateInfoSource = "builtin"
 	CertificateInfoSourceSecret  CertificateInfoSource = "secret"
 )
@@ -326,6 +393,8 @@ const (
 // Valid indicates whether the value is a known member of the CertificateInfoSource enum.
 func (e CertificateInfoSource) Valid() bool {
 	switch e {
+	case CertificateInfoSourceAcme:
+		return true
 	case CertificateInfoSourceBuiltin:
 		return true
 	case CertificateInfoSourceSecret:
@@ -527,6 +596,27 @@ func (e NFSSettingsVersion) Valid() bool {
 	case N41:
 		return true
 	case N42:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PlatformComponentState.
+const (
+	PlatformComponentStateFailed  PlatformComponentState = "failed"
+	PlatformComponentStateReady   PlatformComponentState = "ready"
+	PlatformComponentStateWaiting PlatformComponentState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the PlatformComponentState enum.
+func (e PlatformComponentState) Valid() bool {
+	switch e {
+	case PlatformComponentStateFailed:
+		return true
+	case PlatformComponentStateReady:
+		return true
+	case PlatformComponentStateWaiting:
 		return true
 	default:
 		return false
@@ -746,10 +836,125 @@ type AccessList struct {
 	Items []AccessCredential `json:"items"`
 }
 
+// AcmeDns01Info defines model for AcmeDns01Info.
+type AcmeDns01Info struct {
+	Config map[string]string `json:"config"`
+
+	// CredentialKeys The credentials that are stored, by name.
+	CredentialKeys []string `json:"credentialKeys"`
+	Provider       string   `json:"provider"`
+}
+
+// AcmeDns01Settings defines model for AcmeDns01Settings.
+type AcmeDns01Settings struct {
+	// Config The provider's settings that are not secret.
+	Config *map[string]string `json:"config,omitempty"`
+
+	// Credentials The provider's secret settings.
+	Credentials *map[string]string `json:"credentials,omitempty"`
+
+	// Provider One of rfc2136, cloudflare, route53, azuredns, clouddns, digitalocean, acmedns, akamai.
+	Provider string `json:"provider"`
+}
+
+// AcmeIlm defines model for AcmeIlm.
+type AcmeIlm struct {
+	RaProfileUuid    string `json:"raProfileUuid"`
+	VaultProfileUuid string `json:"vaultProfileUuid"`
+	VaultUuid        string `json:"vaultUuid"`
+}
+
+// AcmeIlmOptions defines model for AcmeIlmOptions.
+type AcmeIlmOptions struct {
+	RaProfiles    []AcmeIlmRaProfile    `json:"raProfiles"`
+	VaultProfiles []AcmeIlmVaultProfile `json:"vaultProfiles"`
+}
+
+// AcmeIlmRaProfile defines model for AcmeIlmRaProfile.
+type AcmeIlmRaProfile struct {
+	Name string `json:"name"`
+	Uuid string `json:"uuid"`
+}
+
+// AcmeIlmVaultProfile defines model for AcmeIlmVaultProfile.
+type AcmeIlmVaultProfile struct {
+	Name      string `json:"name"`
+	Uuid      string `json:"uuid"`
+	VaultUuid string `json:"vaultUuid"`
+}
+
+// AcmeInfo The ACME settings, present when the source is `acme`. Never a secret value.
+type AcmeInfo struct {
+	// CaBundle The stored PEM CA bundle for the ACME server.
+	CaBundle     *string `json:"caBundle,omitempty"`
+	DirectoryUrl *string `json:"directoryUrl,omitempty"`
+
+	// EabHmacSet The HMAC key of the external account binding is stored.
+	EabHmacSet *bool    `json:"eabHmacSet,omitempty"`
+	EabKeyId   *string  `json:"eabKeyId,omitempty"`
+	Email      *string  `json:"email,omitempty"`
+	Ilm        *AcmeIlm `json:"ilm,omitempty"`
+
+	// LastError Why the certificate is not issued yet, while it is not.
+	LastError *string        `json:"lastError,omitempty"`
+	Solver    AcmeSolverInfo `json:"solver"`
+}
+
+// AcmeSettings Either `directoryUrl` for an ACME server of your own or `ilm` for the ACME profile of this appliance's ILM, not both.
+type AcmeSettings struct {
+	// CaBundle PEM certificates that sign the ACME server's certificate.
+	CaBundle *string `json:"caBundle,omitempty"`
+
+	// DirectoryUrl The https directory of the ACME server.
+	DirectoryUrl *string `json:"directoryUrl,omitempty"`
+	EabHmac      *string `json:"eabHmac,omitempty"`
+
+	// EabKeyId Needs `eabHmac`.
+	EabKeyId *string  `json:"eabKeyId,omitempty"`
+	Email    *string  `json:"email,omitempty"`
+	Ilm      *AcmeIlm `json:"ilm,omitempty"`
+
+	// Solver How the host names are proven; `http01` when omitted. Ignored with `ilm`.
+	Solver *AcmeSolverSettings `json:"solver,omitempty"`
+}
+
+// AcmeSolverInfo defines model for AcmeSolverInfo.
+type AcmeSolverInfo struct {
+	Dns01 *AcmeDns01Info     `json:"dns01,omitempty"`
+	Type  AcmeSolverInfoType `json:"type"`
+}
+
+// AcmeSolverInfoType defines model for AcmeSolverInfo.Type.
+type AcmeSolverInfoType string
+
+// AcmeSolverSettings How the host names are proven; `http01` when omitted. Ignored with `ilm`.
+type AcmeSolverSettings struct {
+	Dns01 *AcmeDns01Settings     `json:"dns01,omitempty"`
+	Type  AcmeSolverSettingsType `json:"type"`
+}
+
+// AcmeSolverSettingsType defines model for AcmeSolverSettings.Type.
+type AcmeSolverSettingsType string
+
 // AdminCredentialRequest defines model for AdminCredentialRequest.
 type AdminCredentialRequest struct {
+	// Format `compatible` encrypts the file with 3DES and a SHA-1 MAC, which macOS Keychain, Windows and Java import; `modern` uses AES-256 and a SHA-256 MAC, which they may refuse.
+	Format *AdminCredentialRequestFormat `json:"format,omitempty"`
+
 	// Password The password that encrypts the PKCS#12 file. Like a console password, it has at least 12 characters, is not one of the most common passwords and does not contain the user name.
 	Password *string `json:"password,omitempty"`
+}
+
+// AdminCredentialRequestFormat `compatible` encrypts the file with 3DES and a SHA-1 MAC, which macOS Keychain, Windows and Java import; `modern` uses AES-256 and a SHA-256 MAC, which they may refuse.
+type AdminCredentialRequestFormat string
+
+// AdminPassword defines model for AdminPassword.
+type AdminPassword struct {
+	// Password The password; the appliance shows it once.
+	Password string `json:"password"`
+
+	// User The user name of the ILM administrator.
+	User string `json:"user"`
 }
 
 // ApplianceSettings defines model for ApplianceSettings.
@@ -782,7 +987,7 @@ type ApplianceSettingsTlsSource string
 type AuditEntry struct {
 	Action AuditEntryAction `json:"action"`
 
-	// Details What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the `recipient` public key and the talosconfig's `expires`; never a token, certificate, key or passphrase.
+	// Details What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the `recipient` public key and the talosconfig's `expires`, and for the ACME certificate its `provider` and `solver`; never a token, certificate, key or passphrase.
 	Details *map[string]string `json:"details,omitempty"`
 
 	// Paths The Appliance fields the request changed, as JSON paths; never their values.
@@ -998,17 +1203,20 @@ type CertificateDetails struct {
 
 // CertificateInfo defines model for CertificateInfo.
 type CertificateInfo struct {
+	// Acme The ACME settings, present when the source is `acme`. Never a secret value.
+	Acme *AcmeInfo `json:"acme,omitempty"`
+
 	// Certificate The certificate in use; absent until the built-in certificate is issued.
 	Certificate *CertificateDetails `json:"certificate,omitempty"`
 
 	// CsrPending A signing request waits for its certificate.
 	CsrPending bool `json:"csrPending"`
 
-	// Source `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.
+	// Source `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one, `acme` for one an ACME server issues.
 	Source CertificateInfoSource `json:"source"`
 }
 
-// CertificateInfoSource `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.
+// CertificateInfoSource `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one, `acme` for one an ACME server issues.
 type CertificateInfoSource string
 
 // CertificateUpload defines model for CertificateUpload.
@@ -1321,14 +1529,23 @@ type PlatformComponent struct {
 	// Private Whether the component's image comes from a registry that needs credentials.
 	Private bool `json:"private"`
 
-	// Registered Whether ILM registers the component by itself once it runs. False for a component that speaks only
-	// interface v1, which is registered by hand in ILM with `url`.
-	Registered bool   `json:"registered"`
-	Title      string `json:"title"`
+	// Problem Why a failed component failed, in plain words.
+	Problem *string `json:"problem,omitempty"`
 
-	// Url The in-cluster address to register a component that is not registered by itself with.
+	// Registered Whether the component is registered in ILM once it runs: ILM's operator registers it, or the appliance
+	// does for a component that speaks only interface v1, at `url`.
+	Registered bool `json:"registered"`
+
+	// State Set for a chosen component the manager reports on.
+	State *PlatformComponentState `json:"state,omitempty"`
+	Title string                  `json:"title"`
+
+	// Url The in-cluster address the appliance registers a component that speaks only interface v1 with.
 	Url *string `json:"url,omitempty"`
 }
+
+// PlatformComponentState Set for a chosen component the manager reports on.
+type PlatformComponentState string
 
 // PlatformSettings defines model for PlatformSettings.
 type PlatformSettings struct {
@@ -1384,6 +1601,12 @@ type Proxy struct {
 
 	// NoProxy Comma-separated hosts and networks that bypass the proxy.
 	NoProxy *string `json:"noProxy,omitempty"`
+}
+
+// Readiness defines model for Readiness.
+type Readiness struct {
+	// SignIn True once the administrator is imported and the console accepts a sign-in.
+	SignIn bool `json:"signIn"`
 }
 
 // RecoveryKit defines model for RecoveryKit.
@@ -1834,6 +2057,9 @@ type PutBackupTargetJSONRequestBody = BackupTargetUpdate
 // PutCertificateMultipartRequestBody defines body for PutCertificate for multipart/form-data ContentType.
 type PutCertificateMultipartRequestBody = CertificateUpload
 
+// PutCertificateAcmeJSONRequestBody defines body for PutCertificateAcme for application/json ContentType.
+type PutCertificateAcmeJSONRequestBody = AcmeSettings
+
 // PutCertificateCsrSignedMultipartRequestBody defines body for PutCertificateCsrSigned for multipart/form-data ContentType.
 type PutCertificateCsrSignedMultipartRequestBody = SignedCertificateUpload
 
@@ -2047,6 +2273,12 @@ type ServerInterface interface {
 	// PutCertificate Upload a certificate and its private key
 	// (PUT /certificate)
 	PutCertificate(w http.ResponseWriter, r *http.Request)
+	// PutCertificateAcme Get the certificate from an ACME server
+	// (PUT /certificate/acme)
+	PutCertificateAcme(w http.ResponseWriter, r *http.Request)
+	// GetCertificateAcmeIlmOptions The RA profiles and vault profiles of ILM for its ACME profile
+	// (GET /certificate/acme/ilm-options)
+	GetCertificateAcmeIlmOptions(w http.ResponseWriter, r *http.Request)
 	// PutCertificateBuiltin Go back to the built-in certificate
 	// (PUT /certificate/builtin)
 	PutCertificateBuiltin(w http.ResponseWriter, r *http.Request)
@@ -2080,9 +2312,18 @@ type ServerInterface interface {
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
 	// (POST /platform/admin-credential)
 	PostPlatformAdminCredential(w http.ResponseWriter, r *http.Request)
+	// PostPlatformAdminPassword Show the ILM administrator's password, once
+	// (POST /platform/admin-password)
+	PostPlatformAdminPassword(w http.ResponseWriter, r *http.Request)
+	// PutPlatformAdminPassword Set a new password for the ILM administrator
+	// (PUT /platform/admin-password)
+	PutPlatformAdminPassword(w http.ResponseWriter, r *http.Request)
 	// PostDependencyTest Test the connection to an external dependency
 	// (POST /platform/dependencies/test)
 	PostDependencyTest(w http.ResponseWriter, r *http.Request)
+	// GetReadiness Whether the console accepts a sign-in
+	// (GET /readiness)
+	GetReadiness(w http.ResponseWriter, r *http.Request)
 	// GetRecoveryKit Whether the recovery kit is issued and confirmed
 	// (GET /recovery-kit)
 	GetRecoveryKit(w http.ResponseWriter, r *http.Request)
@@ -2113,6 +2354,9 @@ type ServerInterface interface {
 	// GetRestore The state of the restore
 	// (GET /restore)
 	GetRestore(w http.ResponseWriter, r *http.Request, params GetRestoreParams)
+	// PostRestoreAbandon Set up a new appliance instead of restoring
+	// (POST /restore/abandon)
+	PostRestoreAbandon(w http.ResponseWriter, r *http.Request)
 	// PostRestoreFetch Fetch a backup to restore from a target entered for the restore
 	// (POST /restore/fetch)
 	PostRestoreFetch(w http.ResponseWriter, r *http.Request)
@@ -2558,6 +2802,34 @@ func (siw *ServerInterfaceWrapper) PutCertificate(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// PutCertificateAcme operation middleware
+func (siw *ServerInterfaceWrapper) PutCertificateAcme(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutCertificateAcme(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCertificateAcmeIlmOptions operation middleware
+func (siw *ServerInterfaceWrapper) GetCertificateAcmeIlmOptions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCertificateAcmeIlmOptions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PutCertificateBuiltin operation middleware
 func (siw *ServerInterfaceWrapper) PutCertificateBuiltin(w http.ResponseWriter, r *http.Request) {
 
@@ -2712,11 +2984,53 @@ func (siw *ServerInterfaceWrapper) PostPlatformAdminCredential(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
+// PostPlatformAdminPassword operation middleware
+func (siw *ServerInterfaceWrapper) PostPlatformAdminPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostPlatformAdminPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutPlatformAdminPassword operation middleware
+func (siw *ServerInterfaceWrapper) PutPlatformAdminPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutPlatformAdminPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostDependencyTest operation middleware
 func (siw *ServerInterfaceWrapper) PostDependencyTest(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostDependencyTest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetReadiness operation middleware
+func (siw *ServerInterfaceWrapper) GetReadiness(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReadiness(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2920,6 +3234,20 @@ func (siw *ServerInterfaceWrapper) GetRestore(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRestore(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostRestoreAbandon operation middleware
+func (siw *ServerInterfaceWrapper) PostRestoreAbandon(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostRestoreAbandon(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3353,13 +3681,18 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/wizard/platform", wrapper.PutWizardPlatform)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/catalogue", wrapper.GetCatalogue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/audit", wrapper.GetAudit)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readiness", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/ca.pem", wrapper.GetCaPem)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/certificate", wrapper.GetCertificate)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate", wrapper.PutCertificate)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/certificate/csr", wrapper.PostCertificateCsr)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate/csr/signed", wrapper.PutCertificateCsrSigned)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate/builtin", wrapper.PutCertificateBuiltin)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/certificate/acme", wrapper.PutCertificateAcme)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/certificate/acme/ilm-options", wrapper.GetCertificateAcmeIlmOptions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/platform/admin-credential", wrapper.PostPlatformAdminCredential)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/platform/admin-password", wrapper.PostPlatformAdminPassword)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/platform/admin-password", wrapper.PutPlatformAdminPassword)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/node", wrapper.PutNode)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/reboot", wrapper.PostSystemReboot)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/shutdown", wrapper.PostSystemShutdown)
@@ -3402,6 +3735,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/inspect", wrapper.PostRestoreInspect)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/start", wrapper.PostRestoreStart)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/resume", wrapper.PostRestoreResume)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/restore/abandon", wrapper.PostRestoreAbandon)
 
 	return m
 }
@@ -4626,6 +4960,127 @@ func (response PutCertificate409JSONResponse) VisitPutCertificateResponse(w http
 	return err
 }
 
+type PutCertificateAcmeRequestObject struct {
+	Body *PutCertificateAcmeJSONRequestBody
+}
+
+type PutCertificateAcmeResponseObject interface {
+	VisitPutCertificateAcmeResponse(w http.ResponseWriter) error
+}
+
+type PutCertificateAcme202Response struct {
+}
+
+func (response PutCertificateAcme202Response) VisitPutCertificateAcmeResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PutCertificateAcme400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PutCertificateAcme400JSONResponse) VisitPutCertificateAcmeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateAcme401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutCertificateAcme401JSONResponse) VisitPutCertificateAcmeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateAcme403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutCertificateAcme403JSONResponse) VisitPutCertificateAcmeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCertificateAcme409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutCertificateAcme409JSONResponse) VisitPutCertificateAcmeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCertificateAcmeIlmOptionsRequestObject struct {
+}
+
+type GetCertificateAcmeIlmOptionsResponseObject interface {
+	VisitGetCertificateAcmeIlmOptionsResponse(w http.ResponseWriter) error
+}
+
+type GetCertificateAcmeIlmOptions200JSONResponse AcmeIlmOptions
+
+func (response GetCertificateAcmeIlmOptions200JSONResponse) VisitGetCertificateAcmeIlmOptionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCertificateAcmeIlmOptions401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response GetCertificateAcmeIlmOptions401JSONResponse) VisitGetCertificateAcmeIlmOptionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCertificateAcmeIlmOptions409JSONResponse struct{ ConflictJSONResponse }
+
+func (response GetCertificateAcmeIlmOptions409JSONResponse) VisitGetCertificateAcmeIlmOptionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutCertificateBuiltinRequestObject struct {
 }
 
@@ -5395,6 +5850,174 @@ func (response PostPlatformAdminCredential410JSONResponse) VisitPostPlatformAdmi
 	return err
 }
 
+type PostPlatformAdminPasswordRequestObject struct {
+}
+
+type PostPlatformAdminPasswordResponseObject interface {
+	VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error
+}
+
+type PostPlatformAdminPassword200JSONResponse AdminPassword
+
+func (response PostPlatformAdminPassword200JSONResponse) VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostPlatformAdminPassword401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostPlatformAdminPassword401JSONResponse) VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostPlatformAdminPassword403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostPlatformAdminPassword403JSONResponse) VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostPlatformAdminPassword404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PostPlatformAdminPassword404JSONResponse) VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostPlatformAdminPassword409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostPlatformAdminPassword409JSONResponse) VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostPlatformAdminPassword410JSONResponse struct{ GoneJSONResponse }
+
+func (response PostPlatformAdminPassword410JSONResponse) VisitPostPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatformAdminPasswordRequestObject struct {
+}
+
+type PutPlatformAdminPasswordResponseObject interface {
+	VisitPutPlatformAdminPasswordResponse(w http.ResponseWriter) error
+}
+
+type PutPlatformAdminPassword200JSONResponse AdminPassword
+
+func (response PutPlatformAdminPassword200JSONResponse) VisitPutPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatformAdminPassword401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PutPlatformAdminPassword401JSONResponse) VisitPutPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatformAdminPassword403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PutPlatformAdminPassword403JSONResponse) VisitPutPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatformAdminPassword409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PutPlatformAdminPassword409JSONResponse) VisitPutPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutPlatformAdminPassword502JSONResponse Error
+
+func (response PutPlatformAdminPassword502JSONResponse) VisitPutPlatformAdminPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PostDependencyTestRequestObject struct {
 	Body *PostDependencyTestJSONRequestBody
 }
@@ -5469,6 +6092,27 @@ func (response PostDependencyTest409JSONResponse) VisitPostDependencyTestRespons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetReadinessRequestObject struct {
+}
+
+type GetReadinessResponseObject interface {
+	VisitGetReadinessResponse(w http.ResponseWriter) error
+}
+
+type GetReadiness200JSONResponse Readiness
+
+func (response GetReadiness200JSONResponse) VisitGetReadinessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -6186,6 +6830,63 @@ func (response GetRestore401JSONResponse) VisitGetRestoreResponse(w http.Respons
 type GetRestore409JSONResponse struct{ ConflictJSONResponse }
 
 func (response GetRestore409JSONResponse) VisitGetRestoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreAbandonRequestObject struct {
+}
+
+type PostRestoreAbandonResponseObject interface {
+	VisitPostRestoreAbandonResponse(w http.ResponseWriter) error
+}
+
+type PostRestoreAbandon204Response struct {
+}
+
+func (response PostRestoreAbandon204Response) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PostRestoreAbandon401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostRestoreAbandon401JSONResponse) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreAbandon403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostRestoreAbandon403JSONResponse) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostRestoreAbandon409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostRestoreAbandon409JSONResponse) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7451,6 +8152,12 @@ type StrictServerInterface interface {
 	// PutCertificate Upload a certificate and its private key
 	// (PUT /certificate)
 	PutCertificate(ctx context.Context, request PutCertificateRequestObject) (PutCertificateResponseObject, error)
+	// PutCertificateAcme Get the certificate from an ACME server
+	// (PUT /certificate/acme)
+	PutCertificateAcme(ctx context.Context, request PutCertificateAcmeRequestObject) (PutCertificateAcmeResponseObject, error)
+	// GetCertificateAcmeIlmOptions The RA profiles and vault profiles of ILM for its ACME profile
+	// (GET /certificate/acme/ilm-options)
+	GetCertificateAcmeIlmOptions(ctx context.Context, request GetCertificateAcmeIlmOptionsRequestObject) (GetCertificateAcmeIlmOptionsResponseObject, error)
 	// PutCertificateBuiltin Go back to the built-in certificate
 	// (PUT /certificate/builtin)
 	PutCertificateBuiltin(ctx context.Context, request PutCertificateBuiltinRequestObject) (PutCertificateBuiltinResponseObject, error)
@@ -7484,9 +8191,18 @@ type StrictServerInterface interface {
 	// PostPlatformAdminCredential Download the ILM administrator's certificate and key, once
 	// (POST /platform/admin-credential)
 	PostPlatformAdminCredential(ctx context.Context, request PostPlatformAdminCredentialRequestObject) (PostPlatformAdminCredentialResponseObject, error)
+	// PostPlatformAdminPassword Show the ILM administrator's password, once
+	// (POST /platform/admin-password)
+	PostPlatformAdminPassword(ctx context.Context, request PostPlatformAdminPasswordRequestObject) (PostPlatformAdminPasswordResponseObject, error)
+	// PutPlatformAdminPassword Set a new password for the ILM administrator
+	// (PUT /platform/admin-password)
+	PutPlatformAdminPassword(ctx context.Context, request PutPlatformAdminPasswordRequestObject) (PutPlatformAdminPasswordResponseObject, error)
 	// PostDependencyTest Test the connection to an external dependency
 	// (POST /platform/dependencies/test)
 	PostDependencyTest(ctx context.Context, request PostDependencyTestRequestObject) (PostDependencyTestResponseObject, error)
+	// GetReadiness Whether the console accepts a sign-in
+	// (GET /readiness)
+	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
 	// GetRecoveryKit Whether the recovery kit is issued and confirmed
 	// (GET /recovery-kit)
 	GetRecoveryKit(ctx context.Context, request GetRecoveryKitRequestObject) (GetRecoveryKitResponseObject, error)
@@ -7517,6 +8233,9 @@ type StrictServerInterface interface {
 	// GetRestore The state of the restore
 	// (GET /restore)
 	GetRestore(ctx context.Context, request GetRestoreRequestObject) (GetRestoreResponseObject, error)
+	// PostRestoreAbandon Set up a new appliance instead of restoring
+	// (POST /restore/abandon)
+	PostRestoreAbandon(ctx context.Context, request PostRestoreAbandonRequestObject) (PostRestoreAbandonResponseObject, error)
 	// PostRestoreFetch Fetch a backup to restore from a target entered for the restore
 	// (POST /restore/fetch)
 	PostRestoreFetch(ctx context.Context, request PostRestoreFetchRequestObject) (PostRestoreFetchResponseObject, error)
@@ -8092,6 +8811,61 @@ func (sh *strictHandler) PutCertificate(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// PutCertificateAcme operation middleware
+func (sh *strictHandler) PutCertificateAcme(w http.ResponseWriter, r *http.Request) {
+	var request PutCertificateAcmeRequestObject
+
+	var body PutCertificateAcmeJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutCertificateAcme(ctx, request.(PutCertificateAcmeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutCertificateAcme")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutCertificateAcmeResponseObject); ok {
+		if err := validResponse.VisitPutCertificateAcmeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCertificateAcmeIlmOptions operation middleware
+func (sh *strictHandler) GetCertificateAcmeIlmOptions(w http.ResponseWriter, r *http.Request) {
+	var request GetCertificateAcmeIlmOptionsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCertificateAcmeIlmOptions(ctx, request.(GetCertificateAcmeIlmOptionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCertificateAcmeIlmOptions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCertificateAcmeIlmOptionsResponseObject); ok {
+		if err := validResponse.VisitGetCertificateAcmeIlmOptionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PutCertificateBuiltin operation middleware
 func (sh *strictHandler) PutCertificateBuiltin(w http.ResponseWriter, r *http.Request) {
 	var request PutCertificateBuiltinRequestObject
@@ -8398,6 +9172,54 @@ func (sh *strictHandler) PostPlatformAdminCredential(w http.ResponseWriter, r *h
 	}
 }
 
+// PostPlatformAdminPassword operation middleware
+func (sh *strictHandler) PostPlatformAdminPassword(w http.ResponseWriter, r *http.Request) {
+	var request PostPlatformAdminPasswordRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostPlatformAdminPassword(ctx, request.(PostPlatformAdminPasswordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostPlatformAdminPassword")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostPlatformAdminPasswordResponseObject); ok {
+		if err := validResponse.VisitPostPlatformAdminPasswordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutPlatformAdminPassword operation middleware
+func (sh *strictHandler) PutPlatformAdminPassword(w http.ResponseWriter, r *http.Request) {
+	var request PutPlatformAdminPasswordRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutPlatformAdminPassword(ctx, request.(PutPlatformAdminPasswordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutPlatformAdminPassword")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutPlatformAdminPasswordResponseObject); ok {
+		if err := validResponse.VisitPutPlatformAdminPasswordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PostDependencyTest operation middleware
 func (sh *strictHandler) PostDependencyTest(w http.ResponseWriter, r *http.Request) {
 	var request PostDependencyTestRequestObject
@@ -8422,6 +9244,30 @@ func (sh *strictHandler) PostDependencyTest(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PostDependencyTestResponseObject); ok {
 		if err := validResponse.VisitPostDependencyTestResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetReadiness operation middleware
+func (sh *strictHandler) GetReadiness(w http.ResponseWriter, r *http.Request) {
+	var request GetReadinessRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetReadiness(ctx, request.(GetReadinessRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetReadiness")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
+		if err := validResponse.VisitGetReadinessResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -8705,6 +9551,30 @@ func (sh *strictHandler) GetRestore(w http.ResponseWriter, r *http.Request, para
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetRestoreResponseObject); ok {
 		if err := validResponse.VisitGetRestoreResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostRestoreAbandon operation middleware
+func (sh *strictHandler) PostRestoreAbandon(w http.ResponseWriter, r *http.Request) {
+	var request PostRestoreAbandonRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostRestoreAbandon(ctx, request.(PostRestoreAbandonRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostRestoreAbandon")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostRestoreAbandonResponseObject); ok {
+		if err := validResponse.VisitPostRestoreAbandonResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

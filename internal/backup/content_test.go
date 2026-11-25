@@ -69,7 +69,7 @@ func TestCollectSecretsList(t *testing.T) {
 		secret(t, "appliance-system", name, map[string][]byte{"k": []byte("v")})
 	}
 	secret(t, "cert-manager", "appliance-root-ca", map[string][]byte{"tls.key": []byte("v")})
-	for _, name := range []string{"ca-keypair", "admin-ca-keypair", "admin-certificate-secret", "ilm-oidc-client", "ilm-keycloak-initial-admin"} {
+	for _, name := range []string{"ca-keypair", "admin-ca-keypair", "admin-certificate-secret", "ilm-oidc-client", "ilm-keycloak-initial-admin", "admin-password"} {
 		secret(t, "ilm", name, map[string][]byte{"k": []byte("v")})
 	}
 	secret(t, "ilm", "unrelated", map[string][]byte{"k": []byte("v")})
@@ -87,11 +87,37 @@ func TestCollectSecretsList(t *testing.T) {
 		"appliance-system/db-creds", "appliance-system/idp-creds", "appliance-system/mail-creds", "appliance-system/mq-creds", "appliance-system/registry-creds", "appliance-system/target-ca",
 		"appliance-system/target-s3", "appliance-system/tls-upload", "appliance-system/trust-bundle",
 		"cert-manager/appliance-root-ca",
-		"ilm/admin-ca-keypair", "ilm/admin-certificate-secret", "ilm/ca-keypair", "ilm/ilm-keycloak-initial-admin",
+		"ilm/admin-ca-keypair", "ilm/admin-certificate-secret", "ilm/admin-password", "ilm/ca-keypair", "ilm/ilm-keycloak-initial-admin",
 		"ilm/ilm-oidc-client", "ilm/software-cryptography-provider-keys",
 	}
 	if !slices.Equal(names(got), want) {
 		t.Errorf("collected\n%v\nwant\n%v", names(got), want)
+	}
+}
+
+func TestCollectSecretsHoldsTheACMESecrets(t *testing.T) {
+	for _, name := range []string{"appliance-acme-eab", "appliance-acme-dns01", "appliance-acme-ilm-eab"} {
+		secret(t, "appliance-system", name, map[string][]byte{"k": []byte("v")})
+	}
+	a := &v1alpha1.Appliance{}
+	a.Spec.TLS = v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{
+		DirectoryURL: "https://acme.example.com/directory", EABKeyID: "kid",
+		EABSecretRef: &corev1.LocalObjectReference{Name: "appliance-acme-eab"},
+		Solver: v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverDNS01, DNS01: &v1alpha1.DNS01Solver{Provider: "cloudflare",
+			CredentialsSecretRef: &corev1.LocalObjectReference{Name: "appliance-acme-dns01"}}},
+	}}
+	got, err := CollectSecrets(context.Background(), testClient, a, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"appliance-system/appliance-acme-dns01", "appliance-system/appliance-acme-eab"}; !slices.Equal(names(got), want) {
+		t.Errorf("collected %v, want %v", names(got), want)
+	}
+
+	// The ILM profile's binding is generated again.
+	a.Spec.TLS.ACME = &v1alpha1.ACMESpec{ILMProfile: &v1alpha1.ILMACMEProfile{RAProfileUUID: "ra", VaultUUID: "v", VaultProfileUUID: "vp"}}
+	if got, err := CollectSecrets(context.Background(), testClient, a, nil); err != nil || len(got) != 0 {
+		t.Errorf("collected %v, %v for the ILM profile, want none", names(got), err)
 	}
 }
 

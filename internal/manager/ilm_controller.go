@@ -172,22 +172,11 @@ const cbomRepositoryURLSetting = "utils.cbomRepositoryUrl"
 // apply writes the OAuth2 provider of the external identity provider, or removes the one the manager wrote, and sets
 // or clears the CBOM repository's URL.
 func (r *ILMReconciler) apply(ctx context.Context, a *v1alpha1.Appliance) error {
-	ip, ok, err := certs.NodeAddress(ctx, r.Client, a)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return errors.New("the node address is not known yet")
-	}
-	roots, err := r.edgeRoots(ctx)
+	c, err := ilmClientOf(ctx, r.Client, r.APIReader, r.ILM, a)
 	if err != nil {
 		return err
 	}
 	host := ilmHostName(a)
-	c, err := r.ILM.Ensure(ctx, net.JoinHostPort(ip.String(), edgePort), host, roots)
-	if err != nil {
-		return err
-	}
 	if err := r.applyIdentity(ctx, a, c, host); err != nil {
 		return err
 	}
@@ -277,11 +266,45 @@ func (r *ILMReconciler) identityHTTPClient(ctx context.Context, a *v1alpha1.Appl
 // identityTimeout bounds the fetch of a discovery document.
 const identityTimeout = 30 * time.Second
 
+// ILMClient returns ilmClientOf with c, reader and ilm, for the API.
+func ILMClient(c client.Client, reader client.Reader, ilm ILMIdentity) func(context.Context, *v1alpha1.Appliance) (*ilmclient.Client, error) {
+	return func(ctx context.Context, a *v1alpha1.Appliance) (*ilmclient.Client, error) {
+		return ilmClientOf(ctx, c, reader, ilm, a)
+	}
+}
+
+// errRestoring refuses an ILM client while a restore runs, which replaces the manager's identity and ILM's database.
+var errRestoring = errors.New("a restore is running")
+
+// ilmClientOf returns a client of the ILM edge on the node, authenticated as the manager by ilm. It reads the restore
+// status past the cache and refuses while a restore runs, so nothing registers in or writes to the ILM being replaced.
+func ilmClientOf(ctx context.Context, c client.Client, reader client.Reader, ilm ILMIdentity, a *v1alpha1.Appliance) (*ilmclient.Client, error) {
+	live := &v1alpha1.Appliance{}
+	if err := reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, live); err != nil {
+		return nil, fmt.Errorf("read the restore status: %w", err)
+	}
+	if live.Status.Restore.Active() {
+		return nil, errRestoring
+	}
+	ip, ok, err := certs.NodeAddress(ctx, c, a)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("the node address is not known yet")
+	}
+	roots, err := edgeRoots(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+	return ilm.Ensure(ctx, net.JoinHostPort(ip.String(), edgePort), ilmHostName(a), roots)
+}
+
 // edgeRoots trusts the certificates the edge serves, from the TLS Secret's copy in the platform namespace: the
 // built-in chain or an uploaded certificate alike.
-func (r *ILMReconciler) edgeRoots(ctx context.Context) (*x509.CertPool, error) {
+func edgeRoots(ctx context.Context, reader client.Reader) (*x509.CertPool, error) {
 	s := &corev1.Secret{}
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: TLSSecretName}, s); err != nil {
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: TLSSecretName}, s); err != nil {
 		return nil, fmt.Errorf(errReadSecret, platform.Namespace, TLSSecretName, err)
 	}
 	roots := x509.NewCertPool()

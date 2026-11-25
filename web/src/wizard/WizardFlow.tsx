@@ -28,7 +28,7 @@ const steps: { step: Step; label: string }[] = [
 
 type Loaded = { answers: Answers; catalogue: CatalogueItem[]; passwordSet: boolean; step: Step };
 
-async function load(): Promise<Loaded | 'complete' | undefined> {
+async function load(): Promise<Loaded | 'complete' | 'restore' | undefined> {
   const [status, appliance, catalogue, platform] = await Promise.all([
     attempt(() => api.GET('/status')),
     attempt(() => api.GET('/appliance')),
@@ -36,6 +36,7 @@ async function load(): Promise<Loaded | 'complete' | undefined> {
     attempt(() => api.GET('/platform')),
   ]);
   if (status?.data?.setup === 'complete') return 'complete';
+  if (status?.data?.setup === 'restore') return 'restore';
   if (!status?.data || !appliance?.data || !catalogue?.data) return undefined;
   const chosen = platform?.data;
   // Without the dependencies chosen before, a re-submit would send managed ones.
@@ -51,7 +52,7 @@ async function load(): Promise<Loaded | 'complete' | undefined> {
 
 /** Wizard part 2. The appliance keeps the answers; this page keeps them in memory while they are edited. */
 export function WizardFlow() {
-  const [loaded, setLoaded] = useState<Loaded | 'complete'>();
+  const [loaded, setLoaded] = useState<Loaded | 'complete' | 'restore'>();
   const [failed, setFailed] = useState(false);
   const [answers, setAnswers] = useState<Answers>();
   const [passwordSet, setPasswordSet] = useState(false);
@@ -67,7 +68,7 @@ export function WizardFlow() {
       if (!active) return;
       if (!result) return setFailed(true);
       setLoaded(result);
-      if (result !== 'complete') {
+      if (typeof result === 'object') {
         setAnswers(result.answers);
         setPasswordSet(result.passwordSet);
         setStoredMail(result.answers.mail);
@@ -83,6 +84,7 @@ export function WizardFlow() {
 
   if (failed) return <PageWidth><Alert tone="error">{unreachable}</Alert></PageWidth>;
   if (loaded === 'complete') return <Navigate to="/" replace />;
+  if (loaded === 'restore') return <Navigate to="/restore" replace />;
   if (!loaded || !answers) return <PageWidth><Loading /></PageWidth>;
 
   function change(patch: Partial<Answers>) {

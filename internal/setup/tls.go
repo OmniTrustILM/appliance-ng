@@ -3,6 +3,8 @@ package setup
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,4 +39,19 @@ func fingerprint(der []byte) string {
 		parts[i] = fmt.Sprintf("%02X", b)
 	}
 	return strings.Join(parts, ":")
+}
+
+// encodeTLS returns cert and its key PEM encoded for the hand-over file, or nil when cert is empty.
+func encodeTLS(cert tls.Certificate) (*HandoverTLS, error) {
+	if len(cert.Certificate) == 0 {
+		return nil, nil
+	}
+	key, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		return nil, errors.New("encode the setup certificate key failed")
+	}
+	return &HandoverTLS{
+		CertPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Certificate[0]})),
+		KeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})),
+	}, nil
 }

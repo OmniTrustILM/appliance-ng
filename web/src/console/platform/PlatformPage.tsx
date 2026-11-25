@@ -2,12 +2,14 @@ import { useState, type ReactNode, type SubmitEvent } from 'react';
 import { Link } from 'react-router';
 import { api } from '../../api/client';
 import type { components } from '../../api/schema';
+import { AdminPassword } from '../../components/AdminPassword';
 import { Alert } from '../../components/Alert';
 import { Badge } from '../../components/Badge';
 import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import { ChoiceField } from '../../components/ChoiceField';
 import { ComponentChoices, toggled, type ComponentChoice } from '../../components/ComponentChoices';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { Field } from '../../components/Field';
 import { PageHeading } from '../../components/PageHeading';
 import { PageWidth } from '../../components/PageWidth';
@@ -24,32 +26,42 @@ type Component = Platform['components'][number];
 const link = 'text-brand hover:underline';
 const loadPlatform = () => api.GET('/platform');
 
+/** The manager's problem text as a sentence: it comes in lower case without a full stop. */
+const asSentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1) + (text.endsWith('.') ? '' : '.');
+
 /** What a component still needs, or undefined when it needs nothing. */
-function hintOf({ chosen, needsCredentials, needsMail, registered, url }: Component): ReactNode {
-  if (!needsCredentials && !needsMail && registered) return undefined;
+function hintOf({ chosen, needsCredentials, needsMail, url, state, problem }: Component): ReactNode {
+  const failed = state === 'failed' && problem;
+  if (!needsCredentials && !needsMail && !url && !failed) return undefined;
   return (
     <>
+      {failed && <>{asSentence(problem)} </>}
       {needsCredentials && (
         <><Link className={link} to="/registries">Add the registry credentials</Link>{chosen ? ', or remove it from the components.' : ' to choose it.'} </>
       )}
       {needsMail && (
         <><Link className={link} to="/mail">Set up the mail server</Link>{chosen ? '; it sends mail.' : ' before you choose it; it sends mail.'} </>
       )}
-      {!registered && (
-        <>Not registered: ILM does not register it by itself.{url && <> Add it as a connector in ILM with the address <code>{url}</code>.</>}</>
-      )}
+      {url && <>The appliance registers it in ILM at <code>{url}</code>.</>}
     </>
   );
 }
 
+/** The badge of a chosen component that is starting or failed; ready ones and those without a state show none. */
+function stateBadge(state: Component['state']): ReactNode {
+  if (state === 'failed') return <Badge tone="bad">Failed</Badge>;
+  if (state === 'waiting') return <Badge tone="muted">Starting</Badge>;
+  return undefined;
+}
+
 /** A component that needs registry credentials cannot be chosen anew; a chosen one stays enabled to be removed. */
 function choiceOf(component: Component): ComponentChoice {
-  const { name, title, chosen, needsCredentials } = component;
+  const { name, title, chosen, needsCredentials, state } = component;
   return {
     name,
     title,
     disabled: needsCredentials && !chosen,
-    badge: needsCredentials && <Badge tone="muted">Needs registry credentials</Badge>,
+    badge: needsCredentials ? <Badge tone="muted">Needs registry credentials</Badge> : stateBadge(state),
     description: hintOf(component),
   };
 }
@@ -67,6 +79,41 @@ function updateOf({ hostName, chosen, dependencies, utils, cbom }: Change): comp
     ...(utils !== undefined && { utils }),
     ...(cbom && { cbom: cbomRequest(cbom) }),
   };
+}
+
+/** Sets a new password for the ILM administrator in the managed Keycloak after a confirmation and shows it once. */
+function AdminPasswordReset() {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [shown, setShown] = useState<components['schemas']['AdminPassword']>();
+  const [error, setError] = useState<string>();
+
+  async function reset() {
+    setAsking(false);
+    setBusy(true);
+    setShown(undefined);
+    setError(undefined);
+    const result = await attempt(() => api.PUT('/platform/admin-password'));
+    setBusy(false);
+    if (!result) return setError(unreachable);
+    if (result.data) return setShown(result.data);
+    setError(result.error?.message ?? 'The appliance could not process the request.');
+  }
+
+  return (
+    <Card>
+      <h2 className="mb-1.5 text-lg font-semibold">ILM administrator</h2>
+      <p className="mb-4 text-content-muted">The ILM administrator signs in as admin with a password. The appliance shows it once.</p>
+      {error && <Alert tone="error">{error}</Alert>}
+      {shown && <div className="mb-4"><AdminPassword user={shown.user} password={shown.password} /></div>}
+      <Button variant="secondary" busy={busy} onClick={() => setAsking(true)}>Set a new ILM administrator password</Button>
+      {asking && (
+        <ConfirmDialog title="Set a new ILM administrator password?" confirmLabel="Set a new password" onConfirm={() => void reset()} onCancel={() => setAsking(false)}>
+          The current password stops working. The new password is shown once.
+        </ConfirmDialog>
+      )}
+    </Card>
+  );
 }
 
 /** Shows the ILM version and changes the ILM host name, the installed components, the dependencies, utils and the CBOM
@@ -159,6 +206,7 @@ export function PlatformPage() {
           </Card>
         </fieldset>
       </form>
+      {data.dependencies.identity.mode === 'managed' && <div className="mt-6"><AdminPasswordReset /></div>}
     </PageWidth>
   );
 }

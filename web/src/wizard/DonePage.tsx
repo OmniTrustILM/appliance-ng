@@ -1,11 +1,13 @@
-import { useEffect, useState, type SubmitEvent } from 'react';
+import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api } from '../api/client';
+import { AdminPassword } from '../components/AdminPassword';
 import { Alert } from '../components/Alert';
 import { Button, buttonClass } from '../components/Button';
 import { cx } from '../components/cx';
 import { Card } from '../components/Card';
 import { PageHeading } from '../components/PageHeading';
 import { PageWidth } from '../components/PageWidth';
+import { ChoiceField } from '../components/ChoiceField';
 import { Field } from '../components/Field';
 import { attempt, failureMessage, unreachable } from '../setup/failure';
 import { RootCaLink } from './RootCaLink';
@@ -25,14 +27,35 @@ function save(file: Blob) {
   setTimeout(() => URL.revokeObjectURL(url), revokeDelay);
 }
 
+type Admin = { user: string; password: string } | { note: string };
+
+/** Asks once for the ILM administrator's password, which the appliance shows once; a second mount in development
+ * does not ask again, so the answer of the first is kept. */
+function useAdminPassword() {
+  const [admin, setAdmin] = useState<Admin>();
+  const asked = useRef(false);
+  useEffect(() => {
+    if (asked.current) return;
+    asked.current = true;
+    void attempt(() => api.POST('/platform/admin-password')).then((result) => {
+      if (result?.data) setAdmin(result.data);
+      else if (result?.response.status === 410) setAdmin({ note: 'The ILM administrator password was shown already. Set a new one on the Components page of the console.' });
+      else if (result?.response.status === 404) setAdmin({ note: 'The ILM administrator password is not created yet. Set one on the Components page of the console when the ILM is running.' });
+    });
+  }, []);
+  return admin;
+}
+
 /** The end of the setup: where the ILM is, the root certificate, and the one-time administrator credential. */
 export function DonePage() {
   const [hostName, setHostName] = useState<string>();
   const [password, setPassword] = useState('');
+  const [modern, setModern] = useState(false);
   const [fieldError, setFieldError] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [downloaded, setDownloaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const admin = useAdminPassword();
 
   useEffect(() => {
     let active = true;
@@ -51,19 +74,19 @@ export function DonePage() {
     setBusy(true);
     setFieldError(undefined);
     setMessage(undefined);
-    const result = await attempt(() => api.POST('/platform/admin-credential', { body: { password }, parseAs: 'blob' }));
+    const result = await attempt(() => api.POST('/platform/admin-credential', { body: { password, format: modern ? 'modern' : 'compatible' }, parseAs: 'blob' }));
     setBusy(false);
     if (!result) return setMessage(unreachable);
     const { response, data, error } = result;
     if (response.ok && data) {
-      save(data);
+      save(new Blob([data]));
       setPassword('');
       return setDownloaded(true);
     }
     if (response.status === 400 && error && 'field' in error && error.field === 'password') return setFieldError(error.message);
     if (response.status === 410) return setMessage('The administrator credential was already downloaded and cannot be downloaded again.');
     if (response.status === 404) return setMessage('The administrator credential has not been issued yet. Try again in a few minutes.');
-    setMessage(failureMessage(response.status));
+    setMessage(error?.message ?? failureMessage(response.status));
   }
 
   const address = hostName && `https://${hostName}/`;
@@ -83,6 +106,12 @@ export function DonePage() {
           </div>
         )}
         <p><RootCaLink /> and import it where clients should trust the ILM.</p>
+        {admin && (
+          <>
+            <h2 className="mb-3 mt-6 border-t border-divider pt-5 text-sm font-semibold">Administrator password</h2>
+            {'note' in admin ? <p className="text-content-muted">{admin.note}</p> : <AdminPassword user={admin.user} password={admin.password} />}
+          </>
+        )}
         <h2 className="mb-3 mt-6 border-t border-divider pt-5 text-sm font-semibold">Administrator credential</h2>
         {downloaded ? (
           <p>The administrator credential was downloaded as {fileName}. It cannot be downloaded again, so keep the file and its password safe.</p>
@@ -93,10 +122,23 @@ export function DonePage() {
               protects. The appliance does not keep the password.
             </p>
             <Field label="Certificate password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} error={fieldError} autoComplete="new-password" />
+            <fieldset className="mb-[18px]">
+              <legend className="mb-1.5 text-sm font-medium">File format</legend>
+              <ChoiceField type="radio" name="format" label="Compatible (macOS, Windows, Java)" description="Imports everywhere; encrypted with 3DES."
+                checked={!modern} onChange={() => setModern(false)} />
+              <ChoiceField type="radio" name="format" label="Modern (AES-256)" description="Stronger encryption; some systems cannot import it."
+                checked={modern} onChange={() => setModern(true)} />
+            </fieldset>
             <Button type="submit" variant="secondary" busy={busy}>Download</Button>
           </form>
         )}
         {message && <div className="mt-4"><Alert tone="error">{message}</Alert></div>}
+        {message === unreachable && (
+          <Alert tone="warning">
+            The console now uses the built-in certificate. Reload the page and accept the new certificate, or trust the
+            root certificate first.
+          </Alert>
+        )}
       </Card>
     </PageWidth>
   );

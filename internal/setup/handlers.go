@@ -96,9 +96,19 @@ func (w *wizard) GetSetupState(ctx context.Context, _ setupapi.GetSetupStateRequ
 	return setupapi.GetSetupState200JSONResponse(state), nil
 }
 
-// PutSetupMode saves the choice between a new appliance and the restore of a backup.
+// modeChangeable reports whether the mode may still be chosen: from the first step up to the review.
+func modeChangeable(step setupapi.SetupStep) bool {
+	switch step {
+	case setupapi.Mode, setupapi.Admin, setupapi.Totp, setupapi.Node, setupapi.Apply:
+		return true
+	}
+	return false
+}
+
+// PutSetupMode saves the choice between a new appliance and the restore of a backup. It may be sent again until
+// the answers are applied; the later steps keep their answers.
 func (w *wizard) PutSetupMode(_ context.Context, req setupapi.PutSetupModeRequestObject) (setupapi.PutSetupModeResponseObject, error) {
-	if w.currentStep() != setupapi.Mode {
+	if !modeChangeable(w.currentStep()) {
 		return setupapi.PutSetupMode409JSONResponse{ConflictJSONResponse: wrongStep}, nil
 	}
 	if req.Body == nil || !req.Body.Mode.Valid() {
@@ -107,10 +117,13 @@ func (w *wizard) PutSetupMode(_ context.Context, req setupapi.PutSetupModeReques
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.step != setupapi.Mode {
+	if !modeChangeable(w.step) {
 		return setupapi.PutSetupMode409JSONResponse{ConflictJSONResponse: wrongStep}, nil
 	}
-	w.mode, w.step = string(req.Body.Mode), setupapi.Admin
+	w.mode = string(req.Body.Mode)
+	if w.step == setupapi.Mode {
+		w.step = setupapi.Admin
+	}
 	w.deps.Log.Info(msgStepDone, "step", "mode", "mode", w.mode)
 	return setupapi.PutSetupMode204Response{}, nil
 }
@@ -261,6 +274,12 @@ func (w *wizard) PostSetupApply(context.Context, setupapi.PostSetupApplyRequestO
 	}
 	file := HandoverFile{Version: HandoverVersion, Mode: w.mode, Node: w.node}
 	file.Admin.User, file.Admin.PasswordHash, file.Admin.TOTPSeed = w.user, w.passwordHash, w.seed
+	tlsPair, err := encodeTLS(w.deps.Cert)
+	if err != nil {
+		w.mu.Unlock()
+		return nil, err
+	}
+	file.TLS = tlsPair
 	data, err := json.Marshal(file)
 	if err != nil {
 		w.mu.Unlock()

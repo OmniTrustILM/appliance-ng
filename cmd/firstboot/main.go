@@ -96,13 +96,15 @@ func run(log *slog.Logger, socket, listen, setupListen, clusterName string) erro
 		}
 	}()
 
+	tty, switchVT := openConsole(log)
 	err = firstboot.Run(ctx, firstboot.Deps{
 		Node:           node,
 		Wizard:         wizard,
 		NewCluster:     firstboot.NewLocalCluster,
 		Manager:        manager,
 		Generate:       machineconfig.Generate,
-		Console:        openConsole(log),
+		Console:        tty,
+		SwitchVT:       switchVT,
 		Log:            log,
 		Retry:          5 * time.Second,
 		InstallerImage: installerImage,
@@ -123,13 +125,14 @@ func run(log *slog.Logger, socket, listen, setupListen, clusterName string) erro
 	}
 }
 
-// openConsole opens the first virtual terminal for the status line and the setup code. The dashboard owns tty2 and
-// the kernel log is readable over the network, so tty1 is the only target. Without it the line is dropped.
-func openConsole(log *slog.Logger) io.Writer {
+// openConsole opens the first virtual terminal for the OmniTrust screen and returns the function that brings it to
+// the front. The dashboard owns tty2 and the kernel log is readable over the network, so tty1 is the only target.
+// Without it the screen is dropped and nothing is switched.
+func openConsole(log *slog.Logger) (io.Writer, func(int) error) {
 	f, err := os.OpenFile("/dev/tty1", os.O_WRONLY|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		log.Warn("console unavailable", "error", err)
-		return io.Discard
+		return io.Discard, nil
 	}
-	return f
+	return f, firstboot.SwitchVT
 }

@@ -43,7 +43,7 @@ func ConsoleLines(version string, ip netip.Addr, fingerprint, display string) []
 		code = "Setup code " + display
 	}
 	return []string{
-		"ILM appliance " + version + " setup",
+		"OmniTrust ILM Appliance " + version,
 		"Open https://" + ip.String() + ":" + Port + auth.BasePath + "/setup/",
 		"Certificate SHA-256 " + fingerprint,
 		code,

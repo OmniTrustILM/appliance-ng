@@ -134,14 +134,14 @@ func TestConnectorsReady(t *testing.T) {
 
 	setConnectorPhase(t, compliance, otilm.ConnectorPhaseRunning)
 	runReconcile(t, r)
-	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
+	wantConnectorsReady(t, metav1.ConditionFalse, reasonProgressing, "waiting for ILM to register "+compliance)
 
 	editSpec(t, func(s *v1alpha1.ApplianceSpec) { s.Platform = platformSpec() })
 	runReconcile(t, r)
 	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
 }
 
-func TestConnectorsReadyV1RunningOnly(t *testing.T) {
+func TestConnectorsReadyV1WaitsForILM(t *testing.T) {
 	const compliance = "x509-compliance-provider"
 	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec(compliance)})
 	r, _ := newReconciler(testClient, &fakeCluster{})
@@ -155,8 +155,14 @@ func TestConnectorsReadyV1RunningOnly(t *testing.T) {
 	}
 
 	setConnectorPhase(t, compliance, otilm.ConnectorPhaseRunning)
-	runReconcile(t, r)
-	wantConnectorsReady(t, metav1.ConditionTrue, reasonReady)
+	res := runReconcile(t, r)
+	wantConnectorsReady(t, metav1.ConditionFalse, reasonProgressing, "waiting for ILM to register "+compliance)
+	if res.RequeueAfter != addonsRequeue {
+		t.Errorf("requeue after %v, want %v while ILM has not registered the connector", res.RequeueAfter, addonsRequeue)
+	}
+	if got := getAppliance(t).Status.Connectors; len(got) != 1 || got[0].State != connectorStateWaiting {
+		t.Errorf("connector states = %+v, want the v1 connector waiting", got)
+	}
 }
 
 func TestConnectorsReadyV2NeedsRegistration(t *testing.T) {
@@ -170,7 +176,10 @@ func TestConnectorsReadyV2NeedsRegistration(t *testing.T) {
 
 	setConnectorRegistration(t, crypto, otilm.RegistrationStatusOffline)
 	runReconcile(t, r)
-	wantConnectorsReady(t, metav1.ConditionFalse, reasonProgressing, crypto)
+	wantConnectorsReady(t, metav1.ConditionFalse, reasonFailed, crypto, "ILM cannot reach the connector")
+	if got := getAppliance(t).Status.Connectors; len(got) != 1 || got[0] != (v1alpha1.ConnectorState{Name: crypto, State: "failed", Problem: "ILM cannot reach the connector"}) {
+		t.Errorf("status connectors = %+v", got)
+	}
 
 	setConnectorRegistration(t, crypto, otilm.RegistrationStatusWaitingForApproval)
 	runReconcile(t, r)

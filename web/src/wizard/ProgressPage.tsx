@@ -28,7 +28,7 @@ export function ProgressPage({ onBack, onComplete }: Readonly<{ onBack: () => vo
       {error && <Alert tone="error">{error}</Alert>}
       {error && certificateIssued && (
         <Alert tone="warning">
-          If this page stopped refreshing after the certificate changed, the console now uses the built-in certificate.
+          If this page stopped refreshing, the setup may be complete and the console now uses the built-in certificate.
           Reload the page and accept the new certificate, or trust the root certificate first.
         </Alert>
       )}
@@ -38,8 +38,9 @@ export function ProgressPage({ onBack, onComplete }: Readonly<{ onBack: () => vo
       {certificateIssued && (
         <div className="mt-4">
           <Alert tone="info">
-            Soon the console switches from its self-signed certificate to the built-in certificate. Your browser will
-            warn about the new certificate; download the root certificate and trust it first to avoid that.
+            When the setup is complete, the console switches from its self-signed certificate to the built-in
+            certificate. Your browser will warn about the new certificate; download the root certificate and trust it
+            first to avoid that.
           </Alert>
           <p><RootCaLink /></p>
         </div>

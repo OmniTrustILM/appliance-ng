@@ -30,6 +30,7 @@ const (
 	reasonWaitingForCertManager = "WaitingForCertManager"
 	reasonWaitingForNodeAddress = "WaitingForNodeAddress"
 	reasonIssuing               = "Issuing"
+	reasonWaitingForILM         = "WaitingForILM"
 )
 
 // Messages of failed conditions. Condition messages reach the first-boot status and the console, so they are fixed
@@ -38,6 +39,7 @@ const (
 	messageAddonsFailed      = "applying the add-ons failed, retrying; the manager log has the details"
 	messagePlatformFailed    = "applying the platform failed, retrying; the manager log has the details"
 	messageCertificateFailed = "requesting the built-in certificate failed, retrying; the manager log has the details"
+	messageACMEFailed        = "requesting the ACME certificate failed, retrying; the manager log has the details"
 )
 
 // platformAvailable is the condition operator v1.1.0 sets when the Platform serves.
@@ -159,19 +161,17 @@ func talosVersions(ctx context.Context, access func(context.Context) (talos.Node
 	return talosVersion, kubernetesVersion
 }
 
-// setConnectorsCondition sets ConnectorsReady from the Connectors the operator reports on: True when every chosen
-// Connector runs, otherwise False naming the Connectors that failed or are not ready yet. The operator's messages
-// stay out of the Appliance.
-func setConnectorsCondition(a *v1alpha1.Appliance, connectors []otilm.Connector) {
+// setConnectorsCondition sets ConnectorsReady from the states of the chosen Connectors: True when every one runs,
+// otherwise False naming the Connectors that failed, with their problem, or are not ready yet, or else those that run
+// and wait for ILM to register them.
+func setConnectorsCondition(a *v1alpha1.Appliance, states []v1alpha1.ConnectorState, awaitingILM []string) {
 	var failed, waiting []string
-	for i := range connectors {
-		c := &connectors[i]
-		switch {
-		case connectorReady(c):
-		case c.Status.Phase == otilm.ConnectorPhaseFailed || registrationFailed(c):
-			failed = append(failed, c.Name)
-		default:
-			waiting = append(waiting, c.Name)
+	for _, s := range states {
+		switch s.State {
+		case connectorStateFailed:
+			failed = append(failed, s.Name+" ("+s.Problem+")")
+		case connectorStateWaiting:
+			waiting = append(waiting, s.Name)
 		}
 	}
 	switch {
@@ -181,15 +181,12 @@ func setConnectorsCondition(a *v1alpha1.Appliance, connectors []otilm.Connector)
 	case len(waiting) > 0:
 		setCondition(a, v1alpha1.ConditionConnectorsReady, metav1.ConditionFalse, reasonProgressing,
 			"waiting for these connectors: "+strings.Join(waiting, ", "))
+	case len(awaitingILM) > 0:
+		setCondition(a, v1alpha1.ConditionConnectorsReady, metav1.ConditionFalse, reasonProgressing,
+			"waiting for ILM to register "+strings.Join(awaitingILM, ", "))
 	default:
 		setCondition(a, v1alpha1.ConditionConnectorsReady, metav1.ConditionTrue, reasonReady, "all chosen connectors are ready")
 	}
-}
-
-// registrationFailed reports whether the operator reports the registration of the Connector as failed.
-func registrationFailed(c *otilm.Connector) bool {
-	r := c.Status.Registration
-	return r != nil && r.Status == otilm.RegistrationStatusFailed
 }
 
 // connectorReady reports whether the operator runs the Connector's current generation and, for a Connector that

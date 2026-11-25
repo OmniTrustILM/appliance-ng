@@ -49,7 +49,7 @@ func (s *Server) GetPlatform(ctx context.Context, _ GetPlatformRequestObject) (G
 		out.Components[i] = PlatformComponent{
 			Name:             c.Name,
 			Title:            c.DisplayName,
-			Registered:       !c.V1Only(),
+			Registered:       true,
 			Private:          c.Private,
 			Chosen:           slices.Contains(chosen, c.Name),
 			NeedsCredentials: c.Private && !hasCredentials(a.Spec.Registries, c),
@@ -59,8 +59,25 @@ func (s *Server) GetPlatform(ctx context.Context, _ GetPlatformRequestObject) (G
 			url := platform.ConnectorURL(c)
 			out.Components[i].Url = &url
 		}
+		if out.Components[i].Chosen {
+			out.Components[i].State, out.Components[i].Problem = connectorState(a.Status.Connectors, c.Name)
+		}
 	}
 	return GetPlatform200JSONResponse(out), nil
+}
+
+// connectorState returns the state and the problem the manager reports for the connector name in states; nil for
+// those it does not report.
+func connectorState(states []v1alpha1.ConnectorState, name string) (*PlatformComponentState, *string) {
+	i := slices.IndexFunc(states, func(c v1alpha1.ConnectorState) bool { return c.Name == name })
+	if i < 0 {
+		return nil, nil
+	}
+	state := PlatformComponentState(states[i].State)
+	if states[i].Problem == "" {
+		return &state, nil
+	}
+	return &state, &states[i].Problem
 }
 
 // PutPlatform replaces the platform host name and its components, and the dependencies and utils the request

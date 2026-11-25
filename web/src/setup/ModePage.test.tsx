@@ -46,4 +46,9 @@ describe('ModePage', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(onDone).not.toHaveBeenCalled();
   });
+
+  it('preselects the earlier choice', () => {
+    render(<ModePage initial="restore" onDone={vi.fn()} onExpired={vi.fn()} />);
+    expect(screen.getByRole('radio', { name: /Restore from a backup/ })).toBeChecked();
+  });
 });

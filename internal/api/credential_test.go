@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -9,7 +10,9 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"net/http"
@@ -236,4 +239,84 @@ func TestAdminCredentialFailsClosedWithoutAudit(t *testing.T) {
 
 	h.srv.deps.Audit = h.audit
 	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+}
+
+var (
+	oidTripleDESPBE = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 12, 1, 3}
+	oidPBES2        = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 13}
+	oidSHA1         = asn1.ObjectIdentifier{1, 3, 14, 3, 2, 26}
+	oidSHA256       = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
+)
+
+func hasOID(der []byte, oid asn1.ObjectIdentifier) bool {
+	enc, _ := asn1.Marshal(oid)
+	return bytes.Contains(der, enc)
+}
+
+// TestAdminCredentialFormat checks the encryption of the file: the compatible default imports into macOS Keychain,
+// which cannot read AES-256, and the modern format uses PBES2 with AES-256 and a SHA-256 MAC.
+func TestAdminCredentialFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   map[string]string
+		format string
+		modern bool
+	}{
+		{"default", map[string]string{"password": credentialPassword}, "compatible", false},
+		{"compatible", map[string]string{"password": credentialPassword, "format": "compatible"}, "compatible", false},
+		{"modern", map[string]string{"password": credentialPassword, "format": "modern"}, "modern", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			s := h.signIn()
+			cred := newAdminCredential(t, pkcs1)
+			createAdminSecret(t, cred)
+
+			rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", tt.body, s)
+			wantStatus(t, rec, http.StatusOK)
+			pfx := rec.Body.Bytes()
+			if _, leaf, _, err := pkcs12.DecodeChain(pfx, credentialPassword); err != nil || !leaf.Equal(cred.leaf) {
+				t.Fatalf("decode the PKCS#12 file: %v", err)
+			}
+			if got := hasOID(pfx, oidPBES2); got != tt.modern {
+				t.Errorf("PBES2 in the file = %v, want %v", got, tt.modern)
+			}
+			if got := hasOID(pfx, oidTripleDESPBE); got == tt.modern {
+				t.Errorf("3DES in the file = %v, want %v", got, !tt.modern)
+			}
+			wantMAC, otherMAC := oidSHA1, oidSHA256
+			if tt.modern {
+				wantMAC, otherMAC = oidSHA256, oidSHA1
+			}
+			if !hasOID(pfx, wantMAC) || hasOID(pfx, otherMAC) {
+				t.Errorf("the MAC of the file is not %v", wantMAC)
+			}
+			var details map[string]string
+			for _, e := range h.entries() {
+				if e.Action == string(AuditEntryActionAdminCredential) {
+					details = e.Details
+				}
+			}
+			if details["format"] != tt.format {
+				t.Errorf("audit details = %v, want format %s", details, tt.format)
+			}
+		})
+	}
+}
+
+func TestAdminCredentialUnknownFormat(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAdminSecret(t, newAdminCredential(t, pkcs1))
+
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword, "format": "x"}, s)
+	wantStatus(t, rec, http.StatusBadRequest)
+	var answer Error
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil || answer.Field == nil || *answer.Field != "format" {
+		t.Errorf("answer %s, want field format", rec.Body)
+	}
+	// Nothing was handed out: the same request with a valid format still works.
+	rec = h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s)
+	wantStatus(t, rec, http.StatusOK)
 }

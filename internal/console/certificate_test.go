@@ -139,6 +139,86 @@ func TestCertificateFollowsTheSecretSource(t *testing.T) {
 	}
 }
 
+func TestCertificateFollowsTheACMESecretOnceValid(t *testing.T) {
+	ctx := context.Background()
+	acme := v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{DirectoryURL: "https://acme.example.com/directory"}}
+	cl := fakeClient(appliance(acme), tlsSecret(t, certs.SecretName, "builtin"), brokenSecret(t, certs.ACMESecretName))
+	c, err := NewCertificate(discard, cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatalf("an invalid ACME Secret must fall back to the built-in certificate: %v", err)
+	}
+	if got := servedName(t, c); got != "builtin" {
+		t.Errorf("served %q, want builtin until the ACME certificate is issued", got)
+	}
+
+	if err := cl.Update(ctx, tlsSecret(t, certs.ACMESecretName, "acme")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := servedName(t, c); got != "acme" {
+		t.Errorf("served %q, want the issued ACME certificate", got)
+	}
+}
+
+func completeAppliance(status string) *v1alpha1.Appliance {
+	a := appliance(v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin})
+	a.Status.Setup = status
+	return a
+}
+
+func TestCertificateServesTheSetupSecretUntilSetupIsComplete(t *testing.T) {
+	ctx := context.Background()
+	for name, objs := range map[string][]client.Object{
+		"no Appliance":  {tlsSecret(t, certs.SetupSecretName, "setup")},
+		"part 2":        {completeAppliance(v1alpha1.SetupPart2), tlsSecret(t, certs.SetupSecretName, "setup"), tlsSecret(t, certs.SecretName, "builtin")},
+		"fresh status":  {completeAppliance(""), tlsSecret(t, certs.SetupSecretName, "setup"), tlsSecret(t, certs.SecretName, "builtin")},
+		"broken secret": {completeAppliance(v1alpha1.SetupPart2), brokenSecret(t, certs.SetupSecretName), tlsSecret(t, certs.SecretName, "builtin")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := NewCertificate(discard, fakeClient(objs...))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			want := "setup"
+			if name == "broken secret" {
+				want = "builtin"
+			}
+			if got := servedName(t, c); got != want {
+				t.Errorf("served %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func brokenSecret(t *testing.T, name string) *corev1.Secret {
+	t.Helper()
+	s := tlsSecret(t, name, "broken")
+	s.Data[corev1.TLSPrivateKeyKey] = []byte("not a key")
+	return s
+}
+
+func TestCertificateLeavesTheSetupSecretOnceSetupIsComplete(t *testing.T) {
+	cl := fakeClient(completeAppliance(v1alpha1.SetupComplete), tlsSecret(t, certs.SetupSecretName, "setup"), tlsSecret(t, certs.SecretName, "builtin"))
+	c, err := NewCertificate(discard, cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := servedName(t, c); got != "builtin" {
+		t.Errorf("served %q, want the selected Secret", got)
+	}
+}
+
 func TestCertificateKeepsTheLastGoodOne(t *testing.T) {
 	ctx := context.Background()
 	cl := fakeClient(appliance(v1alpha1.TLSSpec{}), tlsSecret(t, certs.SecretName, "good"))

@@ -160,6 +160,16 @@ func (r *runner) handOverAnswers(ctx context.Context, cluster Cluster, file []by
 		return err
 	}
 	r.set(StateHandover, "", "handing the setup answers over to the Appliance Manager")
+	file, tlsDocs, err := splitSetupTLS(file)
+	if err != nil {
+		return err
+	}
+	// The setup certificate goes first, so that it exists when the Appliance Manager imports the answers.
+	if tlsDocs != nil {
+		if err := cluster.Create(ctx, tlsDocs); err != nil {
+			return fmt.Errorf("create the setup certificate Secret failed (%s)", reason(err))
+		}
+	}
 	docs, err := json.Marshal(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -175,6 +185,38 @@ func (r *runner) handOverAnswers(ctx context.Context, cluster Cluster, file []by
 		return fmt.Errorf("create the hand-over Secret failed (%s)", reason(err))
 	}
 	return nil
+}
+
+// splitSetupTLS takes the setup certificate out of the hand-over file, which the Appliance Manager imports, and
+// returns the file without it and the TLS Secret that holds it, nil for a file without one.
+func splitSetupTLS(file []byte) ([]byte, []byte, error) {
+	var h setup.HandoverFile
+	if err := json.Unmarshal(file, &h); err != nil || h.TLS == nil {
+		return file, nil, nil
+	}
+	tlsDocs, err := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"namespace": setup.HandoverSecretNamespace, "name": setup.SetupTLSSecretName},
+		"type":       "kubernetes.io/tls",
+		"data": map[string][]byte{
+			"tls.crt": []byte(h.TLS.CertPEM),
+			"tls.key": []byte(h.TLS.KeyPEM),
+		},
+	})
+	if err != nil {
+		return nil, nil, errors.New("encode the setup certificate Secret failed")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(file, &fields); err != nil {
+		return nil, nil, errors.New("read the hand-over file failed")
+	}
+	delete(fields, "tls")
+	rest, err := json.Marshal(fields)
+	if err != nil {
+		return nil, nil, errors.New("encode the hand-over Secret failed")
+	}
+	return rest, tlsDocs, nil
 }
 
 // reason returns the Kubernetes reason of err, or Unknown.

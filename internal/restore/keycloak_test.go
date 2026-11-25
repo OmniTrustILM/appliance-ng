@@ -3,18 +3,13 @@ package restore
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 )
@@ -232,31 +227,4 @@ func toStrings(v any) []string {
 		out = append(out, s)
 	}
 	return out
-}
-
-// TestKeycloakURLIsTheServicesClusterIP: the manager runs in the host network without the cluster's DNS, so it calls
-// Keycloak at the cluster IP of its Service.
-func TestKeycloakURLIsTheServicesClusterIP(t *testing.T) {
-	resetCluster(t)
-	e := New(Deps{Client: testClient})
-	if _, err := e.keycloakURL(context.Background()); err == nil {
-		t.Error("keycloakURL without the Service passed")
-	}
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "ilm", Name: "ilm-keycloak-service"},
-		Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: "http", Port: 8080}}},
-	}
-	mustCreate(t, svc)
-	t.Cleanup(func() { _ = testClient.Delete(context.Background(), svc) })
-	got, err := e.keycloakURL(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := url.Parse(got)
-	if err != nil || u.Scheme != "http" || u.Host != net.JoinHostPort(svc.Spec.ClusterIP, "8080") || u.Path != "/kc" {
-		t.Errorf("Keycloak URL %q, want the Service's cluster IP %s under /kc", got, svc.Spec.ClusterIP)
-	}
-	if e.deps.HTTPClient == nil || e.deps.HTTPClient.Transport.(*http.Transport).Proxy != nil {
-		t.Error("want an HTTP client that uses no proxy")
-	}
 }

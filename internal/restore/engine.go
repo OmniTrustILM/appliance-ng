@@ -21,6 +21,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
+	"github.com/OmniTrustILM/appliance-ng/internal/keycloak"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 )
 
@@ -137,7 +138,7 @@ type job struct {
 // New returns an Engine on deps.
 func New(deps Deps) *Engine {
 	if deps.HTTPClient == nil {
-		deps.HTTPClient = keycloakHTTPClient()
+		deps.HTTPClient = keycloak.HTTPClient()
 	}
 	e := &Engine{deps: deps, retryDelay: 10 * time.Second, poll: 2 * time.Second, waitTimeout: 30 * time.Minute, now: time.Now}
 	e.steps = map[string]func(context.Context, *job) error{

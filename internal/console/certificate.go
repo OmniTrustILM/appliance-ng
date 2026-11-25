@@ -49,29 +49,47 @@ func (c *Certificate) GetCertificate(*tls.ClientHelloInfo) (*tls.Certificate, er
 	return c.served.Load(), nil
 }
 
-// Refresh loads the TLS Secret the Appliance selects: appliance-tls for the built-in certificate, tls.secretRef
-// for source secret. Until the Appliance or the Secret exists, and when the Secret does not hold a valid pair,
-// the certificate served so far stays.
+// Refresh loads the TLS Secret to serve. Until setup is complete, that is the setup certificate the setup server
+// handed over, so the browser that ran setup sees the same certificate across the reboot. Otherwise, or without a
+// usable setup certificate, it is the Secret certs.ServedSecretName selects. Until the Appliance or the Secret
+// exists, and when the Secret does not hold a valid pair, the certificate served so far stays.
 func (c *Certificate) Refresh(ctx context.Context) error {
 	a := &v1alpha1.Appliance{}
 	err := c.reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, a)
-	switch {
-	case apierrors.IsNotFound(err):
-		return nil
-	case err != nil:
+	missing := apierrors.IsNotFound(err)
+	if err != nil && !missing {
 		return fmt.Errorf("read the Appliance: %w", err)
 	}
-	name := certs.SecretName
-	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
-		name = a.Spec.TLS.SecretRef
+	if missing || a.Status.Setup != v1alpha1.SetupComplete {
+		served, err := c.load(ctx, certs.SetupSecretName)
+		if served {
+			return nil
+		}
+		if err != nil {
+			c.log.Warn("the setup certificate is not used", "error", err)
+		}
 	}
+	if missing {
+		return nil
+	}
+	name, err := certs.ServedSecretName(ctx, c.reader, a)
+	if err != nil {
+		return err
+	}
+	_, err = c.load(ctx, name)
+	return err
+}
+
+// load serves the certificate and key of the TLS Secret name in the system namespace and reports whether it did. A
+// Secret that does not exist is no error; one that holds no valid pair is.
+func (c *Certificate) load(ctx context.Context, name string) (bool, error) {
 	secret := &corev1.Secret{}
-	err = c.reader.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: name}, secret)
+	err := c.reader.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: name}, secret)
 	switch {
 	case apierrors.IsNotFound(err):
-		return nil
+		return false, nil
 	case err != nil:
-		return fmt.Errorf("read secret %s/%s: %w", certs.Namespace, name, err)
+		return false, fmt.Errorf("read secret %s/%s: %w", certs.Namespace, name, err)
 	}
 
 	certPEM, keyPEM := secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey]
@@ -79,17 +97,17 @@ func (c *Certificate) Refresh(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if bytes.Equal(pair, c.loaded) {
-		return nil
+		return true, nil
 	}
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		// The parse error could quote key material, so it is not passed on.
-		return fmt.Errorf("secret %s/%s does not hold a valid certificate and key", certs.Namespace, name)
+		return false, fmt.Errorf("secret %s/%s does not hold a valid certificate and key", certs.Namespace, name)
 	}
 	c.served.Store(&cert)
 	c.loaded = pair
 	c.log.Info("console certificate loaded", "secret", certs.Namespace+"/"+name, "notAfter", cert.Leaf.NotAfter)
-	return nil
+	return true, nil
 }
 
 // Run refreshes the certificate now and then every interval until ctx ends; failures are logged and retried.

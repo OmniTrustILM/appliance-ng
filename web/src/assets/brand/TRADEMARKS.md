@@ -9,6 +9,7 @@ this directory:
 - `ilm-color.svg`
 - `ot-white.svg`
 - `ot-color.svg`
+- `favicon.svg`, located in `web/public/`: the mark of `ot-color.svg` without the wordmark
 
 Those files are excluded from the licence grant and remain the property of OmniTrust. Apache License 2.0
 section 6 grants no trademark rights.

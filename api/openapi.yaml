@@ -436,6 +436,19 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /readiness:
+    get:
+      tags: [status]
+      operationId: getReadiness
+      summary: Whether the console accepts a sign-in
+      description: Public, so it needs no session. The setup page asks it while the appliance installs and starts.
+      responses:
+        '200':
+          description: Whether signing in works.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
   /ca.pem:
     get:
       tags: [certificate]
@@ -578,6 +591,58 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /certificate/acme:
+    put:
+      tags: [certificate]
+      operationId: putCertificateAcme
+      summary: Get the certificate from an ACME server
+      description: |
+        Selects an automatic certificate, requested from an ACME server of your own or from the ACME profile of this
+        appliance's ILM. Answered with 400 and a message that names the problem when the directory is not an https
+        URL, neither or both of `directoryUrl` and `ilm` are given, the external account binding lacks its key ID or
+        HMAC key, or the DNS provider or one of its settings is unknown or missing. The HMAC key and the DNS
+        credentials are stored as Secrets and never returned. The uploaded certificate and a pending signing request
+        stay until the built-in certificate is selected.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcmeSettings'
+      responses:
+        '202':
+          description: The settings are stored; the platform requests the certificate shortly.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /certificate/acme/ilm-options:
+    get:
+      tags: [certificate]
+      operationId: getCertificateAcmeIlmOptions
+      summary: The RA profiles and vault profiles of ILM for its ACME profile
+      description: |
+        Lists the enabled RA profiles that can issue the certificate and the enabled vault profiles that can hold
+        the ACME account key. Answered with 409 while ILM is not ready or does not answer.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The profiles to choose from.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcmeIlmOptions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /platform/admin-credential:
     post:
       tags: [platform]
@@ -617,6 +682,64 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
+  /platform/admin-password:
+    post:
+      tags: [platform]
+      operationId: postPlatformAdminPassword
+      summary: Show the ILM administrator's password, once
+      description: |
+        Returns the user name and password of the ILM administrator in the managed Keycloak. Each password is shown
+        once; later requests are answered with 410 until a new password is set. Answered with 404 before the
+        password exists and with 409 `external_identity` when ILM signs users in with an external identity provider.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The administrator's user name and password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPassword'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+    put:
+      tags: [platform]
+      operationId: putPlatformAdminPassword
+      summary: Set a new password for the ILM administrator
+      description: |
+        Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
+        409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs, and with 409
+        `external_identity` when ILM signs users in with an external identity provider. When Keycloak refuses or does
+        not answer, the request is answered with 502 and the stored password stays as it was.
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The administrator's user name and new password.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPassword'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          description: Keycloak refused the new password or did not answer; the message is fixed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /node:
     put:
       tags: [node]
@@ -1804,6 +1927,28 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+  /restore/abandon:
+    post:
+      tags: [restore]
+      operationId: postRestoreAbandon
+      summary: Set up a new appliance instead of restoring
+      description: |
+        Gives up the restore a fresh appliance waits for and moves its setup to `part2`, the wizard's second part.
+        Refused with 409 `not_restoring` unless setup is `restore`, and with 409 `restore_started` once a restore
+        was started on this appliance, which then has to be installed again to set up a new appliance, and with 409
+        `handover_pending` while the appliance is still taking over the setup answers, and with 409 `busy` while
+        another restore operation runs.
+      security:
+        - session: []
+      responses:
+        '204':
+          description: The restore is given up; setup continues with part 2.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 components:
   securitySchemes:
     session:
@@ -1957,6 +2102,13 @@ components:
               type: integer
               minimum: 0
               description: Seconds until the next attempt is accepted.
+    Readiness:
+      type: object
+      required: [signIn]
+      properties:
+        signIn:
+          type: boolean
+          description: True once the administrator is imported and the console accepts a sign-in.
     CsrfToken:
       type: object
       required: [csrfToken]
@@ -2314,13 +2466,13 @@ components:
           description: The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise.
         action:
           type: string
-          enum: [sign-in, sign-out, wizard-platform, admin-credential, node-settings, reboot, shutdown, certificate-upload,
-            certificate-csr, certificate-signed, certificate-builtin, trust-add, trust-remove, registry-set,
+          enum: [sign-in, sign-out, wizard-platform, admin-credential, admin-password-shown, admin-password-reset,
+            node-settings, reboot, shutdown, certificate-upload, certificate-csr, certificate-signed, certificate-builtin, certificate-acme, trust-add, trust-remove, registry-set,
             registry-remove, platform-settings, dependency-test, mail-settings, mail-remove, mail-test, kubeconfig-issue,
             kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
             recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
             backup-target-test, backup-host-key-scan, restore-upload, restore-fetch, restore-inspect, restore-start,
-            restore-resume, restore]
+            restore-resume, restore-abandon, restore]
         result:
           type: string
           enum: [success, failure, denied]
@@ -2336,7 +2488,8 @@ components:
           type: object
           description: >-
             What an issued or revoked credential grants: its `role`, `name` and `expires`, and for a recovery kit the
-            `recipient` public key and the talosconfig's `expires`; never a token, certificate, key or passphrase.
+            `recipient` public key and the talosconfig's `expires`, and for the ACME certificate its `provider` and
+            `solver`; never a token, certificate, key or passphrase.
           additionalProperties:
             type: string
     CertificateInfo:
@@ -2345,13 +2498,157 @@ components:
       properties:
         source:
           type: string
-          enum: [builtin, secret]
-          description: '`builtin` for the certificate the built-in CA issues, `secret` for an uploaded one.'
+          enum: [builtin, secret, acme]
+          description: >-
+            `builtin` for the certificate the built-in CA issues, `secret` for an uploaded one, `acme` for one an ACME
+            server issues.
         csrPending:
           type: boolean
           description: A signing request waits for its certificate.
         certificate:
           $ref: '#/components/schemas/CertificateDetails'
+        acme:
+          $ref: '#/components/schemas/AcmeInfo'
+    AcmeInfo:
+      type: object
+      description: The ACME settings, present when the source is `acme`. Never a secret value.
+      required: [solver]
+      properties:
+        directoryUrl:
+          type: string
+        email:
+          type: string
+        eabKeyId:
+          type: string
+        eabHmacSet:
+          type: boolean
+          description: The HMAC key of the external account binding is stored.
+        caBundle:
+          type: string
+          description: The stored PEM CA bundle for the ACME server.
+        solver:
+          $ref: '#/components/schemas/AcmeSolverInfo'
+        ilm:
+          $ref: '#/components/schemas/AcmeIlm'
+        lastError:
+          type: string
+          description: Why the certificate is not issued yet, while it is not.
+    AcmeSolverInfo:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [http01, dns01]
+        dns01:
+          $ref: '#/components/schemas/AcmeDns01Info'
+    AcmeDns01Info:
+      type: object
+      required: [provider, config, credentialKeys]
+      properties:
+        provider:
+          type: string
+        config:
+          type: object
+          additionalProperties:
+            type: string
+        credentialKeys:
+          type: array
+          description: The credentials that are stored, by name.
+          items:
+            type: string
+    AcmeIlm:
+      type: object
+      required: [raProfileUuid, vaultUuid, vaultProfileUuid]
+      properties:
+        raProfileUuid:
+          type: string
+        vaultUuid:
+          type: string
+        vaultProfileUuid:
+          type: string
+    AcmeIlmOptions:
+      type: object
+      required: [raProfiles, vaultProfiles]
+      properties:
+        raProfiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/AcmeIlmRaProfile'
+        vaultProfiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/AcmeIlmVaultProfile'
+    AcmeIlmRaProfile:
+      type: object
+      required: [uuid, name]
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+    AcmeIlmVaultProfile:
+      type: object
+      required: [uuid, name, vaultUuid]
+      properties:
+        uuid:
+          type: string
+        name:
+          type: string
+        vaultUuid:
+          type: string
+    AcmeSolverSettings:
+      type: object
+      description: How the host names are proven; `http01` when omitted. Ignored with `ilm`.
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [http01, dns01]
+        dns01:
+          $ref: '#/components/schemas/AcmeDns01Settings'
+    AcmeDns01Settings:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          type: string
+          description: One of rfc2136, cloudflare, route53, azuredns, clouddns, digitalocean, acmedns, akamai.
+        config:
+          type: object
+          description: The provider's settings that are not secret.
+          additionalProperties:
+            type: string
+        credentials:
+          type: object
+          description: The provider's secret settings.
+          writeOnly: true
+          additionalProperties:
+            type: string
+    AcmeSettings:
+      type: object
+      description: >-
+        Either `directoryUrl` for an ACME server of your own or `ilm` for the ACME profile of this appliance's ILM,
+        not both.
+      properties:
+        directoryUrl:
+          type: string
+          description: The https directory of the ACME server.
+        email:
+          type: string
+        eabKeyId:
+          type: string
+          description: Needs `eabHmac`.
+        eabHmac:
+          type: string
+          writeOnly: true
+        caBundle:
+          type: string
+          description: PEM certificates that sign the ACME server's certificate.
+        solver:
+          $ref: '#/components/schemas/AcmeSolverSettings'
+        ilm:
+          $ref: '#/components/schemas/AcmeIlm'
     CertificateDetails:
       type: object
       description: The certificate in use; absent until the built-in certificate is issued.
@@ -2403,6 +2700,17 @@ components:
           type: string
           format: binary
           description: The intermediate and root certificates in PEM.
+    AdminPassword:
+      type: object
+      required: [user, password]
+      properties:
+        user:
+          type: string
+          description: The user name of the ILM administrator.
+        password:
+          type: string
+          format: password
+          description: The password; the appliance shows it once.
     AdminCredentialRequest:
       type: object
       required: [password]
@@ -2415,6 +2723,13 @@ components:
           description: >-
             The password that encrypts the PKCS#12 file. Like a console password, it has at least 12 characters, is
             not one of the most common passwords and does not contain the user name.
+        format:
+          type: string
+          enum: [compatible, modern]
+          default: compatible
+          description: >-
+            `compatible` encrypts the file with 3DES and a SHA-1 MAC, which macOS Keychain, Windows and Java import;
+            `modern` uses AES-256 and a SHA-256 MAC, which they may refuse.
     AuditLog:
       type: object
       required: [items]
@@ -2667,11 +2982,11 @@ components:
         registered:
           type: boolean
           description: |
-            Whether ILM registers the component by itself once it runs. False for a component that speaks only
-            interface v1, which is registered by hand in ILM with `url`.
+            Whether the component is registered in ILM once it runs: ILM's operator registers it, or the appliance
+            does for a component that speaks only interface v1, at `url`.
         url:
           type: string
-          description: The in-cluster address to register a component that is not registered by itself with.
+          description: The in-cluster address the appliance registers a component that speaks only interface v1 with.
         private:
           type: boolean
           description: Whether the component's image comes from a registry that needs credentials.
@@ -2683,6 +2998,13 @@ components:
         needsMail:
           type: boolean
           description: A component that sends mail while no mail server is set.
+        state:
+          type: string
+          enum: [ready, waiting, failed]
+          description: Set for a chosen component the manager reports on.
+        problem:
+          type: string
+          description: Why a failed component failed, in plain words.
     PlatformState:
       type: object
       required: [ilmVersion, hostName, components, dependencies, utils, cbom, setupComplete]

@@ -1,14 +1,18 @@
 package api
 
 import (
+	"encoding/hex"
 	"errors"
+	"maps"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
+	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 )
 
 func TestAuditEntryPerMutation(t *testing.T) {
@@ -161,5 +165,87 @@ func TestAuditFailureStillAnswers(t *testing.T) {
 	wantStatus(t, rec, http.StatusInternalServerError)
 	if strings.Contains(rec.Body.String(), "disk gone") {
 		t.Errorf("the error leaks to the client: %s", rec.Body)
+	}
+}
+
+func TestAuditRecordsWhyAChangeFailed(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupRestore)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, s), http.StatusConflict)
+	conflict := lastEntry(h)
+	deleteAppliance(t)
+	createAppliance(t, v1alpha1.SetupPart2)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "bad", Components: []string{}}, s), http.StatusBadRequest)
+	invalid := lastEntry(h)
+	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", PlatformSettings{HostName: "ilm.example.com", Components: []string{}}, &session{cookie: s.cookie, csrf: "x"}), http.StatusForbidden)
+	denied := lastEntry(h)
+
+	if conflict.Result != string(Failure) || conflict.Details["status"] != "409" || conflict.Details["code"] != codeRestorePending ||
+		conflict.Details["message"] != messageRestorePending {
+		t.Errorf("409 entry = %+v, want its status, code and message", conflict)
+	}
+	if _, ok := conflict.Details["requestId"]; ok {
+		t.Errorf("409 entry has a request ID: %v", conflict.Details)
+	}
+	if invalid.Result != string(Failure) || invalid.Details["status"] != "400" || invalid.Details["field"] == "" {
+		t.Errorf("400 entry = %+v, want its status and field", invalid)
+	}
+	if denied.Result != string(Denied) || denied.Details["status"] != "403" || denied.Details["code"] != "csrf" {
+		t.Errorf("403 entry = %+v, want denied with its status and code", denied)
+	}
+	for _, e := range h.entries() {
+		if e.Result == string(Success) && len(e.Details) != 0 {
+			t.Errorf("success entry %s has details %v", e.Action, e.Details)
+		}
+	}
+}
+
+func TestAuditRecordsTheRequestIDOfAnInternalError(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAdminSecret(t, adminCredential{cert: []byte("not a certificate"), key: []byte("not a key")})
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusInternalServerError)
+
+	e := lastEntry(h)
+	id := e.Details["requestId"]
+	if e.Result != string(Failure) || e.Details["status"] != "500" || e.Details["code"] != "internal" || len(id) != 16 {
+		t.Fatalf("500 entry = %+v, want its status, code and a 16-character request ID", e)
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		t.Errorf("request ID %q is not hex", id)
+	}
+	if !strings.Contains(h.logs.String(), `"msg":"API request failed"`) || !strings.Contains(h.logs.String(), `"requestId":"`+id+`"`) {
+		t.Errorf("the error log line lacks request ID %s: %s", id, h.logs)
+	}
+}
+
+func TestAuditLeavesOutTheRequestIDOfAnAnswerThatLogsNone(t *testing.T) {
+	h := newHarness(t)
+	handler := withRequest(h.srv.audited(AuditEntryActionBackupTargetSet, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		auth.WriteError(w, http.StatusServiceUnavailable, "unavailable", "Try again later.")
+	})))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/", nil))
+	e := lastEntry(h)
+	if e.Details["status"] != "503" {
+		t.Fatalf("entry = %+v, want status 503", e)
+	}
+	if id, ok := e.Details["requestId"]; ok {
+		t.Errorf("503 entry has request ID %q that no log line carries", id)
+	}
+}
+
+func TestAuditKeepsTheHandlersDetails(t *testing.T) {
+	h := newHarness(t)
+	handler := withRequest(h.srv.audited(AuditEntryActionBackupTargetSet, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recordDetails(r.Context(), map[string]string{"name": "a", "code": "from-handler"})
+		auth.WriteError(w, http.StatusConflict, "busy", "Try again later.")
+	})))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"password":"secret value"}`)))
+
+	e := lastEntry(h)
+	want := map[string]string{"name": "a", "code": "from-handler", "status": "409", "message": "Try again later."}
+	if !maps.Equal(e.Details, want) {
+		t.Errorf("details = %v, want %v", e.Details, want)
 	}
 }

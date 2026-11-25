@@ -9,6 +9,7 @@ import { PageWidth } from '../../components/PageWidth';
 import { Loading } from '../../components/Spinner';
 import { attempt, unreachable } from '../../setup/failure';
 import { RootCaLink } from '../../wizard/RootCaLink';
+import { AcmeForm } from './AcmeForm';
 import { CurrentCertificate } from './CurrentCertificate';
 import { downloadText } from './download';
 import { useLoaded } from '../shared/useLoaded';
@@ -20,7 +21,10 @@ const loadCertificate = () => api.GET('/certificate');
 const uploadCertificate = (form: FormData) => api.PUT('/certificate', { body: form as never });
 const uploadSigned = (form: FormData) => api.PUT('/certificate/csr/signed', { body: form as never });
 
-/** Shows the certificate in use and replaces it: an uploaded certificate, a signed request or the built-in one. */
+/**
+ * Shows the certificate in use and replaces it: an uploaded certificate, a signed request, an automatic one from an
+ * ACME server or the built-in one.
+ */
 export function CertificatePage() {
   const { data: info, error: loadError, reload, settled } = useLoaded(loadCertificate);
   const [notice, setNotice] = useState<string>();
@@ -107,12 +111,26 @@ export function CertificatePage() {
         </Card>
       </div>
 
-      {info?.source === 'secret' && (
+      {info && (
+        <div className="mt-6">
+          <Card>
+            <h2 className="mb-1.5 text-lg font-semibold">Automatic certificate (ACME)</h2>
+            <p className="mb-5 text-content-muted">
+              Request the certificate from an ACME server, which renews it before it expires. The built-in certificate
+              stays in use until the first one is issued.
+            </p>
+            {/* Keyed by the read, so the form starts from the settings stored last. */}
+            <AcmeForm key={settled} acme={info.source === 'acme' ? info.acme : undefined} onStored={stored} />
+          </Card>
+        </div>
+      )}
+
+      {(info?.source === 'secret' || info?.source === 'acme') && (
         <div className="mt-6">
           <Card>
             <h2 className="mb-1.5 text-lg font-semibold">Built-in certificate</h2>
             <p className="mb-5 text-content-muted">
-              Go back to the certificate of the built-in certificate authority. The uploaded certificate and a pending signing request are deleted.
+              Go back to the certificate of the built-in certificate authority. An uploaded certificate and a pending signing request are deleted.
             </p>
             {builtinError && <Alert tone="error">{builtinError}</Alert>}
             <Button variant="secondary" onClick={() => setAsking(true)}>Go back to the built-in certificate</Button>

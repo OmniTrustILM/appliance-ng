@@ -92,8 +92,17 @@ rules:
   - apiGroups: [cert-manager.io]
     resources: [certificates, issuers, clusterissuers]
     verbs: [get, list, watch, create, update, patch]
+  # Retrying the ACME certificate after a settings change sets its Issuing condition. Leaving ACME deletes its Issuer
+  # and Certificate.
+  - apiGroups: [cert-manager.io]
+    resources: [certificates/status]
+    verbs: [update]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers]
+    resourceNames: [appliance-acme, appliance-acme-tls]
+    verbs: [delete]
   - apiGroups: [traefik.io]
-    resources: [middlewares, tlsoptions]
+    resources: [middlewares, tlsoptions, ingressroutes]
     verbs: [get, list, watch, create, update, patch]
   - apiGroups: [""]
     resources: [nodes]
@@ -188,15 +197,17 @@ subjects:
     namespace: appliance-system
 ---
 # Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
-# the administrator certificate there and marks its Secret once handed out. The copies of the trust bundle, the
-# registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
+# the administrator certificate there and marks its Secret once handed out. It reads the Keycloak admin Secret and
+# updates the `admin-password` Secret when the console sets a new administrator password. The copies of the trust
+# bundle, the registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
 # dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods. A
 # restore waits for the managed Keycloak, stops it, waits for the ILM pods to go, deletes the CertificateRequests so that
 # cert-manager keeps the restored Secrets, writes those into the live Secrets and loads the dump the same way. The
 # manager issues its own ILM certificate from the administrator CA and registers it once over a port-forward to Core,
-# which answers its bootstrap endpoint only to localhost. The CBOM repository's store keeps its data on a volume claim
-# the manager creates once; turning the repository off deletes its Deployments, Services, the copy of an external
-# store's credentials and the repository's CA Secret.
+# which answers its bootstrap endpoint only to localhost. For the ACME profile of ILM it admits cert-manager to Core's
+# HTTP port through its own network policy, removed when the profile is no longer used. The CBOM repository's store
+# keeps its data on a volume claim the manager creates once; turning the repository off deletes its Deployments,
+# Services, the copy of an external store's credentials and the repository's CA Secret.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -239,6 +250,13 @@ rules:
   - apiGroups: [cert-manager.io]
     resources: [certificaterequests]
     verbs: [list, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    resourceNames: [appliance-acme-to-core]
+    verbs: [patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -966,6 +984,106 @@ spec:
               tls:
                 description: TLSSpec selects the certificate served by the platform.
                 properties:
+                  acme:
+                    description: ACME configures the automatic certificate when Source
+                      is acme.
+                    properties:
+                      caBundle:
+                        description: CABundle is the PEM bundle that signs the ACME
+                          server's certificate.
+                        format: byte
+                        type: string
+                      directoryUrl:
+                        description: DirectoryURL is the https directory of a custom
+                          ACME server.
+                        type: string
+                      eabKeyId:
+                        description: EABKeyID is the key ID of the external account
+                          binding.
+                        type: string
+                      eabSecretRef:
+                        description: EABSecretRef names the Secret that holds the
+                          binding's HMAC key under the key hmac.
+                        properties:
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      email:
+                        description: Email is the contact of the ACME account.
+                        type: string
+                      ilmProfile:
+                        description: ILMProfile requests the certificate from the
+                          ACME profile of this appliance's ILM.
+                        properties:
+                          profileName:
+                            default: appliance
+                            description: ProfileName is the name of the ACME profile
+                              in ILM.
+                            type: string
+                          raProfileUuid:
+                            type: string
+                          vaultProfileUuid:
+                            type: string
+                          vaultUuid:
+                            type: string
+                        required:
+                        - raProfileUuid
+                        - vaultProfileUuid
+                        - vaultUuid
+                        type: object
+                      solver:
+                        description: Solver proves control of the host names; ILMProfile
+                          ignores it.
+                        properties:
+                          dns01:
+                            description: DNS01 configures the DNS provider when Type
+                              is dns01.
+                            properties:
+                              config:
+                                additionalProperties:
+                                  type: string
+                                description: Config holds the provider's settings
+                                  that are not secret.
+                                type: object
+                              credentialsSecretRef:
+                                description: CredentialsSecretRef names the Secret
+                                  that holds the provider's secret settings.
+                                properties:
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              provider:
+                                description: |-
+                                  Provider is one of cert-manager's DNS-01 providers: rfc2136, cloudflare, route53, azuredns, clouddns,
+                                  digitalocean, acmedns or akamai.
+                                type: string
+                            required:
+                            - provider
+                            type: object
+                          type:
+                            default: http01
+                            enum:
+                            - http01
+                            - dns01
+                            type: string
+                        type: object
+                    type: object
                   secretRef:
                     description: SecretRef names the Secret holding the certificate
                       when Source is secret.
@@ -975,6 +1093,7 @@ spec:
                     enum:
                     - builtin
                     - secret
+                    - acme
                     type: string
                 type: object
                 x-kubernetes-validations:
@@ -1147,6 +1266,32 @@ spec:
                 type: array
                 x-kubernetes-list-map-keys:
                 - type
+                x-kubernetes-list-type: map
+              connectors:
+                description: Connectors is the state of every chosen connector, with
+                  the problem of a failed one.
+                items:
+                  description: ConnectorState is the state of one chosen connector.
+                  properties:
+                    name:
+                      type: string
+                    problem:
+                      description: Problem is a fixed text, never a message of the
+                        operator; set only for a failed connector.
+                      type: string
+                    state:
+                      enum:
+                      - ready
+                      - waiting
+                      - failed
+                      type: string
+                  required:
+                  - name
+                  - state
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
                 x-kubernetes-list-type: map
               dataVolume:
                 description: DataVolume is the size and free space of the data volume;

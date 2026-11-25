@@ -2,38 +2,44 @@ package firstboot
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"log/slog"
-	"strings"
 	"time"
 )
 
-// consoleLine is the line shown on the local console. It carries only public information.
-func consoleLine(version, hostName, nodeIP string, state State) string {
-	if nodeIP == "" {
-		nodeIP = "unknown"
-	}
-	return fmt.Sprintf("ILM appliance %s: https://%s (node %s), state %s\n", version, hostName, nodeIP, state)
-}
+// consoleWidth is the width of the text console.
+const consoleWidth = 80
 
-// runConsole writes the console line, or the lines set for the current state, every interval and on each change
-// until ctx is done. The line shows the host name of the Appliance once it is known, defaultHostName until then.
-func runConsole(ctx context.Context, w io.Writer, log *slog.Logger, version, defaultHostName string, interval time.Duration, s *StatusStore) {
+// runConsole draws the console screen every interval, because kernel messages may scroll over it, and on each
+// change until ctx is done. It brings the console to the front at the start and on each state change through
+// d.SwitchVT, which may be nil, until the ready state was shown once. After that it never switches again, so the
+// operator can stay on another console, such as the Talos dashboard. The screen shows the host name of the Appliance
+// once it is known, d.HostName until then. A switch that fails is logged once as a warning and otherwise ignored.
+func runConsole(ctx context.Context, d Deps, interval time.Duration, s *StatusStore) {
+	w, log, switchVT := d.Console, d.Log, d.SwitchVT
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var shown State
+	started, warned, readyShown := false, false, false
 	for {
 		state, ip, hostName, lines := s.consoleView()
 		if hostName == "" {
-			hostName = defaultHostName
+			hostName = d.HostName
 		}
-		text := consoleLine(version, hostName, ip, state)
-		if lines != nil {
-			text = strings.Join(lines, "\n") + "\n"
-		}
-		if _, err := io.WriteString(w, text); err != nil {
+		if _, err := io.WriteString(w, renderScreen(consoleWidth, d.Version, hostName, ip, state, lines)); err != nil {
 			log.Debug("console write failed", "error", err)
 		}
+		if switchVT != nil && !readyShown && (!started || state != shown) {
+			if err := switchVT(consoleVT); err != nil {
+				if !warned {
+					log.Warn("cannot bring the console to the front", "error", err)
+					warned = true
+				} else {
+					log.Debug("cannot bring the console to the front", "error", err)
+				}
+			}
+		}
+		started, shown = true, state
+		readyShown = readyShown || state == StateReady
 		select {
 		case <-ctx.Done():
 			return

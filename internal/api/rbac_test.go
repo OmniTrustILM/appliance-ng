@@ -43,6 +43,12 @@ func TestAPIRunsWithTheManagerRBAC(t *testing.T) {
 	wantStatus(t, h.request(http.MethodGet, "/appliance/api/v1/ca.pem", nil, nil), http.StatusNotFound)
 	createAdminSecret(t, newAdminCredential(t, pkcs1))
 	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", map[string]string{"password": credentialPassword}, s), http.StatusOK)
+	createAdminPasswordSecret(t)
+	wantStatus(t, h.request(http.MethodPost, pathAdminPassword, nil, s), http.StatusOK)
+	setPlatformReady(t)
+	createKeycloakAdminSecret(t)
+	h.srv.deps.KeycloakURL = newFakeKeycloak(t).url
+	wantStatus(t, h.request(http.MethodPut, pathAdminPassword, nil, s), http.StatusOK)
 	node := NodeUpdate{Dns: []string{"192.0.2.53"}, Ntp: []string{}}
 	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/node", node, s), http.StatusAccepted)
 	h.withTalos(&fakeTalos{}, nil)

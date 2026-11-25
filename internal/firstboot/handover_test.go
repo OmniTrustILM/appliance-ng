@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -217,6 +218,54 @@ func TestFirstbootRecreatesHandoverSecretWhileFileExists(t *testing.T) {
 	}
 }
 
+func TestHandOverAnswersSplitsTheSetupCertificate(t *testing.T) {
+	const content = `{"version":1,"admin":{"user":"admin"},"tls":{"certPEM":"CERT-MARKER","keyPEM":"KEY-MARKER"}}`
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := &fakeCluster{}
+	node.handover = []byte(content)
+	h := newHarness(node, cluster)
+	h.start(t)
+
+	eventually(t, "both Secrets", func() bool { return len(cluster.createdSecrets()) >= 2 })
+	h.stop(t)
+
+	secrets := cluster.createdSecrets()
+	tlsSecret, answers := secrets[0], secrets[1]
+	if tlsSecret.Namespace != setup.HandoverSecretNamespace || tlsSecret.Name != setup.SetupTLSSecretName ||
+		tlsSecret.Type != corev1.SecretTypeTLS || string(tlsSecret.Data[corev1.TLSCertKey]) != "CERT-MARKER" ||
+		string(tlsSecret.Data[corev1.TLSPrivateKeyKey]) != "KEY-MARKER" {
+		t.Errorf("setup certificate Secret %s/%s type %s keys %v", tlsSecret.Namespace, tlsSecret.Name, tlsSecret.Type,
+			slices.Collect(maps.Keys(tlsSecret.Data)))
+	}
+	if answers.Name != setup.HandoverSecretName {
+		t.Fatalf("second Secret is %s, want the hand-over Secret", answers.Name)
+	}
+	if got := string(answers.Data[setup.HandoverSecretKey]); strings.Contains(got, "tls") || strings.Contains(got, "MARKER") ||
+		!strings.Contains(got, `"admin"`) {
+		t.Errorf("hand-over Secret holds %q, want the answers without the certificate", got)
+	}
+	if strings.Contains(h.log.String(), "KEY-MARKER") || strings.Contains(h.store.Get().Message, "KEY-MARKER") {
+		t.Error("the key is quoted in the log or status")
+	}
+}
+
+func TestHandOverAnswersWithoutCertificateCreatesNoTLSSecret(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
+	cluster := &fakeCluster{}
+	node.handover = []byte(handoverContent)
+	h := newHarness(node, cluster)
+	h.start(t)
+
+	eventually(t, "the hand-over Secret", func() bool { return len(cluster.createdSecrets()) >= 1 })
+	h.stop(t)
+
+	for _, s := range cluster.createdSecrets() {
+		if s.Name == setup.SetupTLSSecretName {
+			t.Error("created a setup certificate Secret for a file without one")
+		}
+	}
+}
+
 func TestRunWaitsForTheImportedAppliance(t *testing.T) {
 	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, kubeconfig: []byte("kubeconfig")}
 	cluster := &fakeCluster{}
@@ -279,6 +328,6 @@ func TestRunShowsTheApplianceHostName(t *testing.T) {
 	h := newHarness(node, cluster)
 	h.start(t)
 
-	want := "ILM appliance v-test: https://" + existingHostName + " (node 10.0.2.15), state ready\n"
+	want := "https://" + existingHostName + " (node 10.0.2.15)\n"
 	eventually(t, "the Appliance host name on the console", func() bool { return strings.Contains(h.console.String(), want) })
 }

@@ -74,6 +74,13 @@ func IsUnauthorized(err error) bool {
 	return errors.As(err, &e) && e.Status == http.StatusUnauthorized
 }
 
+// IsRefusal tells whether ILM answered that it will not do what was asked: the request is invalid or conflicts with
+// what ILM holds. An unavailable ILM and a request that got no answer are not refusals.
+func IsRefusal(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && (e.Status == http.StatusBadRequest || e.Status == http.StatusConflict || e.Status == http.StatusUnprocessableEntity)
+}
+
 // networkReason classifies an error of a request that got no answer.
 func networkReason(err error) string {
 	var (

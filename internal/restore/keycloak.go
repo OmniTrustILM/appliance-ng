@@ -1,73 +1,26 @@
 package restore
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
-
-	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/keycloak"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
-// The managed Keycloak as operator v1.1.0 and the Keycloak operator make it: its Service in the platform namespace,
-// which serves plain HTTP behind the ILM gateway under a base path and admits any source on that port, and the realm
-// of ILM.
+// logoutURIsAttribute holds a Keycloak client's post-logout redirect URIs, logoutURIsSeparator apart.
 const (
-	keycloakService  = keycloakName + "-service"
-	keycloakPort     = "8080"
-	keycloakBasePath = "/kc"
-	keycloakRealm    = platform.Name
-	// keycloakAdminClient is the master realm's client of Keycloak's administration tools.
-	keycloakAdminClient = "admin-cli"
-	// logoutURIsAttribute holds a client's post-logout redirect URIs, logoutURIsSeparator apart.
 	logoutURIsAttribute = "post.logout.redirect.uris"
 	logoutURIsSeparator = "##"
-	keycloakTimeout     = 30 * time.Second
-	// maxKeycloakAnswer caps an answer of Keycloak read into memory.
-	maxKeycloakAnswer = 8 << 20
 )
-
-// errKeycloakUnavailable marks a Keycloak that does not answer, or answers with a server error, as while it starts.
-var errKeycloakUnavailable = errors.New("keycloak is not available")
 
 // The fields of a Keycloak client that hold URLs, which may name the ILM host.
 var clientURLFields = []string{"rootUrl", "baseUrl", "adminUrl", "redirectUris", "webOrigins"}
-
-// keycloakURL is the base URL of the managed Keycloak: the one of the Deps, else the cluster IP of its Service. The
-// manager runs in the host network, where the cluster's DNS does not answer.
-func (e *Engine) keycloakURL(ctx context.Context) (string, error) {
-	if e.deps.KeycloakURL != "" {
-		return e.deps.KeycloakURL, nil
-	}
-	svc := &corev1.Service{}
-	if err := e.deps.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: keycloakService}, svc); err != nil {
-		return "", fmt.Errorf("read service %s/%s: %w", platform.Namespace, keycloakService, err)
-	}
-	ip := svc.Spec.ClusterIP
-	if ip == "" || ip == corev1.ClusterIPNone {
-		return "", fmt.Errorf("service %s/%s has no cluster IP", platform.Namespace, keycloakService)
-	}
-	u := url.URL{Scheme: "http", Host: net.JoinHostPort(ip, keycloakPort), Path: keycloakBasePath}
-	return u.String(), nil
-}
-
-// keycloakHTTPClient reaches Keycloak directly, never through a proxy of the environment.
-func keycloakHTTPClient() *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	return &http.Client{Timeout: keycloakTimeout, Transport: transport}
-}
 
 // rehostKeycloak moves the URLs of the Keycloak clients of ILM from the backup's ILM host name to this appliance's.
 // The realm comes back with the database, and the operator imports its own realm only once, so without this the
@@ -97,14 +50,14 @@ func (e *Engine) rehostKeycloak(ctx context.Context, j *job) error {
 	if admin == nil {
 		return fmt.Errorf("secret %s/%s not found", platform.Namespace, platform.KeycloakAdminSecret)
 	}
-	base, err := e.keycloakURL(ctx)
+	base, err := keycloak.URL(ctx, e.deps.Client, e.deps.KeycloakURL)
 	if err != nil {
 		return err
 	}
-	kc := keycloak{base: base, client: e.deps.HTTPClient, user: string(admin.Data["username"]), password: string(admin.Data["password"])}
+	kc := keycloak.Admin{Base: base, Client: e.deps.HTTPClient, User: string(admin.Data["username"]), Password: string(admin.Data["password"])}
 	return e.waitFor(ctx, "Keycloak", func(ctx context.Context) (bool, error) {
-		moved, err := kc.rehost(ctx, from, to)
-		if errors.Is(err, errKeycloakUnavailable) {
+		moved, err := rehost(ctx, kc, from, to)
+		if errors.Is(err, keycloak.ErrUnavailable) {
 			return false, nil
 		}
 		if err != nil {
@@ -123,23 +76,16 @@ func ilmHost(spec v1alpha1.ApplianceSpec) string {
 	return spec.Node.HostName
 }
 
-// keycloak calls the admin REST API of Keycloak at base as the master realm's administrator. Its errors name the
-// request and the HTTP status, never a credential or an answer.
-type keycloak struct {
-	base, user, password string
-	client               *http.Client
-}
-
 // rehost moves the URLs of every client of the ILM realm from the host from to the host to and returns how many
 // clients changed. A client whose URLs do not name from is left alone, so rehost can run again.
-func (k keycloak) rehost(ctx context.Context, from, to string) (int, error) {
-	token, err := k.token(ctx)
+func rehost(ctx context.Context, k keycloak.Admin, from, to string) (int, error) {
+	token, err := k.Token(ctx)
 	if err != nil {
 		return 0, err
 	}
-	clientsPath := "/admin/realms/" + keycloakRealm + "/clients"
+	clientsPath := "/admin/realms/" + keycloak.Realm + "/clients"
 	var clients []map[string]any
-	if err := k.call(ctx, http.MethodGet, clientsPath, token, nil, &clients); err != nil {
+	if err := k.Call(ctx, http.MethodGet, clientsPath, token, nil, &clients); err != nil {
 		return 0, err
 	}
 	moved := 0
@@ -148,75 +94,12 @@ func (k keycloak) rehost(ctx context.Context, from, to string) (int, error) {
 			continue
 		}
 		id, _ := c["id"].(string)
-		if err := k.call(ctx, http.MethodPut, clientsPath+"/"+url.PathEscape(id), token, c, nil); err != nil {
+		if err := k.Call(ctx, http.MethodPut, clientsPath+"/"+url.PathEscape(id), token, c, nil); err != nil {
 			return moved, err
 		}
 		moved++
 	}
 	return moved, nil
-}
-
-// token signs in to the master realm and returns the access token.
-func (k keycloak) token(ctx context.Context) (string, error) {
-	form := url.Values{"grant_type": {"password"}, "client_id": {keycloakAdminClient}, "username": {k.user}, "password": {k.password}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, k.base+"/realms/master/protocol/openid-connect/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	var answer struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := k.do(req, &answer); err != nil {
-		return "", err
-	}
-	if answer.AccessToken == "" {
-		return "", errors.New("keycloak answered the sign-in without a token")
-	}
-	return answer.AccessToken, nil
-}
-
-// call sends body as JSON to the admin path with token and decodes the answer into out, when set.
-func (k keycloak) call(ctx context.Context, method, path, token string, body, out any) error {
-	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(data)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, k.base+path, reader)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return k.do(req, out)
-}
-
-func (k keycloak) do(req *http.Request, out any) error {
-	res, err := k.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("%w: %s %s", errKeycloakUnavailable, req.Method, req.URL.Path)
-	}
-	defer func() { _ = res.Body.Close() }()
-	switch {
-	case res.StatusCode >= http.StatusInternalServerError:
-		return fmt.Errorf("%w: %s %s answered HTTP %d", errKeycloakUnavailable, req.Method, req.URL.Path, res.StatusCode)
-	case res.StatusCode >= http.StatusMultipleChoices:
-		return fmt.Errorf("keycloak: %s %s answered HTTP %d", req.Method, req.URL.Path, res.StatusCode)
-	case out == nil:
-		return nil
-	}
-	decoder := json.NewDecoder(io.LimitReader(res.Body, maxKeycloakAnswer))
-	decoder.UseNumber()
-	if err := decoder.Decode(out); err != nil {
-		return fmt.Errorf("keycloak: %s %s: the answer is not the expected JSON", req.Method, req.URL.Path)
-	}
-	return nil
 }
 
 // rehostClient moves the URLs of the client c, a Keycloak ClientRepresentation, from the host from to the host to,

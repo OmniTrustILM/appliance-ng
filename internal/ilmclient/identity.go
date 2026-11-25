@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -78,6 +79,9 @@ type Identity struct {
 	// Backups, when set, keeps a renewal apart from a backup, so that a backup never holds a certificate that its
 	// database no longer accepts.
 	Backups Exclusive
+
+	// mu keeps the callers of Ensure from registering or renewing at once.
+	mu sync.Mutex
 }
 
 // Exclusive runs a function while no backup runs and refuses without running it while one does.
@@ -100,6 +104,8 @@ type identity struct {
 // certificate that expires within renewBefore is renewed for the same user. A valid certificate that ILM refuses
 // gives the client's authFailed on the calls.
 func (i *Identity) Ensure(ctx context.Context, edge, ilmHost string, roots *x509.CertPool) (*Client, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	ca, err := i.adminCA(ctx)
 	if err != nil {
 		return nil, err

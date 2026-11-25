@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -37,6 +38,7 @@ const (
 const (
 	TLSSourceBuiltin = "builtin"
 	TLSSourceSecret  = "secret"
+	TLSSourceACME    = "acme"
 )
 
 // Mail transport security modes of MailSpec.Security.
@@ -131,13 +133,83 @@ type ProxySpec struct {
 // TLSSpec selects the certificate served by the platform.
 // +kubebuilder:validation:XValidation:rule="self.source != 'secret' || (has(self.secretRef) && size(self.secretRef) > 0)",message="tls.secretRef is required when tls.source is secret"
 type TLSSpec struct {
-	// +kubebuilder:validation:Enum=builtin;secret
+	// +kubebuilder:validation:Enum=builtin;secret;acme
 	// +kubebuilder:default=builtin
 	// +optional
 	Source string `json:"source,omitempty"`
 	// SecretRef names the Secret holding the certificate when Source is secret.
 	// +optional
 	SecretRef string `json:"secretRef,omitempty"`
+	// ACME configures the automatic certificate when Source is acme.
+	// +optional
+	ACME *ACMESpec `json:"acme,omitempty"`
+}
+
+// Solvers of ACMESolver.Type.
+const (
+	ACMESolverHTTP01 = "http01"
+	ACMESolverDNS01  = "dns01"
+)
+
+// ACMESpec is the ACME server the platform certificate is requested from: the one at DirectoryURL, or ILM through
+// ILMProfile. Exactly one of them is set.
+type ACMESpec struct {
+	// DirectoryURL is the https directory of a custom ACME server.
+	// +optional
+	DirectoryURL string `json:"directoryUrl,omitempty"`
+	// Email is the contact of the ACME account.
+	// +optional
+	Email string `json:"email,omitempty"`
+	// EABKeyID is the key ID of the external account binding.
+	// +optional
+	EABKeyID string `json:"eabKeyId,omitempty"`
+	// EABSecretRef names the Secret that holds the binding's HMAC key under the key hmac.
+	// +optional
+	EABSecretRef *corev1.LocalObjectReference `json:"eabSecretRef,omitempty"`
+	// CABundle is the PEM bundle that signs the ACME server's certificate.
+	// +optional
+	CABundle []byte `json:"caBundle,omitempty"`
+	// Solver proves control of the host names; ILMProfile ignores it.
+	// +optional
+	Solver ACMESolver `json:"solver,omitempty"`
+	// ILMProfile requests the certificate from the ACME profile of this appliance's ILM.
+	// +optional
+	ILMProfile *ILMACMEProfile `json:"ilmProfile,omitempty"`
+}
+
+// ACMESolver is the challenge that proves control of a host name.
+type ACMESolver struct {
+	// +kubebuilder:validation:Enum=http01;dns01
+	// +kubebuilder:default=http01
+	// +optional
+	Type string `json:"type,omitempty"`
+	// DNS01 configures the DNS provider when Type is dns01.
+	// +optional
+	DNS01 *DNS01Solver `json:"dns01,omitempty"`
+}
+
+// DNS01Solver is a DNS provider that answers the DNS-01 challenge.
+type DNS01Solver struct {
+	// Provider is one of cert-manager's DNS-01 providers: rfc2136, cloudflare, route53, azuredns, clouddns,
+	// digitalocean, acmedns or akamai.
+	Provider string `json:"provider"`
+	// Config holds the provider's settings that are not secret.
+	// +optional
+	Config map[string]string `json:"config,omitempty"`
+	// CredentialsSecretRef names the Secret that holds the provider's secret settings.
+	// +optional
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef,omitempty"`
+}
+
+// ILMACMEProfile is the ACME profile of ILM that issues the certificate.
+type ILMACMEProfile struct {
+	RAProfileUUID    string `json:"raProfileUuid"`
+	VaultUUID        string `json:"vaultUuid"`
+	VaultProfileUUID string `json:"vaultProfileUuid"`
+	// ProfileName is the name of the ACME profile in ILM.
+	// +kubebuilder:default=appliance
+	// +optional
+	ProfileName string `json:"profileName,omitempty"`
 }
 
 // SecretKeyRef references a key of a Secret.
@@ -449,6 +521,21 @@ type ApplianceStatus struct {
 	// Restore is the latest restore of a backup; unset until one starts.
 	// +optional
 	Restore *RestoreStatus `json:"restore,omitempty"`
+	// Connectors is the state of every chosen connector, with the problem of a failed one.
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Connectors []ConnectorState `json:"connectors,omitempty"`
+}
+
+// ConnectorState is the state of one chosen connector.
+type ConnectorState struct {
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=ready;waiting;failed
+	State string `json:"state"`
+	// Problem is a fixed text, never a message of the operator; set only for a failed connector.
+	// +optional
+	Problem string `json:"problem,omitempty"`
 }
 
 // BackupStatus is the observed state of the backups.

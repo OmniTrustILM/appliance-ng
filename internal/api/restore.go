@@ -16,6 +16,9 @@ import (
 
 	"filippo.io/age"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
@@ -62,6 +65,11 @@ var (
 		"Backups are uploaded or fetched only on a fresh appliance that waits for a restore; restore a local backup in place from the Backups page.")
 	answerInPlaceOnly = refused(http.StatusConflict, codeSetup,
 		"A local backup is restored in place on an appliance whose setup is complete.")
+	answerNotRestoring   = refused(http.StatusConflict, "not_restoring", "The appliance is not waiting for a restore.")
+	answerRestoreStarted = refused(http.StatusConflict, "restore_started",
+		"A restore was started on this appliance; install it again to set up a new appliance.")
+	answerHandoverPending = refused(http.StatusConflict, "handover_pending",
+		"The appliance is still taking over the setup answers; try again in a minute.")
 	answerRestoreBusy = refused(http.StatusConflict, codeRestoreBusy,
 		"The appliance is handling a restore or another backup for it; try again once that has finished.")
 
@@ -141,6 +149,9 @@ func (a restoreAnswer) VisitPostRestoreInspectResponse(w http.ResponseWriter) er
 }
 func (a restoreAnswer) VisitPostRestoreStartResponse(w http.ResponseWriter) error  { return a.visit(w) }
 func (a restoreAnswer) VisitPostRestoreResumeResponse(w http.ResponseWriter) error { return a.visit(w) }
+func (a restoreAnswer) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
+	return a.visit(w)
+}
 
 // refusal is the code of a refusing answer; empty for one that is not refused.
 func (a restoreAnswer) refusal() string {
@@ -541,4 +552,51 @@ func (s *Server) uploaded(name string) (string, *restoreAnswer, error) {
 		return "", &answerNoBackup, nil
 	}
 	return file, nil, nil
+}
+
+// PostRestoreAbandon gives up the restore a fresh appliance waits for and continues with part 2 of the setup. Once a
+// restore was started the appliance holds part of the backup's state, so it is refused; so is an abandon before the
+// hand-over of the setup answers completed, which would be undone.
+func (s *Server) PostRestoreAbandon(ctx context.Context, _ PostRestoreAbandonRequestObject) (PostRestoreAbandonResponseObject, error) {
+	if !s.restoreMu.TryLock() {
+		return answered(ctx, map[string]string{}, answerRestoreBusy), nil
+	}
+	defer s.restoreMu.Unlock()
+	var refusal *restoreAnswer
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		refusal = nil
+		a, err := s.appliance(ctx)
+		if err != nil {
+			return err
+		}
+		switch {
+		case a.Status.Setup != v1alpha1.SetupRestore:
+			refusal = &answerNotRestoring
+			return nil
+		case a.Status.Restore != nil:
+			refusal = &answerRestoreStarted
+			return nil
+		case !meta.IsStatusConditionTrue(a.Status.Conditions, v1alpha1.ConditionHandoverComplete):
+			refusal = &answerHandoverPending
+			return nil
+		}
+		a.Status.Setup = v1alpha1.SetupPart2
+		return s.deps.Client.Status().Update(ctx, a, client.FieldOwner(FieldManager))
+	})
+	if apierrors.IsNotFound(err) {
+		answer := restoreAnswer{status: http.StatusConflict, body: Error(notSetUp())}
+		refusal, err = &answer, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if refusal != nil {
+		return answered(ctx, map[string]string{}, *refusal), nil
+	}
+	s.forgetInspection()
+	if err := removeAllBut(s.deps.RestoreDir, ""); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.deps.Log.Warn("could not remove the backup of the restore given up", "failure", backup.Describe(err))
+	}
+	s.deps.Log.Info("restore given up from the console; setup continues with part 2", "user", requestFrom(ctx).user)
+	return PostRestoreAbandon204Response{}, nil
 }

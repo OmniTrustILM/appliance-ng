@@ -9,9 +9,15 @@ import { attempt, failureMessage, unreachable } from './failure';
 
 export type Mode = 'new' | 'restore';
 
+export const modeLabels: Record<Mode, string> = { new: 'New appliance', restore: 'Restore from a backup' };
+
 /** Asks whether this is a new appliance or one that restores a backup. */
-export function ModePage({ onDone, onExpired }: Readonly<{ onDone: (mode: Mode) => void; onExpired: () => void }>) {
-  const [mode, setMode] = useState<Mode>('new');
+export function ModePage({ initial = 'new', onDone, onExpired }: Readonly<{
+  initial?: Mode;
+  onDone: (mode: Mode) => void;
+  onExpired: () => void;
+}>) {
+  const [mode, setMode] = useState<Mode>(initial);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
 
@@ -34,7 +40,7 @@ export function ModePage({ onDone, onExpired }: Readonly<{ onDone: (mode: Mode) 
         <ChoiceField
           type="radio"
           name="mode"
-          label="New appliance"
+          label={modeLabels.new}
           description="Choose the ILM components in the next part of the setup."
           checked={mode === 'new'}
           onChange={() => setMode('new')}
@@ -42,7 +48,7 @@ export function ModePage({ onDone, onExpired }: Readonly<{ onDone: (mode: Mode) 
         <ChoiceField
           type="radio"
           name="mode"
-          label="Restore from a backup"
+          label={modeLabels.restore}
           description="Sign in after the installation and restore a backup with the recovery kit."
           checked={mode === 'restore'}
           onChange={() => setMode('restore')}
