@@ -33,6 +33,7 @@ function open(routes: Parameters<typeof stubApi>[0]) {
         <Route path="/wizard/*" element={<WizardFlow />} />
         <Route path="/wizard/done" element={<p>done page</p>} />
         <Route path="/" element={<p>status page</p>} />
+        <Route path="/restore" element={<p>restore page</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -197,8 +198,24 @@ describe('WizardFlow', () => {
     expect(await screen.findByText('status page')).toBeInTheDocument();
   });
 
+  it('goes to the restore page when a restore is pending', async () => {
+    open({ 'GET /appliance/api/v1/status': [200, { ...part2, setup: 'restore' }] });
+    expect(await screen.findByText('restore page')).toBeInTheDocument();
+    expect(screen.queryByLabelText('ILM host name')).not.toBeInTheDocument();
+  });
+
+  it('shows the message of a refused submit', async () => {
+    const message = 'The appliance is waiting for a restore.';
+    open({ 'PUT /appliance/api/v1/wizard/platform': [409, { code: 'restore_pending', message }] });
+    await screen.findByLabelText('ILM host name');
+    for (let i = 0; i < 5; i++) await next();
+    await userEvent.click(screen.getByRole('button', { name: 'Install' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.queryByText(/not at this step/)).not.toBeInTheDocument();
+  });
+
   it('shows a general message for other answers and when the appliance cannot be reached', async () => {
-    open({ 'PUT /appliance/api/v1/wizard/platform': [409, { code: 'not_set_up', message: 'x' }] });
+    open({ 'PUT /appliance/api/v1/wizard/platform': [409] });
     await screen.findByLabelText('ILM host name');
     for (let i = 0; i < 5; i++) await next();
     await userEvent.click(screen.getByRole('button', { name: 'Install' }));

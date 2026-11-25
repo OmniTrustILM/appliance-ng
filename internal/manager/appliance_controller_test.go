@@ -18,6 +18,7 @@ import (
 	"time"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -522,6 +523,14 @@ func TestReconcileCopiesOnlyTheReferencedTrustKey(t *testing.T) {
 
 func TestReconcileCompletesSetupOnce(t *testing.T) {
 	cleanCertificates(t)
+	setupCert := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: certs.SetupSecretName},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: []byte("crt"), corev1.TLSPrivateKeyKey: []byte("key")},
+	}
+	if err := testClient.Create(context.Background(), setupCert); err != nil {
+		t.Fatal(err)
+	}
 	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}, Platform: platformSpec()})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	runReconcile(t, r)
@@ -533,6 +542,10 @@ func TestReconcileCompletesSetupOnce(t *testing.T) {
 		t.Errorf("setup = %q, want part2 while the operator has not observed the generation", a.Status.Setup)
 	}
 
+	if err := testClient.Get(context.Background(), client.ObjectKeyFromObject(setupCert), &corev1.Secret{}); err != nil {
+		t.Errorf("setup certificate Secret read = %v, want it kept while setup runs", err)
+	}
+
 	setAvailable(t, metav1.ConditionTrue, getPlatform(t).Generation)
 	if res := runReconcile(t, r); res.RequeueAfter != resync {
 		t.Errorf("requeue after %v, want %v to repeat the add-on pass", res.RequeueAfter, resync)
@@ -540,6 +553,9 @@ func TestReconcileCompletesSetupOnce(t *testing.T) {
 	a := getAppliance(t)
 	if a.Status.Setup != v1alpha1.SetupComplete {
 		t.Errorf("setup = %q, want complete", a.Status.Setup)
+	}
+	if err := testClient.Get(context.Background(), client.ObjectKeyFromObject(setupCert), &corev1.Secret{}); !apierrors.IsNotFound(err) {
+		t.Errorf("setup certificate Secret read = %v, want it deleted once setup is complete", err)
 	}
 	if c := condition(t, a, v1alpha1.ConditionPlatformReady); c.Status != metav1.ConditionTrue {
 		t.Errorf("PlatformReady = %+v, want True", c)
@@ -959,5 +975,114 @@ func TestReconcileSchedulesTheBackupTargets(t *testing.T) {
 	runReconcile(t, r)
 	if len(schedule.synced) != 2 || len(schedule.synced[1]) != 0 {
 		t.Errorf("scheduled %+v, want no targets after their removal", schedule.synced)
+	}
+}
+
+func TestReconcileRemovesTheSetupCertificateOfACompleteSetup(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}})
+	a := getAppliance(t)
+	a.Status.Setup = v1alpha1.SetupComplete
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r) // no Secret: nothing to remove, no error
+
+	setupCert := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: certs.SetupSecretName},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: []byte("crt"), corev1.TLSPrivateKeyKey: []byte("key")},
+	}
+	if err := testClient.Create(context.Background(), setupCert); err != nil {
+		t.Fatal(err)
+	}
+	runReconcile(t, r)
+	if err := testClient.Get(context.Background(), client.ObjectKeyFromObject(setupCert), &corev1.Secret{}); !apierrors.IsNotFound(err) {
+		t.Errorf("setup certificate Secret read = %v, want it deleted when the setup was already complete", err)
+	}
+}
+
+// connectorWithPod stores a Deployment named after the connector, with a pod it selects that waits with reason.
+func connectorWithPod(t *testing.T, name, reason string) {
+	t.Helper()
+	ctx := context.Background()
+	labels := map[string]string{"app": name}
+	podSpec := corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "registry.example/" + name + ":1"}}}
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: name},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: podSpec},
+		},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: name + "-0", Labels: labels}, Spec: podSpec}
+	for _, obj := range []client.Object{deploy, pod} {
+		if err := testClient.Create(ctx, obj); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(ctx, obj) })
+	}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:  "main",
+		State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}},
+	}}
+	if err := testClient.Status().Update(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileReportsWhyAConnectorsPodFails(t *testing.T) {
+	const name = "software-cryptography-provider"
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec(name)})
+	connectorWithPod(t, name, "ImagePullBackOff")
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+
+	a := getAppliance(t)
+	want := v1alpha1.ConnectorState{Name: name, State: connectorStateFailed, Problem: problemImagePull}
+	if len(a.Status.Connectors) != 1 || a.Status.Connectors[0] != want {
+		t.Errorf("connectors = %+v, want [%+v]", a.Status.Connectors, want)
+	}
+	if c := condition(t, a, v1alpha1.ConditionConnectorsReady); c.Reason != reasonFailed || !strings.Contains(c.Message, problemImagePull) {
+		t.Errorf("ConnectorsReady = %+v, want %s with %q", c, reasonFailed, problemImagePull)
+	}
+}
+
+func TestReconcileRepeatsSoonWhileAConnectorIsWaiting(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}, Platform: platformSpec("software-cryptography-provider")})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	issue(t)
+
+	if res := runReconcile(t, r); res.RequeueAfter != addonsRequeue {
+		t.Errorf("requeue after %v, want %v: pods are not watched, so a failing connector is looked for again", res.RequeueAfter, addonsRequeue)
+	}
+}
+
+// deploymentFailingReader fails the reads of Deployments only.
+type deploymentFailingReader struct{ client.Reader }
+
+func (r deploymentFailingReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*appsv1.Deployment); ok {
+		return errors.New("connection refused")
+	}
+	return r.Reader.Get(ctx, key, obj, opts...)
+}
+
+func TestReconcileCarriesOnWhenAConnectorsPodsCannotBeRead(t *testing.T) {
+	const name = "software-cryptography-provider"
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec(name)})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	r.APIReader = deploymentFailingReader{Reader: testClient}
+	runReconcile(t, r)
+
+	a := getAppliance(t)
+	if len(a.Status.Connectors) != 1 || a.Status.Connectors[0].State != connectorStateWaiting {
+		t.Errorf("connectors = %+v, want %s waiting without its pods", a.Status.Connectors, name)
+	}
+	if c := condition(t, a, v1alpha1.ConditionPlatformReady); c.Reason == reasonFailed {
+		t.Errorf("PlatformReady = %+v, want the diagnostic read not to fail the platform", c)
 	}
 }

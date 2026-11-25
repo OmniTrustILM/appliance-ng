@@ -11,7 +11,11 @@ import { adminProblems } from './validate';
 type Errors = Partial<Record<string, string>>;
 
 /** Asks for the administrator account of the appliance. */
-export function AdminPage({ onDone, onExpired }: Readonly<{ onDone: (user: string) => void; onExpired: () => void }>) {
+export function AdminPage({ onBack, onDone, onExpired }: Readonly<{
+  onBack: () => void;
+  onDone: (user: string) => void;
+  onExpired: () => void;
+}>) {
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -38,7 +42,10 @@ export function AdminPage({ onDone, onExpired }: Readonly<{ onDone: (user: strin
 
   return (
     <form onSubmit={submit} noValidate>
-      <Card actions={<Button type="submit" busy={busy}>Continue</Button>}>
+      <Card
+        back={<Button variant="secondary" disabled={busy} onClick={onBack}>Back</Button>}
+        actions={<Button type="submit" busy={busy}>Continue</Button>}
+      >
         <PageHeading eyebrow="Setup" title="Administrator" lead="The account that signs in to this console." />
         <Field label="User name" name="user" value={user} onChange={(e) => setUser(e.target.value)} error={errors.user} autoComplete="username" />
         <Field label="Password" name="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} error={errors.password} autoComplete="new-password" />

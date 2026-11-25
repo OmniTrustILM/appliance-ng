@@ -3,10 +3,12 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
+	"strconv"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 )
@@ -31,6 +33,9 @@ func (s *Server) audited(action AuditEntryAction, next http.Handler) http.Handle
 		if req.result != "" {
 			res = req.result
 		}
+		if res != Success {
+			recordFailure(req, held)
+		}
 		switch {
 		case req.unaudited:
 			s.deps.Log.Debug("request refused without an audit entry", "action", action)
@@ -45,6 +50,31 @@ func (s *Server) audited(action AuditEntryAction, next http.Handler) http.Handle
 		w.WriteHeader(held.status())
 		_, _ = w.Write(held.body.Bytes())
 	})
+}
+
+// recordFailure adds why a request failed to its audit entry: the answer's status and, from an Error answer, its
+// code, message and field; a 5xx whose request ID was logged also gets it. The handler's own details win. The
+// request body is never recorded.
+func recordFailure(req *request, held *heldResponse) {
+	status := held.status()
+	details := map[string]string{"status": strconv.Itoa(status)}
+	var answer Error
+	if status >= http.StatusBadRequest && json.Unmarshal(held.body.Bytes(), &answer) == nil {
+		if answer.Code != "" {
+			details["code"] = answer.Code
+		}
+		if answer.Message != "" {
+			details["message"] = answer.Message
+		}
+		if answer.Field != nil {
+			details["field"] = *answer.Field
+		}
+	}
+	if status >= http.StatusInternalServerError && req.id != "" {
+		details["requestId"] = req.id
+	}
+	maps.Copy(details, req.entry.Details)
+	req.entry.Details = details
 }
 
 // writeAudit writes the request's audit entry with res now, for a handler that must not go on without it.

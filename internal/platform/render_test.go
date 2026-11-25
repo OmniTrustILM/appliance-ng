@@ -51,6 +51,8 @@ func TestRenderDefaultMatchesAddonsPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The password method needs the Secret the manager creates, which the shipped manifest cannot hold.
+	got.Spec.RegisterAdmin.Password = nil
 	if !reflect.DeepEqual(got.Spec, want.Spec) {
 		t.Fatalf("spec differs\n got: %+v\nwant: %+v", got.Spec, want.Spec)
 	}
@@ -682,5 +684,50 @@ func TestRenderMessagingTLS(t *testing.T) {
 	a.Spec.Platform.Messaging.CA = &v1alpha1.SecretKeyRef{Name: "appliance-messaging", Key: v1alpha1.CAKey}
 	if _, _, err := Render(a, loadManifest(t), SecretNames{Messaging: "ilm-messaging"}, testNodeIP); err == nil {
 		t.Error("rendered a TLS broker without the trust store copy")
+	}
+}
+
+func TestRenderAdminPassword(t *testing.T) {
+	got, _, err := Render(defaultAppliance(), loadManifest(t), SecretNames{}, testNodeIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := got.Spec.RegisterAdmin
+	if want := (&otilm.AdminPasswordSpec{Enabled: true, SecretRef: AdminPasswordSecret}); !reflect.DeepEqual(admin.Password, want) {
+		t.Errorf("password %+v, want %+v", admin.Password, want)
+	}
+	if admin.Certificate == nil || admin.Username != "admin" {
+		t.Errorf("administrator %+v lost its certificate or username", admin)
+	}
+}
+
+func TestRenderNoAdminPasswordWithExternalIdentity(t *testing.T) {
+	a := defaultAppliance()
+	a.Spec.Platform.Identity = externalAppliance().Spec.Platform.Identity
+
+	got, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.RegisterAdmin.Password != nil {
+		t.Errorf("password %+v with an external identity", got.Spec.RegisterAdmin.Password)
+	}
+}
+
+func TestNewAdminPassword(t *testing.T) {
+	seen := map[string]bool{}
+	for range 200 {
+		p, err := NewAdminPassword()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(p) != 24 || !strings.ContainsAny(p, "-_.") || strings.Trim(p, "-_.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") != "" {
+			t.Fatalf("password %q out of shape", p)
+		}
+		seen[p] = true
+	}
+	if len(seen) != 200 {
+		t.Error("passwords repeat")
 	}
 }

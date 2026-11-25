@@ -70,6 +70,28 @@ describe('AuditPage', () => {
     expect(screen.queryByRole('button', { name: 'Previous' })).toBeDisabled();
   });
 
+  it('shows why a change failed or was denied under its details', async () => {
+    stubApi({
+      'GET /appliance/api/v1/audit': [200, { items: [
+        { time: '2026-11-19T12:00:00Z', user: 'admin', action: 'backup-target-set', result: 'failure', paths: [],
+          details: { name: 'a', status: '409', code: 'busy', message: 'Try again later.' } },
+        { time: '2026-11-19T11:00:00Z', user: 'admin', action: 'wizard-platform', result: 'denied', paths: [],
+          details: { status: '403', code: 'csrf', message: 'The request lacks a valid CSRF token.' } },
+        { time: '2026-11-19T10:00:00Z', user: 'admin', action: 'admin-credential', result: 'failure', paths: [],
+          details: { status: '500', code: 'internal', message: 'The request failed; the manager log has the details.', requestId: '0123456789abcdef' } },
+        { time: '2026-11-19T09:00:00Z', user: 'admin', action: 'kubeconfig-revoke', result: 'success', paths: [], details: { message: 'not a reason' } },
+      ] }],
+    });
+    render(<AuditPage />);
+    const [first, second, third, fourth] = await screen.findAllByRole('row').then((all) => all.slice(1));
+    expect(within(first).getByText('name: a, status: 409, code: busy')).toBeInTheDocument();
+    expect(within(first).getByText('Try again later.')).toBeInTheDocument();
+    expect(within(second).getByText('The request lacks a valid CSRF token.')).toBeInTheDocument();
+    expect(within(third).getByText('Internal error, request 0123456789abcdef')).toBeInTheDocument();
+    expect(within(third).queryByText(/manager log/)).not.toBeInTheDocument();
+    expect(within(fourth).getByText('message: not a reason')).toBeInTheDocument();
+  });
+
   it('pages by cursor from the server', async () => {
     const { queries } = stubAudit(60);
     render(<AuditPage />);

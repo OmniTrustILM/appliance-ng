@@ -22,10 +22,10 @@ addons:
   - { name: rabbitmq-topology-operator, file: rabbitmq-topology-operator.yaml, version: "v1.19.2", source: "https://github.com/rabbitmq/messaging-topology-operator/releases/download/v1.19.2/messaging-topology-operator-with-certmanager.yaml", sha256: "fe7d2c0de03d742dbb583b3885fa422fb9290513b7239fe373d9a798d8fcec0e" }
   - { name: keycloak-operator, file: keycloak-operator.yaml, version: "26.8.1", source: "https://github.com/keycloak/keycloak-k8s-resources/kubernetes/cluster-wide?ref=26.8.1", sha256: "5fe38cf41cb497881af5e6e7d6eb53745bf52877ca210146ef82f8f66df12650" }
   - { name: traefik, file: traefik-crds.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "386400a9cb00fc2c4cd226ac45d32e2cbc96b731fffcfbc2884778970e91c476" }
-  - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "e6abf0691d5bde2a7b70ccb72cd99b603403d95164b6d28f4fb32e75e140bfd6" }
+  - { name: traefik, file: traefik.yaml, version: "42.3.2", source: "helm:https://traefik.github.io/charts/traefik@42.3.2", sha256: "8dcddc1a5a3f0443a7ed4fe437effb6b8e26175e35c19aea22de7fac48423794" }
   - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
   - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "285f95e4430587e27891a5fe49d7d480f220cde49151e563466dfbde37efd4e6" }
-  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "dc9cb943ca9c1d896149f4d58bd1cf1641dc5bf9c8f69a02059c9f0aec553a66" }
+  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "8b0149d9a897d11c32f6e4e981737e247169da3d4c3f611f94a438eb5a3775cd" }
   - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "c85bb9f48bb14f757bbe0666bd98d0b203e718dc4965ff3065c28a63b2d16231" }
 # Helm charts the manager renders itself; the file is relative to addons/.
 charts:

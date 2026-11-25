@@ -39,12 +39,14 @@ type Wizard interface {
 // Manager is the Appliance Manager manifest with its image set; HostName and ILMVersion are the release defaults
 // of the default Appliance, which a node without a hand-over file gets.
 type Deps struct {
-	Node            talos.Node
-	Wizard          Wizard
-	NewCluster      func([]byte) (Cluster, error)
-	Manager         []byte
-	Generate        func(machineconfig.Input) ([]byte, error)
-	Console         io.Writer
+	Node       talos.Node
+	Wizard     Wizard
+	NewCluster func([]byte) (Cluster, error)
+	Manager    []byte
+	Generate   func(machineconfig.Input) ([]byte, error)
+	Console    io.Writer
+	// SwitchVT brings the console to the front; nil leaves the screen in the background.
+	SwitchVT        vtSwitcher
 	Log             *slog.Logger
 	Retry           time.Duration
 	InstallerImage  string
@@ -81,7 +83,7 @@ func Run(ctx context.Context, d Deps, s *StatusStore) error {
 	if interval <= 0 {
 		interval = defaultConsoleInterval
 	}
-	go runConsole(ctx, d.Console, d.Log, d.Version, d.HostName, interval, s)
+	go runConsole(ctx, d, interval, s)
 
 	r := &runner{d: d, s: s}
 	r.run(ctx)

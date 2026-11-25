@@ -468,7 +468,7 @@ func TestEdgeRootsNeedACertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, s) })
-	if _, err := (&ILMReconciler{APIReader: testClient}).edgeRoots(ctx); err == nil {
+	if _, err := edgeRoots(ctx, testClient); err == nil {
 		t.Fatal("a Secret without a certificate gave roots")
 	}
 	if got := ilmHostName(&v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "node.example.com"}}}); got != "node.example.com" {

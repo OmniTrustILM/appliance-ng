@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -258,7 +259,10 @@ func TestSetupStepsInOrder(t *testing.T) {
 		t.Fatalf("step %q after the code, want mode", step)
 	}
 	b.chooseMode("new")
-	b.expect(http.MethodPut, "/appliance/api/v1/setup/mode", map[string]string{"mode": "new"}, http.StatusConflict)
+	b.chooseMode("new")
+	if step := b.step(); step != "admin" {
+		t.Fatalf("step %q after choosing the mode again, want admin", step)
+	}
 	b.expect(http.MethodPut, "/appliance/api/v1/setup/admin", map[string]string{"user": testUser, "password": testPassword}, http.StatusNoContent)
 	if step := b.step(); step != "totp" {
 		t.Fatalf("step %q, want totp", step)
@@ -344,6 +348,35 @@ func TestSetupApplyHandsOverTheAnswers(t *testing.T) {
 	}
 }
 
+func TestSetupApplyHandsOverTheServedCertificate(t *testing.T) {
+	s := newTestServer(t)
+	cert, _, err := SelfSigned([]string{"10.0.2.15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.wizard.deps.Cert = cert
+	b := s.browser(t)
+	b.enterCode(s.display)
+	b.enrol()
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
+
+	var file HandoverFile
+	if err := json.Unmarshal((<-s.applied).Handover, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.TLS == nil {
+		t.Fatal("hand-over file carries no certificate")
+	}
+	served, err := tls.X509KeyPair([]byte(file.TLS.CertPEM), []byte(file.TLS.KeyPEM))
+	if err != nil {
+		t.Fatalf("hand-over certificate and key: %v", err)
+	}
+	if !bytes.Equal(served.Certificate[0], cert.Certificate[0]) {
+		t.Error("hand-over certificate differs from the one the server served")
+	}
+}
+
 func TestHandoverModeRestore(t *testing.T) {
 	s := newTestServer(t)
 	b := s.browser(t)
@@ -361,6 +394,64 @@ func TestHandoverModeRestore(t *testing.T) {
 	}
 	if file.Mode != ModeRestore || file.Admin.User != testUser || file.Node.HostName != "ilm.example.com" {
 		t.Errorf("hand-over file mode %q admin %q host %q, want restore with the answers", file.Mode, file.Admin.User, file.Node.HostName)
+	}
+}
+
+func TestPutSetupModeAtLaterStepKeepsAnswers(t *testing.T) {
+	s := newTestServer(t)
+	b := s.browser(t)
+	b.enterCode(s.display)
+	b.enrol()
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.chooseMode("restore")
+	if step := b.step(); step != "apply" {
+		t.Fatalf("step %q after changing the mode at the review, want apply", step)
+	}
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
+
+	var file HandoverFile
+	if err := json.Unmarshal((<-s.applied).Handover, &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Mode != ModeRestore || file.Admin.User != testUser || file.Node.HostName != "ilm.example.com" {
+		t.Errorf("hand-over file mode %q admin %q host %q, want restore with the earlier answers", file.Mode, file.Admin.User, file.Node.HostName)
+	}
+}
+
+func TestPutSetupModeAtModeAdvances(t *testing.T) {
+	s := newTestServer(t)
+	b := s.browser(t)
+	b.enterCode(s.display)
+	b.chooseMode("restore")
+	if step := b.step(); step != "admin" {
+		t.Errorf("step %q after the mode, want admin", step)
+	}
+}
+
+func TestPutSetupModeWhileApplying(t *testing.T) {
+	s := newTestServer(t)
+	b := s.browser(t)
+	b.enterCode(s.display)
+	b.enrol()
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/node", staticNode(), http.StatusNoContent)
+	b.expect(http.MethodPost, "/appliance/api/v1/setup/apply", nil, http.StatusAccepted)
+	b.expect(http.MethodPut, "/appliance/api/v1/setup/mode", map[string]string{"mode": "restore"}, http.StatusConflict)
+}
+
+func TestSetupTakeoverResetsTheMode(t *testing.T) {
+	s := newTestServer(t)
+	first := s.browser(t)
+	first.enterCode(s.display)
+	first.chooseMode("restore")
+
+	s.clock.advance(auth.IdleTimeout + time.Minute)
+	second := s.browser(t)
+	second.enterCode(s.display)
+	if step := second.step(); step != "mode" {
+		t.Fatalf("step after a takeover %q, want mode", step)
+	}
+	if mode := s.wizard.mode; mode != "" {
+		t.Errorf("mode %q survived the takeover, want it reset", mode)
 	}
 }
 

@@ -176,7 +176,8 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	if err != nil {
 		return err
 	}
-	if err := setupILMController(mgr, direct, cfg, backups); err != nil {
+	identity, err := setupILMController(mgr, reconciler, direct, cfg, backups)
+	if err != nil {
 		return err
 	}
 
@@ -197,6 +198,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 			db.Image = postgres
 			return backup.CheckExternal(ctx, direct, cfg, db, username, password, ca)
 		},
+		ILM: manager.ILMClient(mgr.GetClient(), mgr.GetAPIReader(), identity),
 	})
 	if err := addConsole(mgr, log, listen, api.Handler()); err != nil {
 		return err
@@ -213,20 +215,18 @@ func addConsole(mgr crmanager.Manager, log *slog.Logger, listen string, handler 
 	return addRunnables(mgr, log, cert, console.NewServer(log, listen, console.Routes(handler), cert))
 }
 
-// setupILMController sets up the controller of ILM's settings with mgr; its identity is kept through direct and
-// renewed while backups runs none.
-func setupILMController(mgr crmanager.Manager, direct client.Client, cfg *rest.Config, backups *backup.Runner) error {
-	ilm := &manager.ILMReconciler{
-		Client:    mgr.GetClient(),
-		APIReader: mgr.GetAPIReader(),
-		ILM: &ilmclient.Identity{
-			Client: direct, Forward: ilmclient.CoreForward(cfg, mgr.GetAPIReader()), Now: time.Now, Backups: backups,
-		},
+// setupILMController sets up the controller of ILM's settings with mgr and returns its identity, kept through direct
+// and renewed while backups runs none. The Appliance reconciler and the API reach ILM with the same identity.
+func setupILMController(mgr crmanager.Manager, reconciler *manager.ApplianceReconciler, direct client.Client, cfg *rest.Config, backups *backup.Runner) (*ilmclient.Identity, error) {
+	identity := &ilmclient.Identity{
+		Client: direct, Forward: ilmclient.CoreForward(cfg, mgr.GetAPIReader()), Now: time.Now, Backups: backups,
 	}
+	reconciler.ILM = identity
+	ilm := &manager.ILMReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), ILM: identity}
 	if err := ilm.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("set up the ILM controller: %w", err)
+		return nil, fmt.Errorf("set up the ILM controller: %w", err)
 	}
-	return nil
+	return identity, nil
 }
 
 // services are what the backup runner and the restore engine share.

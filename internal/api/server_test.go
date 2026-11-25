@@ -344,6 +344,8 @@ func TestProtectedOperationsNeedASession(t *testing.T) {
 		{http.MethodGet, "/appliance/api/v1/catalogue"},
 		{http.MethodGet, "/appliance/api/v1/audit"},
 		{http.MethodPost, "/appliance/api/v1/platform/admin-credential"},
+		{http.MethodPost, pathAdminPassword},
+		{http.MethodPut, pathAdminPassword},
 		{http.MethodGet, pathTrust},
 		{http.MethodPost, pathTrust},
 		{http.MethodPost, pathTrustPreview},

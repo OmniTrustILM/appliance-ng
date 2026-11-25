@@ -323,3 +323,34 @@ func TestStatusReportsRestore(t *testing.T) {
 		t.Errorf("setup %q, want restore", got.Setup)
 	}
 }
+
+func TestReadiness(t *testing.T) {
+	h := newHarness(t)
+	get := func() bool {
+		t.Helper()
+		rec := h.request(http.MethodGet, "/appliance/api/v1/readiness", nil, nil)
+		wantStatus(t, rec, http.StatusOK)
+		var got Readiness
+		decode(t, rec, &got)
+		return got.SignIn
+	}
+	if got := get(); got {
+		t.Error("signIn true without an Appliance")
+	}
+
+	a := createAppliance(t, v1alpha1.SetupPart2)
+	if got := get(); got {
+		t.Error("signIn true before the hand-over")
+	}
+
+	a.Status.Conditions = []metav1.Condition{{Type: v1alpha1.ConditionHandoverComplete, Status: metav1.ConditionTrue, Reason: "Done", LastTransitionTime: metav1.Now()}}
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(); !got {
+		t.Error("signIn false after the hand-over")
+	}
+	if entries := h.entries(); len(entries) != 0 {
+		t.Errorf("readiness wrote %d audit entries", len(entries))
+	}
+}

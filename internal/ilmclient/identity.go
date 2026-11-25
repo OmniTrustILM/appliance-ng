@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -78,6 +79,11 @@ type Identity struct {
 	// Backups, when set, keeps a renewal apart from a backup, so that a backup never holds a certificate that its
 	// database no longer accepts.
 	Backups Exclusive
+
+	// held keeps the callers of Ensure from registering or renewing at once; a caller waits for it only as long as
+	// its context allows.
+	held     chan struct{}
+	heldOnce sync.Once
 }
 
 // Exclusive runs a function while no backup runs and refuses without running it while one does.
@@ -93,6 +99,19 @@ type identity struct {
 	userUUID string
 }
 
+// lock takes the identity for one caller of Ensure, or fails with ctx's error when ctx ends first.
+func (i *Identity) lock(ctx context.Context) error {
+	i.heldOnce.Do(func() { i.held = make(chan struct{}, 1) })
+	select {
+	case i.held <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (i *Identity) unlock() { <-i.held }
+
 // Ensure returns a client of the ILM edge at edge for ilmHost, trusting roots, authenticated with the manager's
 // certificate. Whether to register a new user is decided from the stored certificate alone, never from an answer of
 // ILM, so that an outage of ILM's authentication never creates users: a new certificate is issued and registered
@@ -100,6 +119,10 @@ type identity struct {
 // certificate that expires within renewBefore is renewed for the same user. A valid certificate that ILM refuses
 // gives the client's authFailed on the calls.
 func (i *Identity) Ensure(ctx context.Context, edge, ilmHost string, roots *x509.CertPool) (*Client, error) {
+	if err := i.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer i.unlock()
 	ca, err := i.adminCA(ctx)
 	if err != nil {
 		return nil, err

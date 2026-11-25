@@ -71,7 +71,7 @@ describe('SetupFlow', () => {
     expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument();
     expect(screen.getByText('admin')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
-    expect(await screen.findByRole('link', { name: 'https://192.168.1.20:8443/' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Open the console' })).toHaveAttribute('href', 'https://192.168.1.20:8443/');
     expect(screen.getAllByRole('listitem')[6]).toHaveAttribute('aria-current', 'step');
   });
 
@@ -86,6 +86,40 @@ describe('SetupFlow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Change the settings' }));
     expect(await screen.findByRole('heading', { name: 'Node settings' })).toBeInTheDocument();
+  });
+
+  it('goes back from the administrator to the choice with the earlier choice selected', async () => {
+    stubApi({
+      'GET /appliance/api/v1/setup/state': [200, { step: 'mode', csrfToken: 't' }],
+      'PUT /appliance/api/v1/setup/mode': [204],
+    });
+    render(<SetupFlow />);
+    await userEvent.click(await screen.findByRole('radio', { name: /Restore from a backup/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Back' }));
+    expect(await screen.findByRole('heading', { name: 'What do you want to set up?' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Restore from a backup/ })).toBeChecked();
+    await userEvent.click(screen.getByRole('radio', { name: /New appliance/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Administrator' })).toBeInTheDocument();
+  });
+
+  it('changes the mode from the review and returns to the review', async () => {
+    const { sent } = stubApi({
+      'GET /appliance/api/v1/setup/state': [200, { step: 'node', csrfToken: 't' }],
+      'GET /appliance/api/v1/setup/dhcp': [200, { hostName: 'node1.example.com', dns: ['9.9.9.9'] }],
+      'PUT /appliance/api/v1/setup/node': [204],
+      'PUT /appliance/api/v1/setup/mode': [204],
+    });
+    render(<SetupFlow />);
+    await screen.findByDisplayValue('node1.example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Change' }));
+    await userEvent.click(await screen.findByRole('radio', { name: /Restore from a backup/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument();
+    expect(screen.getByText('Restore from a backup')).toBeInTheDocument();
+    expect(sent['PUT /appliance/api/v1/setup/mode']).toEqual([{ mode: 'restore' }]);
   });
 
   it('returns to the code page when the session ends', async () => {

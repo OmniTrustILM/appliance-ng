@@ -58,12 +58,16 @@ const (
 )
 
 // Other Secrets operator v1.1.0 writes for the Platform that a restore carries: the generated administrator
-// certificate, the ILM client of the managed Keycloak and that Keycloak's administrator.
+// certificate and password, the ILM client of the managed Keycloak and that Keycloak's administrator.
 const (
 	AdminCertificateSecret = "admin-certificate-secret"
+	AdminPasswordSecret    = "admin-password"
 	OIDCClientSecret       = Name + "-oidc-client"
 	KeycloakAdminSecret    = Name + "-keycloak-initial-admin"
 )
+
+// AdminUser is the user name operator v1.1.0 registers the ILM administrator under.
+const AdminUser = "admin"
 
 // The Deployment of the ILM operator.
 const (
@@ -252,6 +256,8 @@ func dependencies(spec *otilm.PlatformSpec, ps *v1alpha1.PlatformSpec, secrets S
 	if ps.Identity != nil {
 		// The manager writes the OAuth2 provider into ILM; the operator installs no Keycloak.
 		spec.Keycloak = &otilm.KeycloakSpec{Mode: modeExternal}
+		// The operator allows the password method only with the managed Keycloak.
+		spec.RegisterAdmin.Password = nil
 	}
 	spec.Utils.Enabled = ps.Utils
 	return nil
@@ -328,8 +334,9 @@ func edgeTLS(spec v1alpha1.TLSSpec, secret string) (*otilm.EdgeTLSSpec, error) {
 	return &otilm.EdgeTLSSpec{Source: "internal"}, nil
 }
 
-// defaultPlatform is the Platform of addons/platform.yaml: everything managed, a generated
-// administrator certificate and an Ingress edge on Traefik with client-certificate login.
+// defaultPlatform is the Platform of addons/platform.yaml, plus the password login method for the generated
+// administrator password: everything managed, a generated administrator certificate and an Ingress edge on Traefik
+// with client-certificate login.
 func defaultPlatform(version, hostName string) *otilm.Platform {
 	return &otilm.Platform{
 		TypeMeta:   metav1.TypeMeta{APIVersion: otilm.GroupVersion.String(), Kind: "Platform"},
@@ -351,11 +358,12 @@ func defaultPlatform(version, hostName string) *otilm.Platform {
 			Keycloak: &otilm.KeycloakSpec{Mode: "managed", Realm: "ilm", Managed: &otilm.ManagedKeycloakSpec{Instances: 1}},
 			RegisterAdmin: &otilm.RegisterAdminSpec{
 				Enabled:     true,
-				Username:    "admin",
+				Username:    AdminUser,
 				Name:        "Platform Administrator",
 				LastName:    "Administrator",
 				Email:       "admin@ilm.appliance.internal",
 				Certificate: &otilm.AdminCertificateSpec{Source: "generated"},
+				Password:    &otilm.AdminPasswordSpec{Enabled: true, SecretRef: AdminPasswordSecret},
 			},
 			NetworkPolicy: &otilm.NetworkPolicySpec{IngressNamespace: "traefik"},
 			Edge: &otilm.EdgeSpec{

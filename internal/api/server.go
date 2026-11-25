@@ -3,6 +3,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net"
@@ -21,6 +23,8 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
+	"github.com/OmniTrustILM/appliance-ng/internal/keycloak"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/mail"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
@@ -61,6 +65,8 @@ type BackupRunner interface {
 	ScanHostKey(ctx context.Context, host string, port int32) (string, error)
 	// EnteredTarget opens a target entered for one request with the given credentials; nothing is saved.
 	EnteredTarget(ctx context.Context, spec v1alpha1.BackupTarget, creds map[string][]byte) (target.Target, error)
+	// Exclusive runs admit while no backup runs or starts, and refuses with backup.ErrBusy while one runs.
+	Exclusive(admit func() error) error
 }
 
 // Restorer restores a backup onto the appliance.
@@ -97,6 +103,11 @@ type Deps struct {
 	// CheckDatabase opens a session on an external database as username with password, verifying the server
 	// against the PEM ca when set, as backup.CheckExternal does; without it a database test fails.
 	CheckDatabase func(ctx context.Context, db backup.ExternalDatabase, username, password string, ca []byte) error
+	// ILM returns a client of ILM authenticated as the manager, for the ILM options of the ACME certificate; without
+	// it ILM is never ready.
+	ILM func(ctx context.Context, a *v1alpha1.Appliance) (*ilmclient.Client, error)
+	// KeycloakURL is the base URL of the managed Keycloak; empty is the cluster IP of its Service.
+	KeycloakURL string
 }
 
 // Server serves the manager's API under auth.APIBase.
@@ -133,6 +144,11 @@ type Server struct {
 	identityClient func(ctx context.Context, a *v1alpha1.Appliance) (*http.Client, error)
 	// openBroker is dialBroker; tests replace it.
 	openBroker func(ctx context.Context, mq v1alpha1.ExternalMessaging, username, password string, ca []byte) error
+	// adminPasswordMu keeps the new passwords of the ILM administrator one at a time, so that Keycloak and the
+	// Secret end with the same one.
+	adminPasswordMu sync.Mutex
+	// keycloakClient calls the managed Keycloak.
+	keycloakClient *http.Client
 }
 
 // NewServer returns the API server on deps.
@@ -141,14 +157,15 @@ func NewServer(deps Deps) *Server {
 		deps.Now = time.Now
 	}
 	s := &Server{
-		deps:          deps,
-		sessions:      auth.NewSessions(deps.Now).WithUserCheck(accountExists(deps.Users)),
-		limiter:       auth.SignInLimiter(),
-		checkPassword: auth.CheckPassword,
-		hashSlots:     auth.NewHashSlots(maxPasswordChecks),
-		dummyHash:     newDummyHash(),
-		sendMail:      mail.SendTest,
-		checkSpace:    storage.Check,
+		deps:           deps,
+		sessions:       auth.NewSessions(deps.Now).WithUserCheck(accountExists(deps.Users)),
+		limiter:        auth.SignInLimiter(),
+		checkPassword:  auth.CheckPassword,
+		hashSlots:      auth.NewHashSlots(maxPasswordChecks),
+		dummyHash:      newDummyHash(),
+		sendMail:       mail.SendTest,
+		checkSpace:     storage.Check,
+		keycloakClient: keycloak.HTTPClient(),
 	}
 	s.identityClient, s.openBroker = s.identityHTTPClient, dialBroker
 	return s
@@ -176,7 +193,8 @@ func (s *Server) Handler() http.Handler {
 	strict := NewStrictHandlerWithOptions(s, nil, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: badRequest,
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			s.deps.Log.Error("API request failed", "method", r.Method, "path", r.URL.Path, "error", err)
+			s.deps.Log.Error("API request failed", "method", r.Method, "path", r.URL.Path,
+				"requestId", requestFrom(r.Context()).requestID(), "error", err)
 			auth.WriteError(w, http.StatusInternalServerError, "internal", "The request failed; the manager log has the details.")
 		},
 	})
@@ -188,10 +206,13 @@ func (s *Server) Handler() http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle(route(http.MethodGet, auth.APIBase+"/ca.pem"), api)
+	mux.Handle(route(http.MethodGet, auth.APIBase+"/readiness"), api)
 	mux.Handle(route(http.MethodPost, auth.APIBase+"/session"), s.audited(AuditEntryActionSignIn, api))
 	mux.Handle(route(http.MethodDelete, auth.APIBase+"/session"), change(AuditEntryActionSignOut))
 	mux.Handle(route(http.MethodPut, auth.APIBase+"/wizard/platform"), change(AuditEntryActionWizardPlatform))
 	mux.Handle(route(http.MethodPost, auth.APIBase+"/platform/admin-credential"), change(AuditEntryActionAdminCredential))
+	mux.Handle(route(http.MethodPost, adminPasswordPath), change(AuditEntryActionAdminPasswordShown))
+	mux.Handle(route(http.MethodPut, adminPasswordPath), change(AuditEntryActionAdminPasswordReset))
 	mux.Handle(route(http.MethodPut, auth.APIBase+"/node"), change(AuditEntryActionNodeSettings))
 	mux.Handle(route(http.MethodPost, auth.APIBase+"/system/reboot"), change(AuditEntryActionReboot))
 	mux.Handle(route(http.MethodPost, auth.APIBase+"/system/shutdown"), change(AuditEntryActionShutdown))
@@ -199,6 +220,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPost, certificatePath+"/csr"), change(AuditEntryActionCertificateCsr))
 	mux.Handle(route(http.MethodPut, certificatePath+"/csr/signed"), change(AuditEntryActionCertificateSigned))
 	mux.Handle(route(http.MethodPut, certificatePath+"/builtin"), change(AuditEntryActionCertificateBuiltin))
+	mux.Handle(route(http.MethodPut, certificatePath+"/acme"), change(AuditEntryActionCertificateAcme))
 	mux.Handle(route(http.MethodPost, trustPath), change(AuditEntryActionTrustAdd))
 	mux.Handle(route(http.MethodDelete, trustPath+"/{sha256}"), change(AuditEntryActionTrustRemove))
 	mux.Handle(route(http.MethodPut, registriesPath+"/{host}"), change(AuditEntryActionRegistrySet))
@@ -225,6 +247,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPost, restorePath+"/inspect"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreInspect)))
 	mux.Handle(route(http.MethodPost, restorePath+"/start"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreStart)))
 	mux.Handle(route(http.MethodPost, restorePath+"/resume"), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionRestoreResume)))
+	mux.Handle(route(http.MethodPost, restorePath+"/abandon"), change(AuditEntryActionRestoreAbandon))
 	mux.Handle(route(http.MethodPost, restorePath+"/list"), withWriteDeadline(targetTestWriteTimeout(), protected))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
@@ -248,6 +271,18 @@ type request struct {
 	result AuditEntryResult
 	// contentLength is the request body's declared size; -1 when unknown.
 	contentLength int64
+	// id ties an internal error's audit entry to its log line; made on first use.
+	id string
+}
+
+// requestID returns the request's ID: 16 hex characters from crypto/rand.
+func (r *request) requestID() string {
+	if r.id == "" {
+		b := make([]byte, 8)
+		_, _ = rand.Read(b) // crypto/rand.Read never returns an error.
+		r.id = hex.EncodeToString(b)
+	}
+	return r.id
 }
 
 type requestKey struct{}

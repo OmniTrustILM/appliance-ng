@@ -44,6 +44,22 @@ describe('PlatformPage', () => {
     expect(sent['PUT /appliance/api/v1/platform']).toEqual([{ hostName: 'new.example.test', components: ['discovery'] }]);
   });
 
+  it('shows why a chosen component failed and that another is starting', async () => {
+    stubApi({
+      'GET /appliance/api/v1/platform': platform([
+        component('scanner', { chosen: true, state: 'failed', problem: 'the image cannot be pulled; check the registry credentials and the proxy' }),
+        component('discovery', { chosen: true, state: 'waiting' }),
+        component('vault', { chosen: true, state: 'ready' }),
+        component('signer'),
+      ]),
+    });
+    open();
+    expect(await screen.findByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText('The image cannot be pulled; check the registry credentials and the proxy.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Starting')).toBeInTheDocument();
+    expect(screen.getAllByText(/^(Failed|Starting)$/)).toHaveLength(2);
+  });
+
   it('disables a private component that needs credentials and links to the registries', async () => {
     stubApi({
       'GET /appliance/api/v1/platform': platform([
@@ -101,22 +117,14 @@ describe('PlatformPage', () => {
     expect(screen.getByRole('checkbox', { name: /Email/ })).toBeEnabled();
   });
 
-  it('shows the address to register a component that ILM does not register by itself', async () => {
+  it('says the appliance registers a v1 component in ILM at its address', async () => {
     const url = 'http://email.ilm.svc.cluster.local:8080';
-    stubApi({ 'GET /appliance/api/v1/platform': platform([component('email', { registered: false, url }), component('scanner')]) });
+    stubApi({ 'GET /appliance/api/v1/platform': platform([component('email', { url }), component('scanner')]) });
     open();
     const row = (await screen.findByRole('checkbox', { name: /Email/ })).closest('label');
-    expect(row).toHaveTextContent(/not registered/i);
-    expect(row).toHaveTextContent(url);
-    expect(screen.getByRole('checkbox', { name: 'Scanner' }).closest('label')).not.toHaveTextContent(/not registered/i);
-  });
-
-  it('shows no address for an unregistered component that carries none', async () => {
-    stubApi({ 'GET /appliance/api/v1/platform': platform([component('email', { registered: false })]) });
-    open();
-    const row = (await screen.findByRole('checkbox', { name: /Email/ })).closest('label');
-    expect(row).toHaveTextContent(/not registered/i);
-    expect(row?.querySelector('code')).toBeNull();
+    expect(row).toHaveTextContent(`The appliance registers it in ILM at ${url}.`);
+    expect(row).not.toHaveTextContent(/not registered/i);
+    expect(screen.getByRole('checkbox', { name: 'Scanner' }).closest('label')).not.toHaveTextContent(/registered/i);
   });
 
   it('shows a refused component and a refused host name at their place', async () => {
@@ -390,5 +398,46 @@ describe('PlatformPage', () => {
         cbom: { enabled: false, storage: 's3', s3: { endpoint: 'https://s3.example.test', bucket: 'cboms', region: '' } },
       }]);
     });
+  });
+
+  it('sets a new ILM administrator password after a confirmation and shows it once', async () => {
+    const { sent } = stubApi({
+      'GET /appliance/api/v1/platform': platform([]),
+      'PUT /appliance/api/v1/platform/admin-password': [200, { user: 'admin', password: 'New-generated-pw-2' }],
+    });
+    open();
+    await userEvent.click(await screen.findByRole('button', { name: 'Set a new ILM administrator password' }));
+    const dialog = screen.getByRole('dialog', { name: 'Set a new ILM administrator password?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(sent['PUT /appliance/api/v1/platform/admin-password']).toBeUndefined();
+    await userEvent.click(screen.getByRole('button', { name: 'Set a new ILM administrator password' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Set a new password' }));
+    expect(await screen.findByText(/^ILM administrator:/)).toHaveTextContent('ILM administrator: admin / New-generated-pw-2');
+    expect(screen.getByText('It is not shown again.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+    expect(sent['PUT /appliance/api/v1/platform/admin-password']).toHaveLength(1);
+  });
+
+  it('shows why a new ILM administrator password was not set', async () => {
+    stubApi({
+      'GET /appliance/api/v1/platform': platform([]),
+      'PUT /appliance/api/v1/platform/admin-password': [502, { code: 'keycloak_failed', message: 'Keycloak did not confirm the new password. Set a new one again.' }],
+    });
+    open();
+    await userEvent.click(await screen.findByRole('button', { name: 'Set a new ILM administrator password' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Set a new password' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Set a new one again');
+    expect(screen.queryByText(/^ILM administrator:/)).not.toBeInTheDocument();
+  });
+
+  it('offers no ILM administrator password with an external identity provider', async () => {
+    stubApi({
+      'GET /appliance/api/v1/platform': platform([], {
+        dependencies: { ...managed, identity: { mode: 'external', issuer: 'https://idp.example.test', clientId: 'ilm', clientSecretSet: true } },
+      }),
+    });
+    open();
+    await screen.findByLabelText('ILM version');
+    expect(screen.queryByRole('button', { name: 'Set a new ILM administrator password' })).not.toBeInTheDocument();
   });
 });

@@ -93,6 +93,22 @@ func TestEnsureIdentityOnce(t *testing.T) {
 	}
 }
 
+func TestEnsureIdentityWaitsNoLongerThanItsContext(t *testing.T) {
+	adminCA := newTestCA(t, "admin-ca")
+	ilm := newFakeILM(t, adminCA)
+	id, _ := newIdentity(t, adminCA, ilm, time.Now())
+	if err := id.lock(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer id.unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := id.Ensure(ctx, ilm.edgeAddr(), testHost, ilm.roots); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ensure while another caller holds the identity: %v, want the context's deadline", err)
+	}
+}
+
 func keys(m map[string][]byte) []string {
 	var out []string
 	for k := range m {

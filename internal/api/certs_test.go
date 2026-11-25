@@ -7,6 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -16,18 +17,21 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 )
 
 const (
@@ -36,6 +40,7 @@ const (
 	pathCSR         = "/appliance/api/v1/certificate/csr"
 	pathSigned      = "/appliance/api/v1/certificate/csr/signed"
 	pathBuiltin     = "/appliance/api/v1/certificate/builtin"
+	pathACME        = "/appliance/api/v1/certificate/acme"
 )
 
 // certIssued is when the test certificates become valid, the day before the harness clock.
@@ -391,6 +396,40 @@ func TestSignedCertificate(t *testing.T) {
 	}
 }
 
+// writeACMECredentials stores the Secrets a custom ACME server leaves behind.
+func writeACMECredentials(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{certs.ACMEEABSecretName, certs.ACMEDNS01SecretName} {
+		if err := testClient.Create(context.Background(), &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: name}, Data: map[string][]byte{"k": []byte("x")},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestLeavingACMEDeletesItsCredentials(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createCertificateAppliance(t)
+	ca := newTestCA(t)
+	certPEM, keyPEM := ca.leaf(t)
+
+	writeACMECredentials(t)
+	wantStatus(t, h.upload(http.MethodPut, pathCertificate, map[string][]byte{"certificate": certPEM, "key": keyPEM, "chain": ca.pem}, s), http.StatusAccepted)
+	if !secretGone(t, certs.ACMEEABSecretName) || !secretGone(t, certs.ACMEDNS01SecretName) {
+		t.Error("the ACME credentials stayed after an upload")
+	}
+
+	writeACMECredentials(t)
+	wantStatus(t, h.request(http.MethodPut, pathBuiltin, nil, s), http.StatusAccepted)
+	if !secretGone(t, certs.ACMEEABSecretName) || !secretGone(t, certs.ACMEDNS01SecretName) {
+		t.Error("the ACME credentials stayed after back to built-in")
+	}
+	// Nothing to delete is no failure.
+	wantStatus(t, h.request(http.MethodPut, pathBuiltin, nil, s), http.StatusAccepted)
+}
+
 func TestBackToBuiltin(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
@@ -485,4 +524,337 @@ func TestSignedCertificateInstalledWhenTheRequestStays(t *testing.T) {
 	if !strings.Contains(h.logs.String(), "signing request not deleted") {
 		t.Errorf("log %s, want the failed deletion", h.logs)
 	}
+}
+
+type obj = map[string]any
+
+const (
+	acmeDirectory = "https://acme.example.com/directory"
+	acmeUUID      = "7f1c2a3e-1111-4222-8333-444455556666"
+)
+
+var acmeILM = obj{"raProfileUuid": acmeUUID, "vaultUuid": acmeUUID, "vaultProfileUuid": acmeUUID}
+
+func cloudflare(config, credentials obj) obj {
+	return obj{"type": "dns01", "dns01": obj{"provider": "cloudflare", "config": config, "credentials": credentials}}
+}
+
+func TestACMERefusals(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    obj
+		message string
+	}{
+		{"plain http", obj{"directoryUrl": "http://acme.example.com/directory"}, "The ACME directory must be an https URL."},
+		{"not a URL", obj{"directoryUrl": "acme"}, "The ACME directory must be an https URL."},
+		{"neither", obj{"email": "a@example.com"}, "Give a directory URL or the ILM profile."},
+		{"both", obj{"directoryUrl": acmeDirectory, "ilm": acmeILM}, "Give either a directory URL or the ILM profile, not both."},
+		{"ILM without a vault", obj{"ilm": obj{"raProfileUuid": acmeUUID}}, "The ILM profile needs the RA profile, the vault and the vault profile."},
+		{"EAB id without HMAC", obj{"directoryUrl": acmeDirectory, "eabKeyId": "kid"}, "The external account binding needs both its key ID and its HMAC key."},
+		{"EAB HMAC without id", obj{"directoryUrl": acmeDirectory, "eabHmac": "aGVsbG8"}, "The external account binding needs both its key ID and its HMAC key."},
+		{"CA bundle", obj{"directoryUrl": acmeDirectory, "caBundle": "not pem"}, "The CA bundle holds no certificate."},
+		{"solver type", obj{"directoryUrl": acmeDirectory, "solver": obj{"type": "tls-alpn-01"}}, "The solver must be http01 or dns01."},
+		{"dns01 without provider", obj{"directoryUrl": acmeDirectory, "solver": obj{"type": "dns01"}}, "Choose a DNS provider."},
+		{"unknown provider", obj{"directoryUrl": acmeDirectory, "solver": obj{"type": "dns01", "dns01": obj{"provider": "godaddy"}}},
+			`The DNS provider "godaddy" is not supported.`},
+		{"unknown config key", obj{"directoryUrl": acmeDirectory, "solver": cloudflare(obj{"zone": "x"}, obj{"apiToken": "t"})},
+			`The DNS provider has no setting "zone".`},
+		{"unknown credential key", obj{"directoryUrl": acmeDirectory, "solver": cloudflare(nil, obj{"apiToken": "t", "apiKey": "k"})},
+			`The DNS provider has no credential "apiKey".`},
+		{"missing credential", obj{"directoryUrl": acmeDirectory, "solver": cloudflare(nil, nil)},
+			`The DNS provider needs the credential "apiToken".`},
+		{"missing setting", obj{"directoryUrl": acmeDirectory, "solver": obj{"type": "dns01", "dns01": obj{"provider": "acmedns", "credentials": obj{"accountJSON": "{}"}}}},
+			`The DNS provider needs the setting "host".`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			s := h.signIn()
+			createCertificateAppliance(t)
+			wantMessage(t, h.request(http.MethodPut, pathACME, tt.body, s), http.StatusBadRequest, tt.message)
+			if got := getAppliance(t).Spec.TLS; got.Source != v1alpha1.TLSSourceBuiltin || got.ACME != nil {
+				t.Errorf("tls %+v after a refusal", got)
+			}
+			if !secretGone(t, certs.ACMEDNS01SecretName) || !secretGone(t, certs.ACMEEABSecretName) {
+				t.Error("a refused request stored a Secret")
+			}
+		})
+	}
+}
+
+func TestACMENotSetUp(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	wantStatus(t, h.request(http.MethodPut, pathACME, obj{"directoryUrl": acmeDirectory}, s), http.StatusConflict)
+}
+
+func TestACMECustomDirectory(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createCertificateAppliance(t)
+	ca := newTestCA(t)
+	// A binding from an earlier request leaves nothing but the new HMAC key behind.
+	if err := testClient.Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: certs.ACMEEABSecretName},
+		Data:       map[string][]byte{"keyId": []byte("old"), "hmac": []byte("old")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := obj{"directoryUrl": acmeDirectory, "email": "ops@example.com", "eabKeyId": "kid", "eabHmac": "aG1hYw",
+		"caBundle": string(ca.pem), "solver": obj{"type": "http01"}}
+	wantStatus(t, h.request(http.MethodPut, pathACME, body, s), http.StatusAccepted)
+
+	got := getAppliance(t).Spec.TLS
+	want := &v1alpha1.ACMESpec{
+		DirectoryURL: acmeDirectory, Email: "ops@example.com", EABKeyID: "kid",
+		EABSecretRef: &corev1.LocalObjectReference{Name: certs.ACMEEABSecretName}, CABundle: ca.pem,
+		Solver: v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverHTTP01},
+	}
+	if got.Source != v1alpha1.TLSSourceACME || got.ACME == nil || !equalACME(got.ACME, want) {
+		t.Errorf("tls %+v, want acme %+v", got, want)
+	}
+	if data := systemSecret(t, certs.ACMEEABSecretName).Data; len(data) != 1 || string(data["hmac"]) != "aG1hYw" {
+		t.Errorf("EAB Secret keys %v, want only hmac", secretKeys(data))
+	}
+	if !secretGone(t, certs.ACMEDNS01SecretName) {
+		t.Error("an http01 solver stored DNS credentials")
+	}
+	entries := h.entries()
+	last := entries[len(entries)-1]
+	if last.Action != string(AuditEntryActionCertificateAcme) || last.Result != string(Success) ||
+		last.Details["solver"] != "http01" || last.Details["provider"] != "" ||
+		!slices.Equal(last.Paths, []string{"spec.tls.source", "spec.tls.acme"}) {
+		t.Errorf("audit entry %+v", last)
+	}
+	for _, v := range last.Details {
+		if strings.Contains(v, "aG1hYw") {
+			t.Error("the audit entry holds the HMAC key")
+		}
+	}
+
+	info := h.certificateInfo(s)
+	if info.Source != CertificateInfoSourceAcme || info.Acme == nil || *info.Acme.DirectoryUrl != acmeDirectory ||
+		*info.Acme.Email != "ops@example.com" || *info.Acme.EabKeyId != "kid" || !*info.Acme.EabHmacSet ||
+		info.Acme.CaBundle == nil || *info.Acme.CaBundle != string(ca.pem) || info.Acme.Solver.Type != AcmeSolverInfoTypeHttp01 || info.Acme.LastError != nil {
+		t.Errorf("info %+v", info)
+	}
+	if rec := h.request(http.MethodGet, pathCertificate, nil, s); strings.Contains(rec.Body.String(), "aG1hYw") {
+		t.Error("GET shows the HMAC key")
+	}
+
+	// Without a binding the Secret goes, and the solver defaults to http01.
+	wantStatus(t, h.request(http.MethodPut, pathACME, obj{"directoryUrl": acmeDirectory}, s), http.StatusAccepted)
+	if !secretGone(t, certs.ACMEEABSecretName) {
+		t.Error("the EAB Secret stayed without a binding")
+	}
+	got = getAppliance(t).Spec.TLS
+	if got.ACME.EABKeyID != "" || got.ACME.EABSecretRef != nil || got.ACME.Solver.Type != v1alpha1.ACMESolverHTTP01 {
+		t.Errorf("acme %+v", got.ACME)
+	}
+}
+
+func TestACMEDNS01(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createCertificateAppliance(t)
+
+	body := obj{"directoryUrl": acmeDirectory, "solver": obj{"type": "dns01", "dns01": obj{
+		"provider": "rfc2136", "config": obj{"nameserver": "192.0.2.53:53", "tsigKeyName": "acme"}, "credentials": obj{"tsigSecret": "s3cret"}}}}
+	wantStatus(t, h.request(http.MethodPut, pathACME, body, s), http.StatusAccepted)
+
+	solver := getAppliance(t).Spec.TLS.ACME.Solver
+	if solver.Type != v1alpha1.ACMESolverDNS01 || solver.DNS01 == nil || solver.DNS01.Provider != "rfc2136" ||
+		solver.DNS01.Config["nameserver"] != "192.0.2.53:53" || solver.DNS01.Config["tsigKeyName"] != "acme" ||
+		solver.DNS01.CredentialsSecretRef == nil || solver.DNS01.CredentialsSecretRef.Name != certs.ACMEDNS01SecretName {
+		t.Errorf("solver %+v", solver)
+	}
+	if data := systemSecret(t, certs.ACMEDNS01SecretName).Data; len(data) != 1 || string(data["tsigSecret"]) != "s3cret" {
+		t.Errorf("DNS Secret keys %v", secretKeys(data))
+	}
+	entries := h.entries()
+	if last := entries[len(entries)-1]; last.Details["provider"] != "rfc2136" || last.Details["solver"] != "dns01" {
+		t.Errorf("audit details %v", last.Details)
+	}
+	rec := h.request(http.MethodGet, pathCertificate, nil, s)
+	if strings.Contains(rec.Body.String(), "s3cret") {
+		t.Error("GET shows a credential")
+	}
+	info := h.certificateInfo(s)
+	d := info.Acme.Solver.Dns01
+	if d == nil || d.Provider != "rfc2136" || !slices.Equal(d.CredentialKeys, []string{"tsigSecret"}) || d.Config["nameserver"] != "192.0.2.53:53" {
+		t.Errorf("dns01 info %+v", d)
+	}
+
+	// Credentials of a provider that needs none of the stored keys replace them whole.
+	body = obj{"directoryUrl": acmeDirectory, "solver": cloudflare(nil, obj{"apiToken": "tok"})}
+	wantStatus(t, h.request(http.MethodPut, pathACME, body, s), http.StatusAccepted)
+	if data := systemSecret(t, certs.ACMEDNS01SecretName).Data; len(data) != 1 || string(data["apiToken"]) != "tok" {
+		t.Errorf("DNS Secret keys %v", secretKeys(data))
+	}
+
+	wantStatus(t, h.request(http.MethodPut, pathACME, obj{"directoryUrl": acmeDirectory}, s), http.StatusAccepted)
+	if !secretGone(t, certs.ACMEDNS01SecretName) {
+		t.Error("the DNS credentials stayed after switching to http01")
+	}
+	if getAppliance(t).Spec.TLS.ACME.Solver.DNS01 != nil {
+		t.Error("the spec kept the DNS solver")
+	}
+}
+
+func TestACMEILM(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createCertificateAppliance(t)
+	for _, name := range []string{certs.ACMEEABSecretName, certs.ACMEDNS01SecretName} {
+		if err := testClient.Create(context.Background(), &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: name}, Data: map[string][]byte{"hmac": []byte("x")},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wantStatus(t, h.request(http.MethodPut, pathACME, obj{"ilm": acmeILM, "solver": cloudflare(nil, obj{"apiToken": "t"})}, s), http.StatusAccepted)
+
+	got := getAppliance(t).Spec.TLS
+	want := &v1alpha1.ACMESpec{
+		ILMProfile: &v1alpha1.ILMACMEProfile{RAProfileUUID: acmeUUID, VaultUUID: acmeUUID, VaultProfileUUID: acmeUUID, ProfileName: "appliance"},
+		Solver:     v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverHTTP01},
+	}
+	if got.Source != v1alpha1.TLSSourceACME || !equalACME(got.ACME, want) {
+		t.Errorf("tls %+v, want acme %+v", got, want)
+	}
+	if !secretGone(t, certs.ACMEDNS01SecretName) || !secretGone(t, certs.ACMEEABSecretName) {
+		t.Error("the custom directory's Secrets stayed with the ILM profile")
+	}
+	info := h.certificateInfo(s)
+	if info.Acme == nil || info.Acme.Ilm == nil || info.Acme.Ilm.VaultUuid != acmeUUID || info.Acme.DirectoryUrl != nil {
+		t.Errorf("info %+v", info.Acme)
+	}
+	entries := h.entries()
+	if last := entries[len(entries)-1]; last.Details["solver"] != "ilm" {
+		t.Errorf("audit details %v", last.Details)
+	}
+}
+
+func TestACMELastErrorAndBuiltin(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createCertificateAppliance(t)
+	wantStatus(t, h.request(http.MethodPut, pathACME, obj{"directoryUrl": acmeDirectory}, s), http.StatusAccepted)
+	if info := h.certificateInfo(s); info.Acme.LastError != nil {
+		t.Errorf("last error %q without a condition", *info.Acme.LastError)
+	}
+
+	a := getAppliance(t)
+	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: v1alpha1.ConditionCertificateReady,
+		Status: metav1.ConditionFalse, Reason: "Failed", Message: "the ACME server refused the order"})
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if info := h.certificateInfo(s); info.Acme.LastError == nil || *info.Acme.LastError != "the ACME server refused the order" {
+		t.Errorf("info %+v", info.Acme)
+	}
+
+	wantStatus(t, h.request(http.MethodPut, pathBuiltin, nil, s), http.StatusAccepted)
+	if got := getAppliance(t).Spec.TLS; got.Source != v1alpha1.TLSSourceBuiltin || got.ACME != nil {
+		t.Errorf("tls %+v", got)
+	}
+	if info := h.certificateInfo(s); info.Source != CertificateInfoSourceBuiltin || info.Acme != nil {
+		t.Errorf("info %+v", info)
+	}
+}
+
+func equalACME(a, b *v1alpha1.ACMESpec) bool { return reflect.DeepEqual(a, b) }
+
+func secretKeys(data map[string][]byte) []string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+const pathILMOptions = "/appliance/api/v1/certificate/acme/ilm-options"
+
+// fakeILMProfiles returns an ILM function of a fake ILM that lists RA profiles and vault profiles, or answers 500
+// when down is set, and counts its use.
+func fakeILMProfiles(t *testing.T, down *bool) (func(context.Context, *v1alpha1.Appliance) (*ilmclient.Client, error), *int) {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case *down:
+			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/raProfiles":
+			_, _ = w.Write([]byte(`[{"uuid":"r1","name":"web","enabled":true},{"uuid":"r2","name":"off","enabled":false}]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/vaultProfiles/list":
+			_, _ = w.Write([]byte(`{"items":[{"uuid":"vp1","name":"hashicorp","enabled":true,"vaultInstance":{"uuid":"v1"}}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	calls := 0
+	return func(context.Context, *v1alpha1.Appliance) (*ilmclient.Client, error) {
+		calls++
+		pool := x509.NewCertPool()
+		pool.AddCert(srv.Certificate())
+		return ilmclient.New(srv.Listener.Addr().String(), "example.com", tls.Certificate{}, pool), nil
+	}, &calls
+}
+
+// setILMReady sets the conditions that tell that ILM is ready.
+func setILMReady(t *testing.T) {
+	t.Helper()
+	a := getAppliance(t)
+	for _, c := range []string{v1alpha1.ConditionPlatformReady, v1alpha1.ConditionILMSettingsApplied} {
+		meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: c, Status: metav1.ConditionTrue, Reason: "Ready", Message: "ready"})
+	}
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestACMEILMOptions(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createCertificateAppliance(t)
+	down := false
+	ilm, calls := fakeILMProfiles(t, &down)
+	h.srv.deps.ILM = ilm
+	audited := len(h.entries())
+
+	rec := h.request(http.MethodGet, pathILMOptions, nil, s)
+	wantMessage(t, rec, http.StatusConflict, "ILM is not ready yet; try again shortly.")
+	if *calls != 0 {
+		t.Errorf("reached ILM %d times before it is ready", *calls)
+	}
+
+	setILMReady(t)
+	rec = h.request(http.MethodGet, pathILMOptions, nil, s)
+	wantStatus(t, rec, http.StatusOK)
+	var got AcmeIlmOptions
+	decode(t, rec, &got)
+	want := AcmeIlmOptions{
+		RaProfiles:    []AcmeIlmRaProfile{{Uuid: "r1", Name: "web"}},
+		VaultProfiles: []AcmeIlmVaultProfile{{Uuid: "vp1", Name: "hashicorp", VaultUuid: "v1"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("options %+v, want %+v", got, want)
+	}
+
+	down = true
+	wantMessage(t, h.request(http.MethodGet, pathILMOptions, nil, s), http.StatusConflict, "ILM is not ready yet; try again shortly.")
+	if n := len(h.entries()); n != audited {
+		t.Errorf("%d audit entries for reads, want none", n-audited)
+	}
+}
+
+func TestACMEILMOptionsWithoutILMOrSetup(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	wantStatus(t, h.request(http.MethodGet, pathILMOptions, nil, s), http.StatusConflict)
+	createCertificateAppliance(t)
+	setILMReady(t)
+	wantMessage(t, h.request(http.MethodGet, pathILMOptions, nil, s), http.StatusConflict, "ILM is not ready yet; try again shortly.")
 }

@@ -7,13 +7,16 @@ import { PageHeading } from '../components/PageHeading';
 import { SummaryRow } from '../components/SummaryRow';
 import { attempt, failureMessage, unreachable } from './failure';
 import type { NodeSettings } from './NodePage';
+import { modeLabels, type Mode } from './ModePage';
 
 export type Answers = { user: string; node: NodeSettings };
 
 /** Summarises the answers and applies them; the password and the authenticator secret are never shown. */
-export function ReviewPage({ answers, onBack, onDone, onExpired }: Readonly<{
+export function ReviewPage({ answers, mode, onBack, onChangeMode, onDone, onExpired }: Readonly<{
   answers?: Answers;
+  mode?: Mode;
   onBack: () => void;
+  onChangeMode: () => void;
   onDone: () => void;
   onExpired: () => void;
 }>) {
@@ -32,27 +35,35 @@ export function ReviewPage({ answers, onBack, onDone, onExpired }: Readonly<{
   }
 
   const node = answers?.node;
+  const modeRow = (
+    <span className="flex flex-wrap items-center gap-x-3">
+      {mode && modeLabels[mode]}
+      <Button variant="ghost" className="h-8 px-2" disabled={busy} onClick={onChangeMode}>Change</Button>
+    </span>
+  );
   return (
     <Card
       back={<Button variant="secondary" onClick={onBack}>Change the settings</Button>}
       actions={<Button busy={busy} onClick={apply}>Apply</Button>}
     >
       <PageHeading eyebrow="Setup" title="Review" lead="Check the settings. The node installs and reboots when you apply them." />
-      {answers && node ? (
-        <dl className="m-0">
-          <SummaryRow term="Administrator">{answers.user}</SummaryRow>
-          <SummaryRow term="Host name">{node.hostName}</SummaryRow>
-          <SummaryRow term="Address" mono={Boolean(node.address)}>{node.address || 'Address from DHCP'}</SummaryRow>
-          {node.gateway && <SummaryRow term="Gateway" mono>{node.gateway}</SummaryRow>}
-          <SummaryRow term="DNS servers" mono>{node.dns.join(', ')}</SummaryRow>
-          {node.ntp.length > 0 && <SummaryRow term="NTP servers" mono>{node.ntp.join(', ')}</SummaryRow>}
-          {node.proxy?.http && <SummaryRow term="HTTP proxy" mono>{node.proxy.http}</SummaryRow>}
-          {node.proxy?.https && <SummaryRow term="HTTPS proxy" mono>{node.proxy.https}</SummaryRow>}
-          {node.proxy?.noProxy && <SummaryRow term="No proxy" mono>{node.proxy.noProxy}</SummaryRow>}
-        </dl>
-      ) : (
-        <p>Your answers were saved before the page was reloaded. Change the settings to see them again.</p>
-      )}
+      <dl className="m-0">
+        <SummaryRow term="Set up">{modeRow}</SummaryRow>
+        {answers && node && (
+          <>
+            <SummaryRow term="Administrator">{answers.user}</SummaryRow>
+            <SummaryRow term="Host name">{node.hostName}</SummaryRow>
+            <SummaryRow term="Address" mono={Boolean(node.address)}>{node.address || 'Address from DHCP'}</SummaryRow>
+            {node.gateway && <SummaryRow term="Gateway" mono>{node.gateway}</SummaryRow>}
+            <SummaryRow term="DNS servers" mono>{node.dns.join(', ')}</SummaryRow>
+            {node.ntp.length > 0 && <SummaryRow term="NTP servers" mono>{node.ntp.join(', ')}</SummaryRow>}
+            {node.proxy?.http && <SummaryRow term="HTTP proxy" mono>{node.proxy.http}</SummaryRow>}
+            {node.proxy?.https && <SummaryRow term="HTTPS proxy" mono>{node.proxy.https}</SummaryRow>}
+            {node.proxy?.noProxy && <SummaryRow term="No proxy" mono>{node.proxy.noProxy}</SummaryRow>}
+          </>
+        )}
+      </dl>
+      {!answers && <p>Your answers were saved before the page was reloaded. Change the settings to see them again.</p>}
       {error && <div className="mt-4"><Alert tone="error">{error}</Alert></div>}
     </Card>
   );

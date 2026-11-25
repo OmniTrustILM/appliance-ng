@@ -33,7 +33,7 @@ export function ReviewPage({ answers, catalogue, onBack, onSent, onRefused, onCo
     if (response.ok) return onSent();
     if (response.status === 400 && body && 'field' in body && body.field) return onRefused(body.field, body.message);
     if (response.status === 409 && body && 'code' in body && body.code === 'setup_complete') return onComplete();
-    setError(failureMessage(response.status));
+    setError(body?.message ?? failureMessage(response.status));
   }
 
   return (

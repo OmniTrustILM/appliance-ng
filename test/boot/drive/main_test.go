@@ -269,6 +269,35 @@ func TestTrustBuiltinCARefuses(t *testing.T) {
 	}
 }
 
+// TestPart2TrustsTheSetupCertificateUntilTheBuiltinOne checks that wizard part 2 reaches a console that still serves
+// the setup certificate of --ca-file, and one that serves the built-in certificate already.
+func TestPart2TrustsTheSetupCertificateUntilTheBuiltinOne(t *testing.T) {
+	const host, nodeIP = "ilm.appliance.internal", "10.0.2.15"
+	_, rootPEM, served := builtinCA(t, host)
+	self, _, err := setup.SelfSigned([]string{nodeIP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caFile := filepath.Join(t.TempDir(), "setup.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: self.Certificate[0]}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, srv := range map[string]*httptest.Server{
+		"setup certificate":    console(t, self, rootPEM),
+		"built-in certificate": console(t, served, rootPEM),
+	} {
+		o := options{url: srv.URL, caFile: caFile, serverName: nodeIP, hostName: host}
+		c, err := part2Client(context.Background(), o)
+		if err != nil {
+			t.Errorf("%s: part2Client = %v", name, err)
+			continue
+		}
+		if err := c.call(context.Background(), http.MethodGet, "/healthz", nil, nil); err != nil {
+			t.Errorf("%s: GET through the trusted client = %v", name, err)
+		}
+	}
+}
+
 func TestDriveAPIPrintsNoAnswers(t *testing.T) {
 	const answer = `{"seed":"ANSWER-MARKER"}`
 	var got string

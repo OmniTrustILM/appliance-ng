@@ -17,6 +17,7 @@ import (
 
 	"filippo.io/age"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -39,6 +40,7 @@ const (
 	pathRestoreInspect = pathRestore + "/inspect"
 	pathRestoreStart   = pathRestore + "/start"
 	pathRestoreResume  = pathRestore + "/resume"
+	pathRestoreAbandon = pathRestore + "/abandon"
 
 	restorePassphrase = "restore-Passphrase-that-must-stay-inside"
 	restoreS3Secret   = "restore-s3-secret-key-never-leaves"
@@ -595,6 +597,98 @@ func TestRestoreResume(t *testing.T) {
 	}
 	if e := lastEntry(h); e.Action != string(AuditEntryActionRestoreResume) || e.Details["backup"] != restoreName || e.Result != string(Success) {
 		t.Errorf("audit entry %+v", e)
+	}
+}
+
+// setHandover sets the HandoverComplete condition of the appliance.
+func setHandover(t *testing.T, status metav1.ConditionStatus) {
+	t.Helper()
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: v1alpha1.ConditionHandoverComplete, Status: status, Reason: "Test"})
+	})
+}
+
+func TestAbandonRestoreWhileHandoverPending(t *testing.T) {
+	h, s, _, _, _ := freshRestore(t)
+	setHandover(t, metav1.ConditionFalse)
+	rec := h.request(http.MethodPost, pathRestoreAbandon, nil, s)
+	wantCode(t, rec, http.StatusConflict, "handover_pending")
+	var e Error
+	decode(t, rec, &e)
+	if e.Message != "The appliance is still taking over the setup answers; try again in a minute." {
+		t.Errorf("message %q", e.Message)
+	}
+	if got := getAppliance(t).Status.Setup; got != v1alpha1.SetupRestore {
+		t.Errorf("setup %q, want it unchanged", got)
+	}
+	if _, err := os.Stat(filepath.Join(h.srv.deps.RestoreDir, restoreName)); err != nil {
+		t.Errorf("the refused abandon removed the backup: %v", err)
+	}
+}
+
+func TestAbandonRestoreMovesToPart2(t *testing.T) {
+	h, s, _, key, _ := freshRestore(t)
+	setHandover(t, metav1.ConditionTrue)
+	h.srv.keepInspection(&inspection{ref: "check", token: "t", name: restoreName, id: key})
+	file := filepath.Join(h.srv.deps.RestoreDir, restoreName)
+	wantStatus(t, h.request(http.MethodPost, pathRestoreAbandon, nil, s), http.StatusNoContent)
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the backup is still stored: %v", err)
+	}
+	if h.checked() != "" {
+		t.Error("the checked backup's key is still in memory")
+	}
+	if got := getAppliance(t).Status.Setup; got != v1alpha1.SetupPart2 {
+		t.Errorf("setup %q, want %q", got, v1alpha1.SetupPart2)
+	}
+	if e := lastEntry(h); e.Action != string(AuditEntryActionRestoreAbandon) || e.Result != string(Success) {
+		t.Errorf("audit entry %+v", e)
+	}
+}
+
+func TestAbandonRestoreWhileARestoreOperationRuns(t *testing.T) {
+	h, s, _, _, _ := freshRestore(t)
+	setHandover(t, metav1.ConditionTrue)
+	h.srv.restoreMu.Lock()
+	wantCode(t, h.request(http.MethodPost, pathRestoreAbandon, nil, s), http.StatusConflict, "busy")
+	h.srv.restoreMu.Unlock()
+	if got := getAppliance(t).Status.Setup; got != v1alpha1.SetupRestore {
+		t.Errorf("setup %q, want it unchanged", got)
+	}
+	if _, err := os.Stat(filepath.Join(h.srv.deps.RestoreDir, restoreName)); err != nil {
+		t.Errorf("the refused abandon removed the backup: %v", err)
+	}
+}
+
+func TestAbandonRestoreAfterStart(t *testing.T) {
+	h, s, _, _, _ := freshRestore(t)
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Restore = &v1alpha1.RestoreStatus{Backup: restoreName, Step: v1alpha1.RestoreStepDatabase}
+	})
+	rec := h.request(http.MethodPost, pathRestoreAbandon, nil, s)
+	wantCode(t, rec, http.StatusConflict, "restore_started")
+	var e Error
+	decode(t, rec, &e)
+	if e.Message != "A restore was started on this appliance; install it again to set up a new appliance." {
+		t.Errorf("message %q", e.Message)
+	}
+	if got := getAppliance(t).Status.Setup; got != v1alpha1.SetupRestore {
+		t.Errorf("setup %q, want it unchanged", got)
+	}
+	if _, err := os.Stat(filepath.Join(h.srv.deps.RestoreDir, restoreName)); err != nil {
+		t.Errorf("the refused abandon removed the backup: %v", err)
+	}
+}
+
+func TestAbandonRestoreWhenNotRestoring(t *testing.T) {
+	for _, setup := range []string{v1alpha1.SetupPart2, v1alpha1.SetupComplete} {
+		h := newHarness(t)
+		s := h.signIn()
+		createAppliance(t, setup)
+		wantCode(t, h.request(http.MethodPost, pathRestoreAbandon, nil, s), http.StatusConflict, "not_restoring")
+		if got := getAppliance(t).Status.Setup; got != setup {
+			t.Errorf("setup %q, want %q", got, setup)
+		}
 	}
 }
 

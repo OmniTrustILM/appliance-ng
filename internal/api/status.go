@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -109,6 +110,19 @@ func (s *Server) GetCaPem(ctx context.Context, _ GetCaPemRequestObject) (GetCaPe
 		ContentLength: int64(len(pem)),
 		Headers:       GetCaPem200ResponseHeaders{ContentDisposition: &disposition},
 	}, nil
+}
+
+// GetReadiness reports whether the console accepts a sign-in: the Appliance exists and the hand-over is complete.
+// It is public and exposes nothing else.
+func (s *Server) GetReadiness(ctx context.Context, _ GetReadinessRequestObject) (GetReadinessResponseObject, error) {
+	a, err := s.appliance(ctx)
+	if apierrors.IsNotFound(err) {
+		return GetReadiness200JSONResponse{SignIn: false}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return GetReadiness200JSONResponse{SignIn: meta.IsStatusConditionTrue(a.Status.Conditions, v1alpha1.ConditionHandoverComplete)}, nil
 }
 
 // appliance reads the Appliance.

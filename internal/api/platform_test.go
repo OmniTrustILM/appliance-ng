@@ -62,7 +62,7 @@ func TestGetPlatform(t *testing.T) {
 		{Name: "common-credential-provider", Title: "Common Credential Provider", Registered: true},
 		{Name: "ejbca-ng-connector", Title: "EJBCA NG Connector", Chosen: true, Registered: true},
 		{Name: privateComponent, Title: "External Authority Provider", Private: true, NeedsCredentials: true, Registered: true},
-		{Name: testMailComponent, Title: "Email Notification Provider", NeedsMail: true, Url: ptr("http://email-notification-provider.ilm.svc.cluster.local:8080")},
+		{Name: testMailComponent, Title: "Email Notification Provider", Registered: true, NeedsMail: true, Url: ptr("http://email-notification-provider.ilm.svc.cluster.local:8080")},
 	}}
 	if got.IlmVersion != want.IlmVersion || got.HostName != want.HostName || !reflect.DeepEqual(got.Components, want.Components) {
 		t.Errorf("platform\n got %+v\nwant %+v", got, want)
@@ -75,6 +75,49 @@ func TestGetPlatform(t *testing.T) {
 		if c.NeedsCredentials || c.NeedsMail {
 			t.Errorf("%s still needs something: %+v", c.Name, c)
 		}
+	}
+}
+
+func TestGetPlatformReportsTheStateOfChosenComponents(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	installedAppliance(t, "common-credential-provider", "ejbca-ng-connector")
+	a := getAppliance(t)
+	a.Status.Connectors = []v1alpha1.ConnectorState{
+		{Name: "common-credential-provider", State: "failed", Problem: "the image cannot be pulled; check the registry credentials and the proxy"},
+		{Name: "ejbca-ng-connector", State: "waiting"},
+		{Name: privateComponent, State: "ready"},
+	}
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := h.request(http.MethodGet, pathPlatform, nil, s)
+	wantStatus(t, rec, http.StatusOK)
+	var got PlatformState
+	decode(t, rec, &got)
+	type reported struct {
+		state, problem string
+	}
+	have := map[string]reported{}
+	for _, c := range got.Components {
+		var r reported
+		if c.State != nil {
+			r.state = string(*c.State)
+		}
+		if c.Problem != nil {
+			r.problem = *c.Problem
+		}
+		have[c.Name] = r
+	}
+	want := map[string]reported{
+		"common-credential-provider": {"failed", "the image cannot be pulled; check the registry credentials and the proxy"},
+		"ejbca-ng-connector":         {"waiting", ""},
+		privateComponent:             {},
+		testMailComponent:            {},
+	}
+	if !reflect.DeepEqual(have, want) {
+		t.Errorf("states\n got %+v\nwant %+v", have, want)
 	}
 }
 

@@ -7,7 +7,7 @@ import { expiryNotice } from './expiry';
 
 export type CertificateInfo = components['schemas']['CertificateInfo'];
 
-const sources = { builtin: 'Built-in certificate authority', secret: 'Uploaded certificate' } as const;
+const sources = { builtin: 'Built-in certificate authority', secret: 'Uploaded certificate', acme: 'Automatic certificate (ACME)' } as const;
 
 /** The certificate the appliance serves: subject, names, issuer, validity and source, with a warning near its expiry. */
 export function CurrentCertificate({ info }: Readonly<{ info: CertificateInfo }>) {

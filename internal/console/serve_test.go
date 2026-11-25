@@ -95,3 +95,15 @@ func TestConsoleFilesPreferTheBuild(t *testing.T) {
 		t.Errorf("GET / = %q, want the placeholder without a build", got)
 	}
 }
+
+func TestConsoleServesFaviconUnderBase(t *testing.T) {
+	mux := http.NewServeMux()
+	Mount(mux, fstest.MapFS{
+		"index.html":  {Data: []byte("<html>console</html>")},
+		"favicon.svg": {Data: []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"/>")},
+	})
+	res := get(t, mux, "/appliance/favicon.svg")
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "image/svg+xml" {
+		t.Errorf("GET /appliance/favicon.svg = %d %s, want 200 image/svg+xml", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -62,8 +63,16 @@ func (s *Server) GetCertificate(ctx context.Context, _ GetCertificateRequestObje
 		return nil, err
 	}
 	out := CertificateInfo{Source: CertificateInfoSourceBuiltin}
-	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
+	switch a.Spec.TLS.Source {
+	case v1alpha1.TLSSourceSecret:
 		out.Source = CertificateInfoSourceSecret
+	case v1alpha1.TLSSourceACME:
+		out.Source = CertificateInfoSourceAcme
+		if a.Spec.TLS.ACME != nil {
+			if out.Acme, err = s.acmeInfo(ctx, a); err != nil {
+				return nil, err
+			}
+		}
 	}
 	pending, err := s.systemSecret(ctx, certs.CSRSecretName)
 	if err != nil {
@@ -76,12 +85,12 @@ func (s *Server) GetCertificate(ctx context.Context, _ GetCertificateRequestObje
 	return GetCertificate200JSONResponse(out), nil
 }
 
-// certificateInUse describes the certificate the appliance serves, read with r: the built-in one or the Secret
-// spec.tls references; it is nil while there is none.
+// certificateInUse describes the certificate the appliance serves, read with r: the built-in one, the issued ACME
+// one or the Secret spec.tls references; it is nil while there is none.
 func (s *Server) certificateInUse(ctx context.Context, r client.Reader, a *v1alpha1.Appliance) (*CertificateDetails, error) {
-	name := certs.SecretName
-	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
-		name = a.Spec.TLS.SecretRef
+	name, err := certs.ServedSecretName(ctx, r, a)
+	if err != nil {
+		return nil, err
 	}
 	inUse, err := readSystemSecret(ctx, r, name)
 	if err != nil || inUse == nil {
@@ -189,8 +198,8 @@ func (s *Server) PostCertificateCsr(ctx context.Context, _ PostCertificateCsrReq
 	}, nil
 }
 
-// PutCertificateBuiltin selects the built-in certificate and deletes the uploaded one and a pending signing
-// request.
+// PutCertificateBuiltin selects the built-in certificate and deletes the uploaded one, a pending signing request and
+// the ACME credentials.
 func (s *Server) PutCertificateBuiltin(ctx context.Context, _ PutCertificateBuiltinRequestObject) (PutCertificateBuiltinResponseObject, error) {
 	_, err := s.appliance(ctx)
 	if apierrors.IsNotFound(err) {
@@ -203,7 +212,7 @@ func (s *Server) PutCertificateBuiltin(ctx context.Context, _ PutCertificateBuil
 	if err := s.selectTLS(ctx, v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin}); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{certs.CustomSecretName, certs.CSRSecretName} {
+	for _, name := range []string{certs.CustomSecretName, certs.CSRSecretName, certs.ACMEEABSecretName, certs.ACMEDNS01SecretName} {
 		if err := s.deleteSystemSecret(ctx, name); err != nil {
 			return nil, err
 		}
@@ -213,7 +222,8 @@ func (s *Server) PutCertificateBuiltin(ctx context.Context, _ PutCertificateBuil
 }
 
 // installCertificate validates certPEM with keyPEM and chainPEM for the appliance's names and trusted CAs, stores
-// them in certs.CustomSecretName, selects that Secret and drops a pending signing request, logging when that fails.
+// them in certs.CustomSecretName, selects that Secret and drops a pending signing request and the ACME credentials,
+// logging when that fails.
 // signed says keyPEM is the pending request's key. A refused certificate leaves everything as it was.
 func (s *Server) installCertificate(ctx context.Context, certPEM, keyPEM, chainPEM []byte, signed bool) (*refusal, error) {
 	a, err := s.appliance(ctx)
@@ -250,6 +260,11 @@ func (s *Server) installCertificate(ctx context.Context, certPEM, keyPEM, chainP
 	// The certificate is in use; a pending request that stays is replaced by the next one.
 	if err := s.deleteSystemSecret(ctx, certs.CSRSecretName); err != nil {
 		s.deps.Log.Warn("signing request not deleted after the certificate was installed", "error", err)
+	}
+	for _, name := range []string{certs.ACMEEABSecretName, certs.ACMEDNS01SecretName} {
+		if err := s.deleteSystemSecret(ctx, name); err != nil {
+			s.deps.Log.Warn("ACME credentials not deleted after the certificate was installed", "secret", name, "error", err)
+		}
 	}
 	s.deps.Log.Info("certificate installed", "hosts", hosts, "signed", signed)
 	return nil, nil
@@ -349,6 +364,9 @@ func tlsPaths(before, after v1alpha1.TLSSpec) []string {
 	}
 	if before.SecretRef != after.SecretRef {
 		paths = append(paths, "spec.tls.secretRef")
+	}
+	if !reflect.DeepEqual(before.ACME, after.ACME) {
+		paths = append(paths, "spec.tls.acme")
 	}
 	return paths
 }

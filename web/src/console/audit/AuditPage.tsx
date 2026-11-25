@@ -15,20 +15,38 @@ const results = {
 
 const CELL = 'px-3 py-2.5 align-top';
 
-/** The changed paths of an entry, or what an issued or revoked credential grants. */
-function changes(entry: AuditEntry) {
+/**
+ * Why a change failed or was denied, and the details it is made of: the server's message, or for an internal error
+ * the request ID its log line carries.
+ */
+function reason(entry: AuditEntry): { text?: string; keys: string[] } {
+  if (entry.result === 'success') return { keys: [] };
+  const { code, message, requestId } = entry.details ?? {};
+  if (code === 'internal' && requestId) return { text: `Internal error, request ${requestId}`, keys: ['message', 'requestId'] };
+  return { text: message, keys: ['message'] };
+}
+
+/** The changed paths of an entry, or its other details, such as what an issued or revoked credential grants. */
+function changes(entry: AuditEntry, shown: readonly string[]) {
   if (entry.paths.length > 0) return entry.paths.join(', ');
-  return Object.entries(entry.details ?? {}).map(([key, value]) => `${key}: ${value}`).join(', ');
+  return Object.entries(entry.details ?? {})
+    .filter(([key]) => !shown.includes(key))
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(', ');
 }
 
 function EntryRow({ entry }: Readonly<{ entry: AuditEntry }>) {
   const result = results[entry.result];
+  const why = reason(entry);
   return (
     <tr className="border-t border-divider">
       <td className={`${CELL} whitespace-nowrap`}>{new Date(entry.time).toLocaleString()}</td>
       <td className={CELL}>{entry.user || '—'}</td>
       <td className={`${CELL} whitespace-nowrap font-mono text-[13px]`}>{entry.action}</td>
-      <td className={`${CELL} font-mono text-[13px] [overflow-wrap:anywhere]`}>{changes(entry) || '—'}</td>
+      <td className={`${CELL} [overflow-wrap:anywhere]`}>
+        <div className="font-mono text-[13px]">{changes(entry, why.keys) || '—'}</div>
+        {why.text && <div className="mt-1 text-content-muted">{why.text}</div>}
+      </td>
       <td className={CELL}><Badge tone={result.tone}>{result.label}</Badge></td>
     </tr>
   );

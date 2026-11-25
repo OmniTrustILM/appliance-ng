@@ -3,7 +3,7 @@
 //	drive part1 --url <console> --code <code> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> --ca-file <pem> [--server-name <ip>] [--gateway <ip>] [--dns <ip>[,<ip>...]]
 //	drive part2 --url <console> --user <user> --password <password> --seed-file <file>
-//	            --host-name <fqdn> [--component <name>]
+//	            --host-name <fqdn> [--component <name>] [--ca-file <pem>] [--server-name <ip>]
 //	drive check --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> [--connector <display name> --ui-url <url> --ui-addr <host:port>]
 //	drive kit --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
@@ -69,8 +69,9 @@
 // repository.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
-// --ca-file for --server-name, the node address it is issued for. part2 and check wait until the console serves a
-// certificate of the built-in CA for --host-name and then trust only the root CA of the built-in CA. drive prints
+// --ca-file for --server-name, the node address it is issued for. part2 trusts that certificate too while the
+// console still serves it, until setup is complete. part2 without --ca-file, and check, wait until the console serves
+// a certificate of the built-in CA for --host-name and then trust only the root CA of the built-in CA. drive prints
 // step names and the outcome only, never the code, the password, the seed or a TOTP code: the boot test log is
 // public.
 package main
@@ -147,7 +148,7 @@ func main() {
 	fs.StringVar(&o.connector, "connector", "", "display name of a connector that must register with Core (check)")
 	fs.StringVar(&o.uiURL, "ui-url", "", "base URL of the ILM (check)")
 	fs.StringVar(&o.uiAddr, "ui-addr", "", "address to reach the ILM at, host:port (check)")
-	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1)")
+	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1, part2)")
 	fs.StringVar(&o.serverName, "server-name", slirpNodeAddress,
 		"node address the certificate of the first-boot service is issued for (part1)")
 	fs.StringVar(&o.body, "body", "", "JSON body of the request (api)")
@@ -370,7 +371,7 @@ func (c *client) nodeSettings(ctx context.Context, o options) (map[string]any, e
 
 // part2 signs in to the Appliance Manager and answers wizard part 2.
 func part2(ctx context.Context, o options) error {
-	c, err := managerClient(ctx, o)
+	c, err := part2Client(ctx, o)
 	if err != nil {
 		return err
 	}
@@ -653,6 +654,32 @@ func (c *client) servesBuiltinCertificate(ctx context.Context) error {
 	}
 	fmt.Printf("drive: console certificate issued by %q\n", peers[0].Issuer.CommonName)
 	return nil
+}
+
+// part2Client returns a client of the console for wizard part 2. Until setup is complete the console serves the
+// setup certificate of the first-boot service, given with --ca-file for --server-name; without it, or once the
+// console serves a certificate of the built-in CA, it is the client managerClient returns.
+func part2Client(ctx context.Context, o options) (*client, error) {
+	if o.caFile == "" {
+		return managerClient(ctx, o)
+	}
+	roots, err := loadRoots(o.caFile)
+	if err != nil {
+		return nil, err
+	}
+	step("waiting for the setup or the built-in certificate")
+	var c *client
+	err = waitUntil(ctx, certificateTimeout, func() error {
+		setup := newClient(o.url, roots, o.serverName)
+		if _, _, setupErr := setup.fetchRootCA(ctx); setupErr == nil {
+			c = setup
+			return nil
+		}
+		builtin, builtinErr := trustBuiltinCA(ctx, o.url, o.hostName)
+		c = builtin
+		return builtinErr
+	})
+	return c, err
 }
 
 // managerClient waits until the console serves a certificate of the built-in CA for o.hostName and returns a

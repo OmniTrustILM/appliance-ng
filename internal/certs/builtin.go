@@ -33,6 +33,8 @@ const (
 	CertificateName          = "appliance-tls"
 	// SecretName is the TLS Secret, in Namespace, that holds the leaf certificate, its key and the root CA.
 	SecretName = "appliance-tls"
+	// SetupSecretName is the TLS Secret, in Namespace, that holds the setup certificate until setup is complete.
+	SetupSecretName = "appliance-setup-tls"
 	// FieldManager is the field manager of the manager's server-side applies.
 	FieldManager = kube.ManagerFieldManager
 )
@@ -132,16 +134,25 @@ func Ready(ctx context.Context, c client.Reader) (bool, error) {
 	case err != nil:
 		return false, fmt.Errorf("read certificate %s/%s: %w", Namespace, CertificateName, err)
 	}
+	return status(u, "Ready") == "True", nil
+}
+
+// status returns the status of the condition kind of a cert-manager object, empty when it has none for the object's
+// current generation.
+func status(u *unstructured.Unstructured, kind string) string {
 	conditions, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
 	for _, item := range conditions {
 		cond, ok := item.(map[string]any)
-		if !ok || cond["type"] != "Ready" {
+		if !ok || cond["type"] != kind {
 			continue
 		}
-		generation, _, _ := unstructured.NestedInt64(cond, "observedGeneration")
-		return cond["status"] == "True" && generation == u.GetGeneration(), nil
+		if generation, _, _ := unstructured.NestedInt64(cond, "observedGeneration"); generation != u.GetGeneration() {
+			return ""
+		}
+		s, _ := cond["status"].(string)
+		return s
 	}
-	return false, nil
+	return ""
 }
 
 // RootCA returns the PEM certificate of the built-in root CA, read from the leaf Secret. Only CERTIFICATE blocks are
