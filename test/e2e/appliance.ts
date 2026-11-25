@@ -107,13 +107,13 @@ async function fetchRootCA(): Promise<string> {
 }
 
 /**
- * Connects to the console for host and returns the certificate it presents, verified against root when one is given
- * and else unverified.
+ * Connects to the console for host and returns the certificate it presents, verified against root. With anyName the
+ * certificate need not name host: the setup certificate is issued for the node address.
  */
-function servedCertificate(address: string, port: number, host: string, root?: string): Promise<X509Certificate> {
-  const trust = root ? { ca: root } : { rejectUnauthorized: false };
+function servedCertificate(address: string, port: number, host: string, root: string, anyName = false): Promise<X509Certificate> {
+  const names = anyName ? { checkServerIdentity: () => undefined } : {};
   return new Promise((resolve, reject) => {
-    const socket = connect({ host: address, port, servername: host, ...trust, timeout: 10_000 }, () => {
+    const socket = connect({ host: address, port, servername: host, ca: root, ...names, timeout: 10_000 }, () => {
       const leaf = socket.getPeerX509Certificate();
       socket.end();
       if (leaf) resolve(leaf);
@@ -129,10 +129,20 @@ function spki(certificate: X509Certificate): string {
   return createHash('sha256').update(certificate.publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
 }
 
-/** The setup certificate of the first-boot service that run.sh saved, if it passed one. */
-function setupCertificate(): X509Certificate | undefined {
+/** The setup certificate of the first-boot service in PEM, as run.sh saved it, if it passed one. */
+function setupCertificate(): string | undefined {
   const path = process.env.E2E_SETUP_CERT_FILE;
-  return path ? new X509Certificate(readFileSync(path)) : undefined;
+  return path ? readFileSync(path, 'utf8') : undefined;
+}
+
+/** Whether the console serves the setup certificate: a handshake that trusts only that certificate succeeds. */
+async function servesSetupCertificate(address: string, port: number, host: string, setup: string): Promise<boolean> {
+  try {
+    await servedCertificate(address, port, host, setup, true);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -149,9 +159,9 @@ async function trustConsole(): Promise<string[]> {
   let root = '';
   for (;;) {
     try {
-      if (setup && (await servedCertificate(address, port, host)).fingerprint256 === setup.fingerprint256) {
+      if (setup && (await servesSetupCertificate(address, port, host, setup))) {
         console.log('the console serves the setup certificate');
-        return [spki(setup)];
+        return [spki(new X509Certificate(setup))];
       }
       root ||= await fetchRootCA();
       const leaf = await servedCertificate(address, port, host, root);
