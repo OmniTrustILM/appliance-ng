@@ -2,14 +2,14 @@ package certs
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"net/netip"
 	"slices"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -179,8 +179,10 @@ func issuerFingerprint(ctx context.Context, c client.Reader, acme map[string]any
 	if err != nil {
 		return "", fmt.Errorf("encode the issuer settings: %w", err)
 	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), nil
+	// The fingerprint only tells a change apart, so a fast non-cryptographic hash does.
+	h := fnv.New64a()
+	_, _ = h.Write(encoded)
+	return strconv.FormatUint(h.Sum64(), 16), nil
 }
 
 // failed reports whether the last attempt to issue the Certificate u failed.
