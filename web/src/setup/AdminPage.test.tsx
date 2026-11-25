@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AdminPage } from './AdminPage';
-import { stubApi } from './test-utils';
+import { hang, stubApi } from './test-utils';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -28,6 +28,13 @@ describe('AdminPage', () => {
     render(<AdminPage onBack={vi.fn()} onDone={vi.fn()} onExpired={vi.fn()} />);
     await fill('admin', 'my-admin-password', 'my-admin-password');
     expect(screen.getByLabelText('Password')).toHaveAccessibleDescription(/user name/);
+  });
+
+  it('keeps Back until the save has settled', async () => {
+    stubApi({ 'PUT /appliance/api/v1/setup/admin': hang });
+    render(<AdminPage onBack={vi.fn()} onDone={vi.fn()} onExpired={vi.fn()} />);
+    await fill('admin', 'correct horse battery', 'correct horse battery');
+    expect(await screen.findByRole('button', { name: 'Back' })).toBeDisabled();
   });
 
   it('saves the administrator and passes the user name on', async () => {

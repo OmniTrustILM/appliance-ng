@@ -41,6 +41,7 @@ function useAdminPassword() {
       if (result?.data) setAdmin(result.data);
       else if (result?.response.status === 410) setAdmin({ note: 'The ILM administrator password was shown already. Set a new one on the Components page of the console.' });
       else if (result?.response.status === 404) setAdmin({ note: 'The ILM administrator password is not created yet. Set one on the Components page of the console when the ILM is running.' });
+      else if (result?.response.status !== 409) setAdmin({ note: 'The ILM administrator password could not be shown. Reload the page to try again.' });
     });
   }, []);
   return admin;

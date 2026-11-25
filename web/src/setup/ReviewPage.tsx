@@ -38,7 +38,7 @@ export function ReviewPage({ answers, mode, onBack, onChangeMode, onDone, onExpi
   const modeRow = (
     <span className="flex flex-wrap items-center gap-x-3">
       {mode && modeLabels[mode]}
-      <Button variant="ghost" className="h-8 px-2" onClick={onChangeMode}>Change</Button>
+      <Button variant="ghost" className="h-8 px-2" disabled={busy} onClick={onChangeMode}>Change</Button>
     </span>
   );
   return (

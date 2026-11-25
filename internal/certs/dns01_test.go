@@ -18,10 +18,13 @@ func TestDNS01Providers(t *testing.T) {
 }
 
 func TestValidateDNS01(t *testing.T) {
-	if err := ValidateDNS01("route53", map[string]string{"region": "eu-west-1"}, map[string]string{"secretAccessKey": "k"}); err != nil {
+	if err := ValidateDNS01("route53", map[string]string{"region": "eu-west-1", "accessKeyID": "id"}, map[string]string{"secretAccessKey": "k"}); err != nil {
 		t.Errorf("valid settings refused: %v", err)
 	}
-	if err := ValidateDNS01("route53", nil, nil); err == nil {
+	if err := ValidateDNS01("route53", map[string]string{"accessKeyID": "id"}, nil); err == nil {
 		t.Error("a missing secretAccessKey was accepted")
+	}
+	if err := ValidateDNS01("route53", map[string]string{"region": "eu-west-1"}, map[string]string{"secretAccessKey": "k"}); err == nil {
+		t.Error("a missing accessKeyID was accepted")
 	}
 }

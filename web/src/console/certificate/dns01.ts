@@ -17,7 +17,7 @@ export const dnsProviders: Readonly<Record<string, DnsProvider>> = {
   cloudflare: { label: 'Cloudflare', config: [], secrets: [required('apiToken', 'API token')] },
   route53: {
     label: 'Amazon Route 53',
-    config: [optional('region', 'Region'), optional('accessKeyID', 'Access key ID'), optional('hostedZoneID', 'Hosted zone ID'), optional('role', 'Role')],
+    config: [optional('region', 'Region'), required('accessKeyID', 'Access key ID'), optional('hostedZoneID', 'Hosted zone ID'), optional('role', 'Role')],
     secrets: [required('secretAccessKey', 'Secret access key')],
   },
   azuredns: {

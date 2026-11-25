@@ -43,7 +43,7 @@ export function AdminPage({ onBack, onDone, onExpired }: Readonly<{
   return (
     <form onSubmit={submit} noValidate>
       <Card
-        back={<Button variant="secondary" onClick={onBack}>Back</Button>}
+        back={<Button variant="secondary" disabled={busy} onClick={onBack}>Back</Button>}
         actions={<Button type="submit" busy={busy}>Continue</Button>}
       >
         <PageHeading eyebrow="Setup" title="Administrator" lead="The account that signs in to this console." />

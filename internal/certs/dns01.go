@@ -58,7 +58,7 @@ var DNS01Providers = map[string]DNS01Provider{
 	},
 	"cloudflare": {Secrets: []DNS01Key{required("apiToken")}},
 	"route53": {
-		Config:  []DNS01Key{optional("region"), optional("accessKeyID"), optional("hostedZoneID"), optional("role")},
+		Config:  []DNS01Key{optional("region"), required("accessKeyID"), optional("hostedZoneID"), optional("role")},
 		Secrets: []DNS01Key{required("secretAccessKey")},
 	},
 	"azuredns": {

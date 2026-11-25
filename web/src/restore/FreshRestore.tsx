@@ -14,6 +14,19 @@ import { useLatest } from './useLatest';
 
 type Summary = components['schemas']['RestoreSummary'];
 
+/** How often and how far apart the status is read until it shows the setup left the restore. */
+const statusReads = 10;
+const statusReadMs = 300;
+
+/** Waits until the status no longer shows the restore, which it may for a moment after the setup moved on. */
+async function setupLeftRestore() {
+  for (let i = 0; i < statusReads; i++) {
+    const result = await attempt(() => api.GET('/status'));
+    if (result?.data && result.data.setup !== 'restore') return;
+    await new Promise((resolve) => setTimeout(resolve, statusReadMs));
+  }
+}
+
 /** The way out of the restore: a new appliance is set up in the wizard instead. */
 function SetUpNew() {
   const navigate = useNavigate();
@@ -24,10 +37,14 @@ function SetUpNew() {
   async function abandon() {
     setBusy(true);
     const result = await attempt(() => api.POST('/restore/abandon'));
-    setBusy(false);
     setAsking(false);
     const refused = refusalOf(result);
-    if (refused) return setRefusal(refused.message);
+    if (refused) {
+      setBusy(false);
+      return setRefusal(refused.message);
+    }
+    await setupLeftRestore();
+    setBusy(false);
     void navigate('/wizard/');
   }
 

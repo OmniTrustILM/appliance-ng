@@ -112,7 +112,7 @@ const (
 )
 
 // registerV1 creates the connector in ILM, or asks ILM to connect to it again when it is listed but not connected,
-// and reports whether ILM already lists it as connected, or definitely refused to create it.
+// and reports whether ILM already lists it as connected, or definitely refused to create or reconnect it.
 func (r *ApplianceReconciler) registerV1(ctx context.Context, c *ilmclient.Client, rc release.Connector, registered []ilmclient.Connector) v1Result {
 	url := platform.ConnectorURL(rc)
 	i := slices.IndexFunc(registered, func(l ilmclient.Connector) bool { return l.URL == url })
@@ -129,6 +129,9 @@ func (r *ApplianceReconciler) registerV1(ctx context.Context, c *ilmclient.Clien
 	case registered[i].Status != ilmConnected:
 		if err := c.ReconnectConnector(ctx, registered[i].UUID); err != nil {
 			logV1Failure(ctx, err, "could not reconnect a v1 connector in ILM", "connector", rc.Name)
+			if ilmclient.IsRefusal(err) {
+				return v1Refused
+			}
 		}
 	default:
 		return v1Connected

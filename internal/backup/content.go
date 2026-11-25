@@ -115,13 +115,18 @@ func dedupe(refs []secretRef) []secretRef {
 	return out
 }
 
-// referenced lists the Secrets of the Appliance's spec, all in the appliance namespace.
+// referenced lists the Secrets of the Appliance's spec and the ACME account key of a custom directory, all in the
+// appliance namespace.
 func referenced(a *v1alpha1.Appliance) []secretRef {
 	var refs []secretRef
 	for _, name := range referencedNames(a.Spec) {
 		if name != "" {
 			refs = append(refs, secretRef{namespace: kube.SystemNamespace, name: name, required: true})
 		}
+	}
+	// A custom directory may take its binding once only, so its account key is kept once cert-manager registered.
+	if acme := a.Spec.TLS.ACME; a.Spec.TLS.Source == v1alpha1.TLSSourceACME && acme != nil && acme.ILMProfile == nil {
+		refs = append(refs, secretRef{namespace: certs.Namespace, name: certs.ACMEAccountSecretName})
 	}
 	return refs
 }

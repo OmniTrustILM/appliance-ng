@@ -27,7 +27,8 @@ function elapsedText(seconds: number) {
 /**
  * The node installs and reboots. On the address the browser used, the page follows the appliance until the console
  * accepts a sign-in and then opens it. On another address the browser cannot ask the appliance across origins, so
- * the page links to the new address and shows how long the install has run.
+ * the page links to the new address and shows how long the install has run. When the page does not know the address,
+ * as after a reload, it also points to the address the appliance console shows.
  */
 export function ApplyingPage({ address }: Readonly<{ address?: string }>) {
   const sameHost = !address || address === window.location.hostname;
@@ -65,10 +66,17 @@ export function ApplyingPage({ address }: Readonly<{ address?: string }>) {
     <Card>
       <PageHeading eyebrow="Setup" title="Installing" />
       {sameHost ? (
-        <output className="mb-2 flex items-center gap-2">
-          <Spinner />
-          {stage}
-        </output>
+        <>
+          <output className="mb-2 flex items-center gap-2">
+            <Spinner />
+            {stage}
+          </output>
+          {!address && (
+            <p className="mb-2 text-content-muted">
+              If the address changed, open the console at the address shown on the appliance console.
+            </p>
+          )}
+        </>
       ) : (
         <>
           <p className="mb-2">The node installs and restarts now. When it is ready, open the console at</p>

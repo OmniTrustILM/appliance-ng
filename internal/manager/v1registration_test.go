@@ -38,8 +38,9 @@ type fakeConnectorsEdge struct {
 	connectors []ilmclient.Connector
 	requests   []string
 	down       bool
-	// createStatus, when set, is the status the edge answers a create with.
-	createStatus int
+	// createStatus and reconnectStatus, when set, are the statuses the edge answers a create and a reconnect with.
+	createStatus    int
+	reconnectStatus int
 	// delay is how long the edge takes to answer.
 	delay time.Duration
 }
@@ -69,6 +70,10 @@ func newFakeConnectorsEdge(t *testing.T, connectors ...ilmclient.Connector) *fak
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			e.requests[len(e.requests)-1] += " " + body["name"] + " " + body["url"]
 			_ = json.NewEncoder(w).Encode(map[string]string{"uuid": "new"})
+		case http.MethodPut:
+			if e.reconnectStatus != 0 {
+				w.WriteHeader(e.reconnectStatus)
+			}
 		}
 	}))
 	t.Cleanup(e.srv.Close)
@@ -360,6 +365,29 @@ func TestV1ConnectorILMRefusesIsFailedNotWaiting(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			edge := newFakeConnectorsEdge(t)
 			edge.createStatus = status
+			r, _, a := v1Fixture(t, edge, emailName)
+
+			out := r.reconcileV1Registrations(context.Background(), a, running(emailName), nil, true)
+
+			if got := slices.Equal(out.Refused, []string{emailName}); got != refused {
+				t.Errorf("refused = %q, want refused %v", out.Refused, refused)
+			}
+			if got := slices.Equal(out.Awaiting, []string{emailName}); got == refused {
+				t.Errorf("awaiting = %q, want waiting %v", out.Awaiting, !refused)
+			}
+		})
+	}
+}
+
+func TestV1ConnectorILMRefusesToReconnectIsFailedNotWaiting(t *testing.T) {
+	for status, refused := range map[int]bool{
+		http.StatusUnprocessableEntity: true,
+		http.StatusBadRequest:          true,
+		http.StatusInternalServerError: false,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			edge := newFakeConnectorsEdge(t, ilmclient.Connector{UUID: "u1", Name: "x", URL: v1URL(t, emailName), Status: "failed"})
+			edge.reconnectStatus = status
 			r, _, a := v1Fixture(t, edge, emailName)
 
 			out := r.reconcileV1Registrations(context.Background(), a, running(emailName), nil, true)

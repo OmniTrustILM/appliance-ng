@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ReviewPage } from './ReviewPage';
-import { stubApi } from './test-utils';
+import { hang, stubApi } from './test-utils';
 
 const answers = {
   user: 'admin',
@@ -73,6 +73,13 @@ describe('ReviewPage', () => {
     expect(screen.getByText('Restore from a backup')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Change' }));
     expect(onChangeMode).toHaveBeenCalled();
+  });
+
+  it('keeps the mode until the apply has settled', async () => {
+    stubApi({ 'POST /appliance/api/v1/setup/apply': hang });
+    render(<ReviewPage answers={answers} mode="new" onBack={vi.fn()} onChangeMode={vi.fn()} onDone={vi.fn()} onExpired={vi.fn()} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(screen.getByRole('button', { name: 'Change' })).toBeDisabled();
   });
 
   it('names a new appliance', () => {

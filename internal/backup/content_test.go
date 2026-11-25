@@ -96,7 +96,7 @@ func TestCollectSecretsList(t *testing.T) {
 }
 
 func TestCollectSecretsHoldsTheACMESecrets(t *testing.T) {
-	for _, name := range []string{"appliance-acme-eab", "appliance-acme-dns01", "appliance-acme-ilm-eab"} {
+	for _, name := range []string{"appliance-acme-eab", "appliance-acme-dns01", "appliance-acme-ilm-eab", "appliance-acme-account"} {
 		secret(t, "appliance-system", name, map[string][]byte{"k": []byte("v")})
 	}
 	a := &v1alpha1.Appliance{}
@@ -110,8 +110,13 @@ func TestCollectSecretsHoldsTheACMESecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"appliance-system/appliance-acme-dns01", "appliance-system/appliance-acme-eab"}; !slices.Equal(names(got), want) {
+	// The account key, since a directory may take a binding once only.
+	want := []string{"appliance-system/appliance-acme-account", "appliance-system/appliance-acme-dns01", "appliance-system/appliance-acme-eab"}
+	if !slices.Equal(names(got), want) {
 		t.Errorf("collected %v, want %v", names(got), want)
+	}
+	if !Restorable(a, "appliance-system", "appliance-acme-account") {
+		t.Error("the ACME account key is not restorable")
 	}
 
 	// The ILM profile's binding is generated again.

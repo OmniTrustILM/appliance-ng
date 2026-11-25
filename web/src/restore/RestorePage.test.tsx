@@ -427,6 +427,31 @@ describe('RestorePage', () => {
       expect(screen.queryByRole('heading', { name: 'Restore a backup' })).not.toBeInTheDocument();
     });
 
+    it('waits until the status shows the setup left the restore', async () => {
+      let setup = 'restore';
+      let staleReads = 0;
+      stubApi({
+        [STATE]: [200, waiting],
+        [status]: () => {
+          if (setup === 'part2' && staleReads < 1) {
+            staleReads++;
+            return [200, { setup: 'restore', conditions: [], versions: {}, rebootRequired: false }];
+          }
+          return [200, { setup, conditions: [], versions: {}, rebootRequired: false }];
+        },
+        [ABANDON]: () => {
+          setup = 'part2';
+          return [204];
+        },
+        ...wizardApi,
+      });
+      renderRoutes();
+      await userEvent.click(await screen.findByRole('button', { name: 'Set up a new appliance instead' }));
+      await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Set up a new appliance' }));
+      expect(await screen.findByLabelText('ILM host name', {}, { timeout: 3000 })).toHaveValue('node1.example.test');
+      expect(staleReads).toBe(1);
+    });
+
     it('shows the message of the appliance when it refuses', async () => {
       const message = 'A restore was started on this appliance; install it again to set up a new appliance.';
       stubApi({ [STATE]: [200, waiting], [ABANDON]: [409, { code: 'restore_started', message }] });

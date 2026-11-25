@@ -66,6 +66,15 @@ describe('DonePage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('asks for a reload when the ILM administrator password could not be shown', async () => {
+    stubApi({
+      'GET /appliance/api/v1/appliance': [200, appliance],
+      [ADMIN_PASSWORD]: [500, { code: 'internal', message: 'x' }],
+    });
+    renderPage();
+    expect(await screen.findByText('The ILM administrator password could not be shown. Reload the page to try again.')).toBeInTheDocument();
+  });
+
   it('shows no ILM administrator password with an external identity provider', async () => {
     stubApi({
       'GET /appliance/api/v1/appliance': [200, appliance],

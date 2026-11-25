@@ -35,6 +35,13 @@ describe('ApplyingPage on the host the browser used', () => {
     await wait(5);
     expect(mock).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByText(/address shown on the appliance console/)).not.toBeInTheDocument();
+  });
+
+  it('points to the appliance console when the page does not know the address, as after a reload', () => {
+    stubApi({ [stateRoute]: [200, { step: 'applying' }] });
+    render(<ApplyingPage />);
+    expect(screen.getByText(/If the address changed, open the console at the address shown on the appliance console\./)).toBeInTheDocument();
   });
 
   it('shows the install stage once the requests fail', async () => {
