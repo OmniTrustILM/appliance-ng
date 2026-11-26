@@ -229,7 +229,8 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bun
       --s3-secret-file "$s3_secret_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     access) args+=(--kube-addr "$KUBE_API" --apid "$APID") ;;
     restore) args+=(--backup "$backup_file" --kit "$kit_file" --passphrase-file "$kit_passphrase_file"
-      --ilm-host "$RESTORE_HOST" --out "$restored_kit_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
+      --ilm-host "$RESTORE_HOST" --out "$restored_kit_file" --kube-addr "$KUBE_API" --apid "$APID"
+      --ca-file "$setup_cert") ;;
     bundle-load) args+=(--file "$bundle_file" --image "$bundle_image" --kit "$kit_file"
       --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     *) fail "unknown wizard part $part" ;;

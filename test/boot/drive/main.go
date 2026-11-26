@@ -19,7 +19,7 @@
 //	            --host-name <fqdn> [--body <json>]
 //	drive restore --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
 //	            --backup <file> --kit <file> --passphrase-file <file> --ilm-host <fqdn> --out <file>
-//	            [--kube-addr <host:port>] [--apid <host:port>]
+//	            [--kube-addr <host:port>] [--apid <host:port>] [--ca-file <pem>] [--server-name <ip>]
 //	drive ilm-marker --create|--check --url <console> --host-name <fqdn> --credential <p12>
 //	            --credential-password-file <file> --ui-url <url> --ui-addr <host:port>
 //	            [--kit <file> --passphrase-file <file> --kube-addr <host:port> --client-secret-out <file>]
@@ -74,9 +74,10 @@
 // prints sizes, states and reasons only.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
-// --ca-file for --server-name, the node address it is issued for. part2 trusts that certificate too while the
-// console still serves it, until setup is complete. part2 without --ca-file, and check, wait until the console serves
-// a certificate of the built-in CA for --host-name and then trust only the root CA of the built-in CA. drive prints
+// --ca-file for --server-name, the node address it is issued for. part2 and restore trust that certificate too while
+// the console still serves it, until setup is complete; restore then waits for the built-in certificate. part2 and
+// restore without --ca-file, and check, wait until the console serves a certificate of the built-in CA for
+// --host-name and then trust only the root CA of the built-in CA. drive prints
 // step names and the outcome only, never the code, the password, the seed or a TOTP code: the boot test log is
 // public.
 package main
@@ -153,7 +154,7 @@ func main() {
 	fs.StringVar(&o.connector, "connector", "", "display name of a connector that must register with Core (check)")
 	fs.StringVar(&o.uiURL, "ui-url", "", "base URL of the ILM (check)")
 	fs.StringVar(&o.uiAddr, "ui-addr", "", "address to reach the ILM at, host:port (check)")
-	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1, part2)")
+	fs.StringVar(&o.caFile, "ca-file", "", "PEM certificate of the first-boot service to trust (part1, part2, restore)")
 	fs.StringVar(&o.serverName, "server-name", slirpNodeAddress,
 		"node address the certificate of the first-boot service is issued for (part1)")
 	fs.StringVar(&o.body, "body", "", "JSON body of the request (api)")
@@ -384,7 +385,7 @@ func (c *client) nodeSettings(ctx context.Context, o options) (map[string]any, e
 
 // part2 signs in to the Appliance Manager and answers wizard part 2.
 func part2(ctx context.Context, o options) error {
-	c, err := part2Client(ctx, o)
+	c, err := setupClient(ctx, o)
 	if err != nil {
 		return err
 	}
@@ -669,10 +670,10 @@ func (c *client) servesBuiltinCertificate(ctx context.Context) error {
 	return nil
 }
 
-// part2Client returns a client of the console for wizard part 2. Until setup is complete the console serves the
-// setup certificate of the first-boot service, given with --ca-file for --server-name; without it, or once the
-// console serves a certificate of the built-in CA, it is the client managerClient returns.
-func part2Client(ctx context.Context, o options) (*client, error) {
+// setupClient returns a client of the console for wizard part 2 or a restore. Until setup is complete the console
+// serves the setup certificate of the first-boot service, given with --ca-file for --server-name; without it, or once
+// the console serves a certificate of the built-in CA, it is the client managerClient returns.
+func setupClient(ctx context.Context, o options) (*client, error) {
 	if o.caFile == "" {
 		return managerClient(ctx, o)
 	}

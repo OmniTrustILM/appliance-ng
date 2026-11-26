@@ -287,9 +287,9 @@ func TestPart2TrustsTheSetupCertificateUntilTheBuiltinOne(t *testing.T) {
 		"built-in certificate": console(t, served, rootPEM),
 	} {
 		o := options{url: srv.URL, caFile: caFile, serverName: nodeIP, hostName: host}
-		c, err := part2Client(context.Background(), o)
+		c, err := setupClient(context.Background(), o)
 		if err != nil {
-			t.Errorf("%s: part2Client = %v", name, err)
+			t.Errorf("%s: setupClient = %v", name, err)
 			continue
 		}
 		if err := c.call(context.Background(), http.MethodGet, "/healthz", nil, nil); err != nil {
