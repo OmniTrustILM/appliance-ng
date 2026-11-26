@@ -350,7 +350,8 @@ func pae(payloadType string, payload []byte) []byte {
 
 // readMetadata reads the metadata artifact, the first entry of the signed bundle index, and checks its layers.
 func (b *Bundle) readMetadata(index *v1.IndexManifest) (*verified, error) {
-	if len(index.Manifests) == 0 || index.Manifests[0].ArtifactType != artifactTypeBundle {
+	if len(index.Manifests) == 0 || index.Manifests[0].ArtifactType != artifactTypeBundle ||
+		index.Manifests[0].MediaType != types.OCIManifestSchema1 {
 		return nil, errors.New("the bundle index does not start with the bundle metadata")
 	}
 	data, err := b.readBlob(index.Manifests[0], maxManifestSize)
@@ -389,7 +390,8 @@ func (b *Bundle) readMetadata(index *v1.IndexManifest) (*verified, error) {
 	return v, nil
 }
 
-// listedImages returns the descriptor in the bundle index of each image, found by its reference and its digest.
+// listedImages returns the descriptor in the bundle index of each image, found by its reference and its digest. The
+// index may list nothing else besides the metadata, as a push copies all it lists.
 func listedImages(index *v1.IndexManifest, images []ImageRef) ([]v1.Descriptor, error) {
 	// Several references may name the same manifest, so a child is known by its reference and its digest.
 	type key struct{ ref, digest string }
@@ -398,12 +400,20 @@ func listedImages(index *v1.IndexManifest, images []ImageRef) ([]v1.Descriptor, 
 		children[key{d.Annotations[annotationRefName], d.Digest.String()}] = d
 	}
 	listed := make([]v1.Descriptor, 0, len(images))
+	named := map[key]bool{}
 	for _, ref := range images {
-		d, ok := children[key{ref.Ref, ref.Digest}]
+		k := key{ref.Ref, ref.Digest}
+		d, ok := children[k]
 		if !ok || !d.MediaType.IsImage() {
 			return nil, fmt.Errorf("%w: %s %s is not in the bundle index", ErrMissingImage, ref.Ref, ref.Digest)
 		}
 		listed = append(listed, d)
+		named[k] = true
+	}
+	for k := range children {
+		if !named[k] {
+			return nil, fmt.Errorf("the bundle index lists %s %s, which the metadata does not", k.ref, k.digest)
+		}
 	}
 	return listed, nil
 }

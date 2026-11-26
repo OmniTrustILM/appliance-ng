@@ -635,3 +635,34 @@ func TestValidFileName(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyRefusesEntriesTheMetadataDoesNotList refuses a bundle index with an image the metadata does not list, or
+// whose metadata is not an image manifest.
+func TestVerifyRefusesEntriesTheMetadataDoesNotList(t *testing.T) {
+	r := newTestRelease(t)
+	key := newKey(t)
+	cases := map[string]func(im *v1.IndexManifest){
+		"surplus image": func(im *v1.IndexManifest) {
+			extra := im.Manifests[1]
+			extra.Annotations = map[string]string{annotationRefName: "ghcr.io/extra:v1"}
+			im.Manifests = append(im.Manifests, extra)
+		},
+		"metadata not a manifest": func(im *v1.IndexManifest) { im.Manifests[0].MediaType = types.OCIImageIndex },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := build(t, r, release.BundleSystem, "amd64", nil)
+			resign(t, dir, key, change)
+			b, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.Verify(&key.PublicKey, "amd64"); err == nil {
+				t.Error("Verify succeeded")
+			}
+			if _, err := b.VerifySigned(&key.PublicKey, "amd64"); err == nil {
+				t.Error("VerifySigned succeeded")
+			}
+		})
+	}
+}
