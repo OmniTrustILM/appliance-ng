@@ -36,7 +36,8 @@ func (h httpsOnly) RoundTrip(req *http.Request) (*http.Response, error) {
 	return h.next.RoundTrip(req)
 }
 
-// idleConn fails a read or a write that makes no progress for idle.
+// idleConn fails a read or a write that makes no progress for idle. A write also extends the read deadline: an HTTP/1
+// transport waits for the answer while it writes the request body, so the wait counts from the body's last progress.
 type idleConn struct {
 	net.Conn
 	idle time.Duration
@@ -48,6 +49,8 @@ func (c *idleConn) Read(p []byte) (int, error) {
 }
 
 func (c *idleConn) Write(p []byte) (int, error) {
-	_ = c.SetWriteDeadline(time.Now().Add(c.idle))
-	return c.Conn.Write(p)
+	_ = c.SetDeadline(time.Now().Add(c.idle))
+	n, err := c.Conn.Write(p)
+	_ = c.SetReadDeadline(time.Now().Add(c.idle))
+	return n, err
 }

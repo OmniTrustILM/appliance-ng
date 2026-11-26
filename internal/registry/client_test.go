@@ -543,6 +543,40 @@ func TestClientGivesUpAStalledRegistry(t *testing.T) {
 	}
 }
 
+// slowBody yields n chunks, each after a pause.
+type slowBody struct {
+	n     int
+	pause time.Duration
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	if b.n == 0 {
+		return 0, io.EOF
+	}
+	time.Sleep(b.pause)
+	b.n--
+	return copy(p, strings.Repeat("x", 1024)), nil
+}
+
+// TestGuardKeepsAProgressingUpload uploads a body that takes longer than the idle timeout but makes progress more
+// often: the wait for the answer does not time out while the body is written.
+func TestGuardKeepsAProgressingUpload(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+	}))
+	t.Cleanup(srv.Close)
+	idle := 200 * time.Millisecond
+	c := &http.Client{Transport: Guard(srv.Client().Transport.(*http.Transport).Clone(), idle)}
+	resp, err := c.Post(srv.URL, "application/octet-stream", &slowBody{n: 8, pause: idle / 3})
+	if err != nil {
+		t.Fatalf("an upload that makes progress failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+}
+
 // TestGuardRefusesRedirectsAwayFromHTTPS refuses to follow a redirect to http.
 func TestGuardRefusesRedirectsAwayFromHTTPS(t *testing.T) {
 	srv := httptest.NewTLSServer(http.RedirectHandler("http://example.com/v2/", http.StatusFound))
