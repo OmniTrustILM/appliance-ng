@@ -51,7 +51,7 @@ var (
 	answerSuperseded   = refused(http.StatusConflict, "superseded",
 		"Another backup check in this session replaced this one; check the backup again.")
 	answerOperatorDowngrade = refused(http.StatusConflict, "operator_downgrade",
-		"A newer ILM operator than this release's runs, as after a fresh restore from a loaded platform bundle; restore a backup of that bundle's ILM version, or set up the appliance anew.")
+		"A newer ILM operator runs than this restore would apply, as after a fresh restore from a newer platform bundle; restore a backup of that bundle's ILM version, or set up the appliance anew.")
 	answerNotLocal = refused(http.StatusConflict, "not_local",
 		"A restore in place takes a backup on this appliance's data volume; a fresh restore an uploaded or fetched one.")
 	answerUnconfirmed = refusedField(codeInvalid, fieldConfirm,
@@ -460,8 +460,9 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 		if answer := s.ilmAvailable(a, in.summary.Manifest.ILM); answer.status != 0 {
 			return answer, nil
 		}
-		opts.PlatformBundle = update.PlatformBundleFor(s.deps.Release, loadedBundles(a), in.summary.Manifest.ILM)
-		if opts.PlatformBundle == "" && update.EmbeddedOperatorOlder(s.deps.Release, a.Status.Versions.Operator) {
+		loaded := loadedBundles(a)
+		opts.PlatformBundle = update.PlatformBundleFor(s.deps.Release, loaded, in.summary.Manifest.ILM)
+		if update.OperatorDowngrade(s.deps.Release, loaded, a.Status.Versions, opts.PlatformBundle) {
 			return answerOperatorDowngrade, nil
 		}
 	}

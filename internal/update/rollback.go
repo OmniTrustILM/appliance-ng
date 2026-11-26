@@ -234,11 +234,7 @@ func (j *Jobs) source(a *v1alpha1.Appliance, from string) (platformSource, error
 // activeOperator is the ILM operator the add-on pass applies with the platform bundle md: its operator when newer
 // than the embedded one, else the embedded one.
 func (j *Jobs) activeOperator(md *bundle.Metadata) string {
-	embedded := j.embeddedOperator()
-	if !bundleOperator(embedded, md) {
-		return embedded
-	}
-	return md.Operator
+	return appliedOperator(j.embeddedOperator(), md)
 }
 
 // restoreRefusals map the refusals of a restore to the reasons of a rollback.

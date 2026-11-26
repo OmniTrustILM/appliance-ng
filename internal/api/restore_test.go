@@ -347,6 +347,37 @@ func TestRestoreRefusesAnOlderOperator(t *testing.T) {
 	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusAccepted)
 }
 
+// TestRestoreRefusesAnOlderBundleOperator refuses a fresh restore from a retained platform bundle whose ILM operator
+// is older than the one that runs, as after a failed fresh restore from a newer bundle, and starts one from a bundle
+// with the same operator.
+func TestRestoreRefusesAnOlderBundleOperator(t *testing.T) {
+	h := newHarness(t)
+	withOperator := *testRelease
+	withOperator.Addons = []release.AddonFile{{Name: release.OperatorAddon, Version: "1.1.0"}}
+	h.srv.deps.Release = &withOperator
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupRestore)
+	f, dir := withRestore(t, h)
+	key, kit := restoreKit(t)
+	putRestoreFile(t, dir, restoreName, sealedBackup(t, key, "2.21.0", testUser))
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Versions.Operator, st.Versions.PlatformBundle = "1.3.0", "1.2.0"
+		st.Updates = &v1alpha1.UpdatesStatus{Loaded: []v1alpha1.BundleInfo{
+			{Kind: "platform", Version: "1.1.0", ILM: "2.21.0", Operator: "1.2.0"},
+			{Kind: "platform", Version: "1.2.0", ILM: "2.22.0", Operator: "1.3.0"},
+		}}
+	})
+	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
+
+	start := RestoreStart{Confirm: true, Inspection: h.checked()}
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusConflict, "operator_downgrade")
+	if len(f.started) != 0 {
+		t.Fatalf("started %+v over a newer operator", f.started)
+	}
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Updates.Loaded[0].Operator = "1.3.0" })
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusAccepted)
+}
+
 // TestRestoreRefusesABundlePrunedSinceTheCheck refuses the restore of a backup whose platform bundle a later load
 // pruned after the backup was checked.
 func TestRestoreRefusesABundlePrunedSinceTheCheck(t *testing.T) {

@@ -150,3 +150,31 @@ func TestTagPlatform(t *testing.T) {
 		}
 	}
 }
+
+// TestOperatorDowngrade refuses recording a platform bundle, or the release's own platform, whose effective operator
+// is older than the newer of the running one and the one the installed platform bundle applies.
+func TestOperatorDowngrade(t *testing.T) {
+	m := &release.Manifest{Addons: []release.AddonFile{{Name: release.OperatorAddon, Version: "1.1.0"}}}
+	loaded := []v1alpha1.BundleInfo{
+		{Kind: release.BundlePlatform, Version: "1.1.0", Operator: "1.2.0"},
+		{Kind: release.BundlePlatform, Version: "1.2.0", Operator: "1.3.0"},
+	}
+	for _, tc := range []struct {
+		name string
+		v    v1alpha1.Versions
+		next string
+		want bool
+	}{
+		{"older bundle after a failed restore", v1alpha1.Versions{Operator: "1.3.0", PlatformBundle: "1.2.0"}, "1.1.0", true},
+		{"older bundle over the running operator", v1alpha1.Versions{Operator: "1.3.0"}, "1.1.0", true},
+		{"same bundle", v1alpha1.Versions{Operator: "1.3.0", PlatformBundle: "1.2.0"}, "1.2.0", false},
+		{"newer bundle", v1alpha1.Versions{Operator: "1.2.0", PlatformBundle: "1.1.0"}, "1.2.0", false},
+		{"embedded release over a bundle", v1alpha1.Versions{Operator: "1.1.0", PlatformBundle: "1.2.0"}, "", true},
+		{"embedded release over a newer running operator", v1alpha1.Versions{Operator: "1.5.0"}, "", true},
+		{"embedded release over the same operator", v1alpha1.Versions{Operator: "1.1.0"}, "", false},
+	} {
+		if got := update.OperatorDowngrade(m, loaded, tc.v, tc.next); got != tc.want {
+			t.Errorf("%s: OperatorDowngrade = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}

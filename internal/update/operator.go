@@ -35,11 +35,44 @@ func bundleOperator(embedded string, md *bundle.Metadata) bool {
 	return md != nil && older(embedded, md.Operator)
 }
 
-// EmbeddedOperatorOlder tells whether the ILM operator that the release m embeds is older than the running version,
-// so that the add-on pass would replace it with an older one once no platform bundle is recorded.
-func EmbeddedOperatorOlder(m *release.Manifest, running string) bool {
-	embedded, ok := m.Operator()
-	return ok && older(embedded.Version, running)
+// appliedOperator is the ILM operator version the add-on pass applies with the platform bundle md recorded, nil while
+// none is: md's when it is newer than the embedded one, else the embedded one.
+func appliedOperator(embedded string, md *bundle.Metadata) string {
+	if !bundleOperator(embedded, md) {
+		return embedded
+	}
+	return md.Operator
+}
+
+// operatorDowngrade tells whether recording the platform bundle next, nil for the release's own platform, has the
+// add-on pass apply an older ILM operator than the newer of running and the one the installed platform bundle
+// applies.
+func operatorDowngrade(embedded string, installed, next *bundle.Metadata, running string) bool {
+	active := appliedOperator(embedded, installed)
+	if older(active, running) {
+		active = running
+	}
+	return older(appliedOperator(embedded, next), active)
+}
+
+// OperatorDowngrade tells whether recording the loaded platform bundle next, empty for the release m's own platform,
+// has the add-on pass apply an older ILM operator than the one the versions v run, as a fresh restore after a failed
+// one from a newer bundle would.
+func OperatorDowngrade(m *release.Manifest, loaded []v1alpha1.BundleInfo, v v1alpha1.Versions, next string) bool {
+	embedded, _ := m.Operator()
+	return operatorDowngrade(embedded.Version, loadedPlatform(loaded, v.PlatformBundle), loadedPlatform(loaded, next),
+		v.Operator)
+}
+
+// loadedPlatform is the operator of the runnable loaded platform bundle version as metadata; nil when version is empty
+// or no such bundle is loaded.
+func loadedPlatform(loaded []v1alpha1.BundleInfo, version string) *bundle.Metadata {
+	for _, b := range loaded {
+		if version != "" && runnable(b) && b.Version == version {
+			return &bundle.Metadata{Operator: b.Operator}
+		}
+	}
+	return nil
 }
 
 // InstalledPlatform returns the metadata of the installed platform bundle version for arch, stored under dir when it

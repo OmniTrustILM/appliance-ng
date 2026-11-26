@@ -300,11 +300,7 @@ func (j *Jobs) refuseOperatorDowngrade(a *v1alpha1.Appliance, info v1alpha1.Bund
 	if err != nil {
 		return fail("read the platform", err)
 	}
-	running := j.activeOperator(md)
-	if older(running, a.Status.Versions.Operator) {
-		running = a.Status.Versions.Operator
-	}
-	if older(j.activeOperator(&bundle.Metadata{Operator: info.Operator}), running) {
+	if operatorDowngrade(j.embeddedOperator(), md, &bundle.Metadata{Operator: info.Operator}, a.Status.Versions.Operator) {
 		return &Error{Reason: OperatorOlderThanRunning}
 	}
 	return nil
