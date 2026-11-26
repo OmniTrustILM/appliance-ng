@@ -15,7 +15,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
-// TestPruneAgainstZot pushes two bundles into a real zot and prunes the older one. It runs only when
+// TestPruneAgainstZot pushes two bundles into a real zot, tags an image of the older one as installing a release does,
+// and prunes the older bundle. It runs only when
 // ZOT_TEST_ENDPOINT names a zot (host:port) with the configuration of addons/zot.yaml, ZOT_TEST_CA the PEM file of
 // its TLS certificate and ZOT_TEST_PASSWORD the password of the push user. With ZOT_TEST_ROOT, zot's root directory
 // on this host, and ZOT_TEST_GC_WAIT, long enough for zot's garbage collection to visit every repository, it also
@@ -33,7 +34,6 @@ func TestPruneAgainstZot(t *testing.T) {
 	shared, onlyOld, onlyNew, oldMoving, newMoving := newImage(t), newImage(t), newImage(t), newImage(t), newImage(t)
 	old := newBundle(t, map[string]v1.Image{ns + "shared:v1": shared, ns + "old:v1": onlyOld, ns + "moving:tag": oldMoving})
 	cur := newBundle(t, map[string]v1.Image{ns + "shared:v1": shared, ns + "new:v2": onlyNew, ns + "moving:tag": newMoving})
-	// The older bundle goes first and creates the tag moving, which the newer one leaves on its image.
 	for _, b := range []struct {
 		version string
 		bundle  *fakeBundle
@@ -42,11 +42,13 @@ func TestPruneAgainstZot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	wantRefs(t, c, map[string]bool{ns + "shared:v1": false, ns + "moving:tag": false})
+	tagImage(t, c, ns+"moving:tag", oldMoving)
 	orphan := pushOrphan(t, c)
 
 	if gcWait > 0 {
 		time.Sleep(gcWait)
-		if !exists(t, c, ns+"moving@"+digestOf(t, oldMoving)) || !onDisk(root, ns+"moving", layerOf(t, oldMoving)) {
+		if !exists(t, c, ns+"old@"+digestOf(t, onlyOld)) || !onDisk(root, ns+"old", layerOf(t, onlyOld)) {
 			t.Fatal("zot collected the untagged manifest of the previous bundle")
 		}
 		checkBundleRetention(t, c, root, []v1.ImageIndex{old.index, cur.index}, orphan, gcWait)
@@ -58,12 +60,10 @@ func TestPruneAgainstZot(t *testing.T) {
 
 	want := map[string]bool{
 		ns + "shared@" + digestOf(t, shared):         true,
-		ns + "shared:v1":                             true,
 		ns + "new@" + digestOf(t, onlyNew):           true,
 		ns + "moving:tag":                            true,
 		ns + "moving@" + digestOf(t, newMoving):      true,
 		ns + "old@" + digestOf(t, onlyOld):           false,
-		ns + "old:v1":                                false,
 		ns + "moving@" + digestOf(t, oldMoving):      true,
 		"appliance/system:1.0.0-amd64":               false,
 		"appliance/system@" + digestOf(t, old.index): false,
@@ -79,7 +79,7 @@ func TestPruneAgainstZot(t *testing.T) {
 	}
 
 	if got := tagDigest(t, c, ns+"moving:tag"); got != digestOf(t, oldMoving) {
-		t.Errorf("moving:tag = %s, want the older bundle's image %s", got, digestOf(t, oldMoving))
+		t.Errorf("moving:tag = %s, want the installed image %s", got, digestOf(t, oldMoving))
 	}
 
 	if gcWait > 0 {

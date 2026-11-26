@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"maps"
@@ -143,8 +142,8 @@ func TestPushBundleUnderUpstreamNames(t *testing.T) {
 		if !exists(t, c, repo+"@"+im.Ref.Digest) {
 			t.Errorf("%s: not in zot by digest %s", repo, im.Ref.Digest)
 		}
-		if tag != "" && !exists(t, c, repo+":"+tag) {
-			t.Errorf("%s: not in zot by tag %s", repo, tag)
+		if tag != "" && exists(t, c, repo+":"+tag) {
+			t.Errorf("%s: the load created the tag %s", repo, tag)
 		}
 	}
 	if !exists(t, c, "appliance/system:1.2.3-amd64") {
@@ -168,23 +167,11 @@ func TestPushBundleUnderUpstreamNames(t *testing.T) {
 	}
 }
 
-// TestPushBundleLeavesExistingTags pushes a second bundle with another image under an existing tag: the image is
-// there by its digest, and the tag stays on the image it named.
-func TestPushBundleLeavesExistingTags(t *testing.T) {
-	c, _ := newClient(t)
-	first, second := newImage(t), newImage(t)
-	for version, img := range []v1.Image{first, second} {
-		b := newBundle(t, map[string]v1.Image{"ghcr.io/cloudnative-pg/postgresql:18": img})
-		if err := c.PushBundle(t.Context(), b, b.metadata(fmt.Sprintf("1.%d.0", version)), nil); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if !exists(t, c, "ghcr.io/cloudnative-pg/postgresql@"+digestOf(t, second)) {
-		t.Error("the second bundle's image is not in zot by its digest")
-	}
-	if got := tagDigest(t, c, "ghcr.io/cloudnative-pg/postgresql:18"); got != digestOf(t, first) {
-		t.Errorf("the tag moved to %s, want it on the first image %s", got, digestOf(t, first))
+// tagImage pushes img under the tag ref into c's registry, as installing a release does.
+func tagImage(t *testing.T, c *Client, ref string, img v1.Image) {
+	t.Helper()
+	if err := remote.Write(mustTag(t, c.host+"/"+ref), img, c.options(t.Context())...); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -329,6 +316,10 @@ func TestPruneKeepsSharedDigests(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The installed release points moving:tag to the older bundle's image, and old:v1 to an image of no bundle.
+	tagImage(t, c, "ghcr.io/moving:tag", oldMoving)
+	installed := newImage(t)
+	tagImage(t, c, "ghcr.io/old:v1", installed)
 
 	if err := c.Prune(t.Context(), "system", []string{"2.0.0-amd64"}); err != nil {
 		t.Fatal(err)
@@ -336,13 +327,10 @@ func TestPruneKeepsSharedDigests(t *testing.T) {
 
 	for ref, want := range map[string]bool{
 		"ghcr.io/shared@" + digestOf(t, shared):    true,
-		"ghcr.io/shared:v1":                        true,
 		"ghcr.io/new@" + digestOf(t, onlyNew):      true,
 		"ghcr.io/moving@" + digestOf(t, newMoving): true,
-		"ghcr.io/moving:tag":                       true,
 		"ghcr.io/moving@" + digestOf(t, oldMoving): true,
 		"ghcr.io/old@" + digestOf(t, onlyOld):      false,
-		"ghcr.io/old:v1":                           false,
 		"appliance/system:1.0.0-amd64":             false,
 		"appliance/system:2.0.0-amd64":             true,
 	} {
@@ -350,8 +338,10 @@ func TestPruneKeepsSharedDigests(t *testing.T) {
 			t.Errorf("%s exists = %v, want %v", ref, got, want)
 		}
 	}
-	if got := tagDigest(t, c, "ghcr.io/moving:tag"); got != digestOf(t, oldMoving) {
-		t.Errorf("ghcr.io/moving:tag = %s, want the image of the bundle that created it, %s", got, digestOf(t, oldMoving))
+	for ref, img := range map[string]v1.Image{"ghcr.io/moving:tag": oldMoving, "ghcr.io/old:v1": installed} {
+		if got := tagDigest(t, c, ref); got != digestOf(t, img) {
+			t.Errorf("%s = %s, want the installed image %s", ref, got, digestOf(t, img))
+		}
 	}
 	if got, err := c.Bundles(t.Context(), "system"); err != nil || !slices.Equal(got, []string{"2.0.0-amd64"}) {
 		t.Errorf("Bundles = %v, %v; want [2.0.0-amd64]", got, err)
@@ -379,7 +369,6 @@ func TestPruneKeepsImagesOfTheOtherKind(t *testing.T) {
 
 	for ref, want := range map[string]bool{
 		"ghcr.io/moved@" + digestOf(t, moved):       true,
-		"ghcr.io/moved:v1":                          true,
 		"ghcr.io/system@" + digestOf(t, onlySystem): false,
 		"appliance/system:1.0.0-amd64":              false,
 		"appliance/platform:2.0.0-amd64":            true,

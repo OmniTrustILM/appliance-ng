@@ -21,7 +21,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-const testImage = "127.0.0.1:5443/hub.example/curl:8"
+const testImage = "127.0.0.1:5443/hub.example/curl@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
 // testBundleEntries are the entries of a small bundle tar; the layer is its largest blob.
 var testBundleEntries = []struct{ name, content string }{

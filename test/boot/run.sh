@@ -19,7 +19,7 @@
 # With BUNDLE=1 drive then uploads the signed platform bundle file BUNDLE_FILE (default
 # out/<arch>/platform-test.tar, made by test/boot/bundle.sh with the key whose public key the images were built
 # with as BUNDLE_TEST_KEY), waits until it is loaded, runs a pod from the bundle's curl image by the address of the
-# appliance's registry and checks that a copy with one changed byte is refused; see test/boot/drive.
+# appliance's registry and the digest the bundle lists for its arch, and checks that a copy with one changed byte is refused; see test/boot/drive.
 # Prints "PASS <seconds to ready>" (with RESTORE=1 "PASS <seconds> restored <seconds>") or "FAIL <reason>"; exits 0
 # or 1. The VMs are always stopped.
 # VM state is kept in out/boot/<arch>-<media>/ (the second VM's in out/boot/<arch>-<media>-restore/) and recreated on
@@ -60,8 +60,8 @@ BUNDLE="${BUNDLE:-0}"
 RESTORE_HOST=restored.appliance.internal
 RESTORE_ADMIN=restorer
 TALOSCTL="${TALOSCTL:-talosctl}"
-# The appliance's registry, by whose address the bundle's curl image is pulled: the image cache holds the release's
-# images under their upstream names only, so only a loaded bundle serves it.
+# The appliance's registry, by whose address the bundle's curl image is pulled by its digest, as a load creates no tag:
+# the image cache holds the release's images under their upstream names only, so only a loaded bundle serves it.
 ZOT=127.0.0.1:5443
 
 usage() { sed -n '4p' "$0" >&2; exit 2; }
@@ -180,6 +180,25 @@ preset_hidden() {
 
 # capture_setup_certificate saves the self-signed certificate the first-boot service presents, for drive part1 to
 # trust. It is trusted on first use, as a user does who has no way to compare the fingerprint tty1 shows.
+tar_blob() { # tar_blob <OCI layout tar> <digest>: prints the blob digest of the layout
+  tar -xOf "$1" "blobs/sha256/${2#sha256:}"
+}
+
+bundle_digest() { # bundle_digest <bundle tar> <ref>: prints the digest the bundle's metadata lists for the image ref
+  local file="$1" ref="$2" digest index metadata
+  for digest in $(tar -xOf "$file" index.json |
+    jq -r '.manifests[] | select(.mediaType == "application/vnd.oci.image.index.v1+json") | .digest'); do
+    index="$(tar_blob "$file" "$digest")"
+    if jq -e '.artifactType == "application/vnd.otilm.appliance.bundle.v1+json"' <<<"$index" >/dev/null; then
+      metadata="$(tar_blob "$file" "$(jq -r '.manifests[0].digest' <<<"$index")")"
+      tar_blob "$file" "$(jq -r '.config.digest' <<<"$metadata")" |
+        jq -er --arg ref "$ref" '[.images[] | select(.ref == $ref) | .digest] | if length == 1 then .[0] else empty end'
+      return
+    fi
+  done
+  return 1
+}
+
 capture_setup_certificate() {
   local _
   for _ in $(seq 36); do
@@ -377,12 +396,14 @@ if [[ "$E2E" == 1 ]]; then
 fi
 if [[ "$BUNDLE" == 1 ]]; then
   [[ -f "$bundle_file" ]] || fail "$bundle_file not found, make it with test/boot/bundle.sh"
+  command -v jq >/dev/null || fail "jq is required"
   # shellcheck disable=SC2016 # yq and build/lib.sh are expanded by the inner shell
   curl_refs="$(cd "$REPO" && ARCH="$arch" bash -c 'source build/lib.sh &&
     yq ".images[] | select(.ref | test(\"^hub\\.omnitrustregistry\\.com/ilm/curl:\")) | .ref" release.yaml')" ||
     fail "could not read release.yaml"
   [[ -n "$curl_refs" && "$curl_refs" != *$'\n'* ]] || fail "release.yaml does not name exactly one curl image"
-  bundle_image="$ZOT/$curl_refs"
+  curl_digest="$(bundle_digest "$bundle_file" "$curl_refs")" || fail "the bundle does not list $curl_refs once"
+  bundle_image="$ZOT/${curl_refs%:*}@$curl_digest"
 fi
 trap 'rm -f "$kit_file" "$kit_passphrase_file" "$sftp_password_file" "$s3_secret_file" "$p12_file" \
     "$p12_password_file" "$restored_kit_file" "$client_secret_file"

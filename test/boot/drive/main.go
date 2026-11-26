@@ -69,8 +69,9 @@
 // appliance, waits until the CBOMRepositoryApplied and ILMSettingsApplied conditions are True and uploads a CBOM
 // through ILM. --check waits for both conditions and checks that ILM lists that CBOM and reads its content from the
 // repository.
-// bundle-load loads the platform bundle in --file, runs a pod from --image with the kubeconfig of the kit in --kit,
-// and checks that a damaged copy of the file is refused. It prints sizes, states and reasons only.
+// bundle-load loads the platform bundle in --file, runs a pod from --image, the bundle's curl image by digest as a load
+// creates no tag, with the kubeconfig of the kit in --kit, and checks that a damaged copy of the file is refused. It
+// prints sizes, states and reasons only.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 trusts that certificate too while the
@@ -175,7 +176,7 @@ func main() {
 	fs.StringVar(&o.credentialPasswordFile, "credential-password-file", "", "file holding the password of --credential (check, ilm-marker)")
 	fs.StringVar(&o.clientSecretOut, "client-secret-out", "", "file the ILM client's secret is written to (ilm-marker --check)")
 	fs.StringVar(&o.bundleFile, "file", "", "platform bundle file to load (bundle-load)")
-	fs.StringVar(&o.image, "image", "", "curl image only the appliance's registry serves after the load (bundle-load)")
+	fs.StringVar(&o.image, "image", "", "curl image by digest, which only the appliance's registry serves after the load (bundle-load)")
 	fs.BoolVar(&o.create, "create", false, "create the marker group (ilm-marker)")
 	fs.BoolVar(&o.check, "check", false, "check the marker group and Keycloak after a restore (ilm-marker)")
 	args := os.Args[2:]

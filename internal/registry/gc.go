@@ -16,7 +16,8 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
-// manifest is a manifest of a bundle in the registry: a repository and a digest, and the tag a bundle gave it.
+// manifest is a manifest of a bundle in the registry: a repository and a digest, and its tag: the bundle's tag of a
+// bundle index, the upstream tag of an image.
 type manifest struct {
 	repo, digest, tag string
 }
@@ -39,8 +40,8 @@ func (p *parts) add(o parts) {
 func (p parts) all() []manifest { return slices.Concat(p.images, p.indexes, p.copies) }
 
 // Prune deletes the bundles of kind that are not in keep, as the tags Bundles lists, with their images, except the
-// manifests and tags a kept bundle or a bundle of another kind lists as well, and an image a tag such a bundle lists
-// still points to. The registry's garbage collection frees the blobs.
+// manifests a kept bundle or a bundle of another kind lists as well, and an image its upstream tag points to, as
+// installing a release tags it. Prune deletes no upstream tag. The registry's garbage collection frees the blobs.
 //
 // The images go first, then the bundle index, then the copies, which zot keeps while an index of their repository
 // lists them. A bundle is listed until its index is gone, so the next run repeats what failed before that.
@@ -67,17 +68,17 @@ func (c *Client) Prune(ctx context.Context, kind string, keep []string) error {
 		}
 	}
 	for _, step := range []struct {
-		manifests  []manifest
-		referenced bool
-	}{{drop.images, false}, {drop.indexes, false}, {drop.copies, true}} {
-		if err := c.removeAll(ctx, step.manifests, kept, step.referenced); err != nil {
+		manifests            []manifest
+		upstream, referenced bool
+	}{{drop.images, true, false}, {drop.indexes, false, false}, {drop.copies, false, true}} {
+		if err := c.removeAll(ctx, step.manifests, kept, step.upstream, step.referenced); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// otherKinds returns the manifests and tags the bundles of the kinds other than kind list, which share the upstream
+// otherKinds returns the manifests the bundles of the kinds other than kind list, which share the upstream
 // repositories with kind's bundles, as protect records them. A bundle that cannot be read for a reason a retry does
 // not fix lists none.
 func (c *Client) otherKinds(ctx context.Context, kind string) (map[string]bool, error) {
@@ -101,10 +102,10 @@ func (c *Client) otherKinds(ctx context.Context, kind string) (map[string]bool, 
 	return kept, nil
 }
 
-// protect records the manifests of p in kept by digest, and by tag those that have one.
+// protect records the manifests of p in kept by digest.
 func protect(kept map[string]bool, p parts) {
 	for _, m := range p.all() {
-		kept[m.digestKey()], kept[m.tagKey()] = true, m.tag != ""
+		kept[m.digestKey()] = true
 	}
 }
 
@@ -119,34 +120,34 @@ func (c *Client) prunable(ctx context.Context, kind, tag string, keeping bool) (
 	return parts{indexes: []manifest{{repo: bundleRepository(kind), tag: tag}}}, nil
 }
 
-// removeAll removes the manifests not in kept, by digest and by tag; referenced tells that a manifest another index
-// of its repository still lists is left to that index.
-func (c *Client) removeAll(ctx context.Context, manifests []manifest, kept map[string]bool, referenced bool) error {
+// removeAll removes the manifests whose digest kept does not list. upstream tells that the manifests are images under
+// their upstream names: one its tag points to stays, and the tag is not deleted. referenced tells that a manifest
+// another index of its repository still lists is left to that index.
+func (c *Client) removeAll(ctx context.Context, manifests []manifest, kept map[string]bool, upstream, referenced bool) error {
 	for _, m := range manifests {
-		keep, err := c.keeps(ctx, m, kept)
-		if err != nil {
-			return err
-		}
-		if keep {
+		if m.digest != "" && kept[m.digestKey()] {
 			continue
 		}
-		if err := c.remove(ctx, m, kept[m.tagKey()], referenced); err != nil {
+		if upstream {
+			tagged, err := c.tagged(ctx, m)
+			if err != nil {
+				return err
+			}
+			if tagged {
+				continue
+			}
+			m.tag = ""
+		}
+		if err := c.remove(ctx, m, referenced); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// keeps reports whether m stays: kept lists its digest, or lists its tag and the tag still points to m, as a load
-// leaves a tag on the image that created it.
-func (c *Client) keeps(ctx context.Context, m manifest, kept map[string]bool) (bool, error) {
-	if m.digest == "" {
-		return false, nil
-	}
-	if kept[m.digestKey()] {
-		return true, nil
-	}
-	if m.tag == "" || !kept[m.tagKey()] {
+// tagged reports whether the tag of m points to m.
+func (c *Client) tagged(ctx context.Context, m manifest) (bool, error) {
+	if m.tag == "" {
 		return false, nil
 	}
 	repo, err := c.repository(m.repo)
@@ -208,9 +209,9 @@ func transient(err error) bool {
 	return errors.As(err, &uerr) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// remove deletes m by its digest and, unless keepTag, by its tag. What is gone already is not an error, nor, when
-// referenced, a manifest the registry keeps because an index lists it.
-func (c *Client) remove(ctx context.Context, m manifest, keepTag, referenced bool) error {
+// remove deletes m by its digest and by its tag. What is gone already is not an error, nor, when referenced, a
+// manifest the registry keeps because an index lists it.
+func (c *Client) remove(ctx context.Context, m manifest, referenced bool) error {
 	repo, err := c.repository(m.repo)
 	if err != nil {
 		return err
@@ -219,7 +220,7 @@ func (c *Client) remove(ctx context.Context, m manifest, keepTag, referenced boo
 	if m.digest != "" {
 		refs = append(refs, repo.Digest(m.digest))
 	}
-	if m.tag != "" && !keepTag {
+	if m.tag != "" {
 		refs = append(refs, repo.Tag(m.tag))
 	}
 	for _, ref := range refs {
