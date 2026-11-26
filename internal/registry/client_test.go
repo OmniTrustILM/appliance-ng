@@ -320,6 +320,38 @@ func TestPruneKeepsSharedDigests(t *testing.T) {
 	}
 }
 
+// TestPruneKeepsImagesOfTheOtherKind keeps an image that moved from a system bundle to a platform bundle when the
+// system bundle is pruned.
+func TestPruneKeepsImagesOfTheOtherKind(t *testing.T) {
+	c, _ := newClient(t)
+	moved, onlySystem := newImage(t), newImage(t)
+	sys := newBundle(t, map[string]v1.Image{"ghcr.io/moved:v1": moved, "ghcr.io/system:v1": onlySystem})
+	if err := c.PushBundle(t.Context(), sys, sys.metadata("1.0.0"), nil); err != nil {
+		t.Fatal(err)
+	}
+	plat := newBundle(t, map[string]v1.Image{"ghcr.io/moved:v1": moved})
+	platform := bundle.Metadata{Kind: release.BundlePlatform, Version: "2.0.0", Arch: "amd64"}
+	if err := c.PushBundle(t.Context(), plat, platform, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Prune(t.Context(), release.BundleSystem, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	for ref, want := range map[string]bool{
+		"ghcr.io/moved@" + digestOf(t, moved):       true,
+		"ghcr.io/moved:v1":                          true,
+		"ghcr.io/system@" + digestOf(t, onlySystem): false,
+		"appliance/system:1.0.0-amd64":              false,
+		"appliance/platform:2.0.0-amd64":            true,
+	} {
+		if got := exists(t, c, ref); got != want {
+			t.Errorf("%s exists = %v, want %v", ref, got, want)
+		}
+	}
+}
+
 // referencedGuard refuses, as zot does, to delete a manifest of a repository while an index there still lists it.
 type referencedGuard struct {
 	mu       sync.Mutex

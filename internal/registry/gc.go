@@ -12,6 +12,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 // manifest is a manifest of a bundle in the registry: a repository and a digest, and the tag a bundle gave it.
@@ -37,7 +39,8 @@ func (p *parts) add(o parts) {
 func (p parts) all() []manifest { return slices.Concat(p.images, p.indexes, p.copies) }
 
 // Prune deletes the bundles of kind that are not in keep, as the tags Bundles lists, with their images, except the
-// manifests and tags a kept bundle lists as well. The registry's garbage collection frees the blobs.
+// manifests and tags a kept bundle or a bundle of another kind lists as well. The registry's garbage collection frees
+// the blobs.
 //
 // The images go first, then the bundle index, then the copies, which zot keeps while an index of their repository
 // lists them. A bundle is listed until its index is gone, so the next run repeats what failed before that.
@@ -46,7 +49,10 @@ func (c *Client) Prune(ctx context.Context, kind string, keep []string) error {
 	if err != nil {
 		return err
 	}
-	kept := map[string]bool{}
+	kept, err := c.otherKinds(ctx, kind)
+	if err != nil {
+		return err
+	}
 	var drop parts
 	for _, tag := range tags {
 		keeping := slices.Contains(keep, tag)
@@ -54,12 +60,10 @@ func (c *Client) Prune(ctx context.Context, kind string, keep []string) error {
 		if err != nil {
 			return err
 		}
-		if !keeping {
+		if keeping {
+			protect(kept, p)
+		} else {
 			drop.add(p)
-			continue
-		}
-		for _, m := range p.all() {
-			kept[m.digestKey()], kept[m.tagKey()] = true, m.tag != ""
 		}
 	}
 	for _, step := range []struct {
@@ -71,6 +75,37 @@ func (c *Client) Prune(ctx context.Context, kind string, keep []string) error {
 		}
 	}
 	return nil
+}
+
+// otherKinds returns the manifests and tags the bundles of the kinds other than kind list, which share the upstream
+// repositories with kind's bundles, as protect records them. A bundle that cannot be read for a reason a retry does
+// not fix lists none.
+func (c *Client) otherKinds(ctx context.Context, kind string) (map[string]bool, error) {
+	kept := map[string]bool{}
+	for _, other := range []string{release.BundleSystem, release.BundlePlatform} {
+		if other == kind {
+			continue
+		}
+		tags, err := c.Bundles(ctx, other)
+		if err != nil {
+			return nil, err
+		}
+		for _, tag := range tags {
+			p, err := c.bundleManifests(ctx, other, tag)
+			if err != nil && transient(err) {
+				return nil, err
+			}
+			protect(kept, p)
+		}
+	}
+	return kept, nil
+}
+
+// protect records the manifests of p in kept by digest, and by tag those that have one.
+func protect(kept map[string]bool, p parts) {
+	for _, m := range p.all() {
+		kept[m.digestKey()], kept[m.tagKey()] = true, m.tag != ""
+	}
 }
 
 // prunable returns the manifests of the bundle tag of kind. A bundle that is not kept and cannot be read for a reason
