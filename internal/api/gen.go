@@ -2278,6 +2278,9 @@ type Updates struct {
 	// Available The bundles online that are newer than what runs.
 	Available []UpdateBundle `json:"available"`
 
+	// ExternalDatabase Whether the platform uses an external database. A platform update then cannot be rolled back; the way back is a restore onto a fresh appliance.
+	ExternalDatabase bool `json:"externalDatabase"`
+
 	// LastCheck When the online repository was last checked.
 	LastCheck *time.Time `json:"lastCheck,omitempty"`
 

@@ -45,7 +45,7 @@ const system = { kind: 'system', version: '1.3.0', arch: 'amd64', sizeBytes: 204
 const platform = { kind: 'platform', version: '2.1.0', arch: 'amd64', ilm: '3.4.0', operator: '1.5.0', sizeBytes: 800 * MB, notes: '/appliance/api/v1/updates/notes/platform/2.1.0' };
 
 function updates(over: object = {}) {
-  return { available: [], loaded: [], ...over };
+  return { available: [], loaded: [], externalDatabase: false, ...over };
 }
 
 async function chooseFile(name = 'bundle.tar', size = 10 * MB) {
@@ -424,6 +424,16 @@ describe('UpdatesPage platform update', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
     const dialog = screen.getByRole('dialog', { name: /install platform 2\.1\.0/i });
     expect(dialog).toHaveTextContent(/newer ILM operator, which is never downgraded/i);
+    expect(dialog).toHaveTextContent(/restore that backup onto a fresh appliance/i);
+    expect(dialog).not.toHaveTextContent(/rolled back/i);
+  });
+
+  it('says that the way back with an external database is a restore onto a fresh appliance', async () => {
+    stubApi({ [UPDATES]: [200, updates({ loaded: [loadedPlatform], operator: 'v1.5.0', externalDatabase: true })] });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    const dialog = screen.getByRole('dialog', { name: /install platform 2\.1\.0/i });
+    expect(dialog).toHaveTextContent(/uses an external database/i);
     expect(dialog).toHaveTextContent(/restore that backup onto a fresh appliance/i);
     expect(dialog).not.toHaveTextContent(/rolled back/i);
   });

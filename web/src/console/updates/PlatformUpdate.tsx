@@ -76,17 +76,29 @@ export function UpdateStatus({ update }: Readonly<{ update: Progress }>) {
   );
 }
 
-type InstallConfirmProps = Readonly<{ bundle: Bundle; operator?: string; onConfirm: () => void; onCancel: () => void }>;
+type InstallConfirmProps = Readonly<{
+  bundle: Bundle;
+  operator?: string;
+  externalDatabase?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}>;
+
+/** Why a platform update from bundle cannot be rolled back, or false when it can. */
+function noRollback(bundle: Bundle, operator?: string, externalDatabase?: boolean) {
+  if (externalDatabase) return 'The platform uses an external database, which a rollback cannot take back to the previous version.';
+  if (!operator) return 'The ILM operator that runs is not known, so this bundle may install a newer one, which is never downgraded.';
+  return newer(bundle.operator, operator) && 'This bundle installs a newer ILM operator, which is never downgraded.';
+}
 
 /**
- * Asks before a platform update, which takes a backup first. The way back is a rollback, unless the bundle brings a
- * newer ILM operator than operator, the one that runs, or that one is not known: a newer operator is never
- * downgraded, so the way back is a restore onto a fresh appliance. Either loses the data changed since the backup.
+ * Asks before a platform update, which takes a backup first. The way back is a rollback, unless the platform uses an
+ * external database, or the bundle brings a newer ILM operator than operator, the one that runs, or that one is not
+ * known: a newer operator is never downgraded. The way back is then a restore onto a fresh appliance. Either loses
+ * the data changed since the backup.
  */
-export function InstallConfirm({ bundle, operator, onConfirm, onCancel }: InstallConfirmProps) {
-  const noUndo = operator
-    ? newer(bundle.operator, operator) && 'This bundle installs a newer ILM operator, which is never downgraded.'
-    : 'The ILM operator that runs is not known, so this bundle may install a newer one, which is never downgraded.';
+export function InstallConfirm({ bundle, operator, externalDatabase, onConfirm, onCancel }: InstallConfirmProps) {
+  const noUndo = noRollback(bundle, operator, externalDatabase);
   return (
     <ConfirmDialog title={`Install platform ${bundle.version}?`} confirmLabel="Install" onConfirm={onConfirm} onCancel={onCancel}>
       {bundle.ilm && <p className="m-0 mb-2">The platform moves to ILM {bundle.ilm}.</p>}

@@ -1521,6 +1521,8 @@ export interface components {
             rollback?: components["schemas"]["RollbackOffer"];
             /** @description The ILM operator version that runs. A platform bundle with a newer one cannot be rolled back; the way back from it is a restore onto a fresh appliance. */
             operator?: string;
+            /** @description Whether the platform uses an external database. A platform update then cannot be rolled back; the way back is a restore onto a fresh appliance. */
+            externalDatabase: boolean;
         };
         /** @description Whether the last platform update can be rolled back now; absent where updates cannot be installed. */
         RollbackOffer: {

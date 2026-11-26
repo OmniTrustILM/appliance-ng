@@ -551,3 +551,22 @@ func TestUpdatesShowTheUpdate(t *testing.T) {
 		t.Errorf("update %+v, want %+v", u.Update, want)
 	}
 }
+
+// TestUpdatesTellAnExternalDatabase answers whether the platform uses an external database, from which a platform
+// update cannot be rolled back.
+func TestUpdatesTellAnExternalDatabase(t *testing.T) {
+	h := newHarness(t)
+	a := createAppliance(t, v1alpha1.SetupComplete)
+	h.withPlatform()
+	s := h.signIn()
+	if u := updatesOf(t, h, s); u.ExternalDatabase {
+		t.Error("an external database reported without one")
+	}
+	a.Spec.Platform = &v1alpha1.PlatformSpec{Database: &v1alpha1.ExternalDatabase{Host: "db.example.com", Port: 5432, Name: "ilm", CredentialsRef: DatabaseSecretName}}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if u := updatesOf(t, h, s); !u.ExternalDatabase {
+		t.Error("the external database is not reported")
+	}
+}

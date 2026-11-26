@@ -170,7 +170,7 @@ export function UpdatesPage() {
             )}
           </Section>
           <div className="mt-6"><UploadCard disabled={busy} onUploaded={started} /></div>
-          {installing && <InstallConfirm bundle={installing} operator={data.operator} onConfirm={() => void install(installing)} onCancel={() => setInstalling(undefined)} />}
+          {installing && <InstallConfirm bundle={installing} operator={data.operator} externalDatabase={data.externalDatabase} onConfirm={() => void install(installing)} onCancel={() => setInstalling(undefined)} />}
         </>
       )}
     </PageWidth>

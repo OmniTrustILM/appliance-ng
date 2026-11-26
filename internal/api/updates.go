@@ -296,7 +296,10 @@ func (s *Server) updates(ctx context.Context) (Updates, error) {
 	if err != nil {
 		return Updates{}, err
 	}
-	out := Updates{Available: []UpdateBundle{}, Loaded: []UpdateBundle{}, Operator: optional(a.Status.Versions.Operator)}
+	out := Updates{
+		Available: []UpdateBundle{}, Loaded: []UpdateBundle{}, Operator: optional(a.Status.Versions.Operator),
+		ExternalDatabase: a.Spec.Platform != nil && a.Spec.Platform.Database != nil,
+	}
 	if u := a.Status.Updates; u != nil {
 		if u.LastCheck != nil {
 			out.LastCheck = &u.LastCheck.Time

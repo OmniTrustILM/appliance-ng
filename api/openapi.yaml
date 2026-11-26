@@ -2329,7 +2329,7 @@ components:
           description: The version, X.Y.Z; the bundle for the appliance's architecture is loaded.
     Updates:
       type: object
-      required: [available, loaded]
+      required: [available, loaded, externalDatabase]
       properties:
         lastCheck:
           type: string
@@ -2360,6 +2360,11 @@ components:
           description: >-
             The ILM operator version that runs. A platform bundle with a newer one cannot be rolled back; the way back
             from it is a restore onto a fresh appliance.
+        externalDatabase:
+          type: boolean
+          description: >-
+            Whether the platform uses an external database. A platform update then cannot be rolled back; the way back
+            is a restore onto a fresh appliance.
     RollbackOffer:
       type: object
       description: Whether the last platform update can be rolled back now; absent where updates cannot be installed.
