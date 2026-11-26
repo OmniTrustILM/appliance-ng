@@ -41,7 +41,86 @@ jobs:
       boot: none
       keep-images: true
       bundles: true
+      bundle-test-key: true
       arches: '["amd64"]'
+
+  # Loads the platform bundle signed with the build's throw-away key offline; the images of a calling run trust only
+  # cosign.pub, so this job needs the build here.
+  bundle-load:
+    name: bundle load
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Free disk space
+        uses: ./.github/actions/free-disk-space
+
+      # The unsigned bundle layouts of the images artifact are not needed here.
+      - name: Download the images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: images-amd64
+          path: out/amd64
+
+      - name: Download the signed platform bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle-test-amd64
+          path: out/amd64
+
+      - name: Drop the unsigned bundle layouts
+        run: rm -rf -- out/amd64/bundles
+
+      - name: Install the boot test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-utils qemu-system-x86 ovmf
+          fetch() { local output="$1" url="$2"; curl -fsSL --proto '=https' --tlsv1.2 -o "$output" "$url"; }
+          dir="$(mktemp -d)"
+          version="$(go run github.com/mikefarah/yq/v4@v4.54.1 '.talos.version' release.yaml)"
+          base="https://github.com/siderolabs/talos/releases/download/$version"
+          fetch "$dir/talosctl-linux-amd64" "$base/talosctl-linux-amd64"
+          fetch "$dir/sha256sum.txt" "$base/sha256sum.txt"
+          (cd "$dir" && grep ' talosctl-linux-amd64$' sha256sum.txt | sha256sum --check --strict)
+          sudo install -m 0755 "$dir/talosctl-linux-amd64" /usr/local/bin/talosctl
+          talosctl version --client --short
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if [ ! -w /dev/kvm ]; then
+            echo "::error::/dev/kvm is missing or not writable on this runner."
+            ls -l /dev/kvm || true
+            exit 1
+          fi
+
+      - name: Bundle load test
+        run: |
+          mkdir -p out
+          BUNDLE=1 make boot-test MEDIA=iso ARCH=amd64 2>&1 | tee out/boot-test.log
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: failure-logs-bundle-load
+          path: out/boot-test.log
+          if-no-files-found: ignore
+          retention-days: 3
 
   # With caller-images the build job is skipped and the images come from the calling run.
   restore:
@@ -66,6 +145,9 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: test/e2e/package-lock.json
+
+      - name: Free disk space
+        uses: ./.github/actions/free-disk-space
 
       # The images job uploads out/amd64/*.iso, *.qcow2, SHA256SUMS and bundles/; the artifact keeps them relative to
       # out/amd64.

@@ -5,6 +5,7 @@ type FileDropFieldProps = Readonly<{
   label: string;
   hint?: string;
   required?: boolean;
+  disabled?: boolean;
   file: File | undefined;
   onChange: (file: File | undefined) => void;
 }>;
@@ -13,7 +14,7 @@ type FileDropFieldProps = Readonly<{
  * A file input with a drop zone: the zone shows the chosen file name and accepts a dropped file, while the
  * native input inside it stays the keyboard and screen reader way to choose one.
  */
-export function FileDropField({ label, hint, required = false, file, onChange }: FileDropFieldProps) {
+export function FileDropField({ label, hint, required = false, disabled = false, file, onChange }: FileDropFieldProps) {
   const hintId = useId();
   const [over, setOver] = useState(false);
 
@@ -21,7 +22,7 @@ export function FileDropField({ label, hint, required = false, file, onChange }:
     event.preventDefault();
     setOver(false);
     const dropped = event.dataTransfer.files[0];
-    if (dropped) onChange(dropped);
+    if (dropped && !disabled) onChange(dropped);
   }
 
   return (
@@ -30,13 +31,14 @@ export function FileDropField({ label, hint, required = false, file, onChange }:
         data-testid="drop-zone"
         onDragOver={(event) => {
           event.preventDefault();
-          setOver(true);
+          setOver(!disabled);
         }}
         onDragLeave={() => setOver(false)}
         onDrop={onDrop}
         className={cx(
-          'block cursor-pointer rounded-md border border-dashed px-3.5 py-3 text-sm transition-colors',
+          'block rounded-md border border-dashed px-3.5 py-3 text-sm transition-colors',
           'focus-within:border-brand focus-within:ring-2 focus-within:ring-brand-ring',
+          disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
           over ? 'border-brand bg-brand-subtle' : 'border-outline bg-surface-raised hover:border-content-subtle',
         )}
       >
@@ -48,6 +50,7 @@ export function FileDropField({ label, hint, required = false, file, onChange }:
           type="file"
           className="sr-only"
           required={required}
+          disabled={disabled}
           aria-describedby={hint ? hintId : undefined}
           onChange={(event) => {
             const chosen = event.currentTarget.files?.[0];

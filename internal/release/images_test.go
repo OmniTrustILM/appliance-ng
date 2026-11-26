@@ -86,3 +86,58 @@ func TestPinnedImage(t *testing.T) {
 		}
 	}
 }
+
+func TestMirrorUpstreamsFromRelease(t *testing.T) {
+	m := &Manifest{Images: []Image{
+		{Ref: "ghcr.io/x/a:1", Digest: "sha256:1"},
+		{Ref: "Quay.io/x/b:1@sha256:2", Digest: "sha256:2"},
+		{Ref: "registry.example.com:5000/c:1", Digest: "sha256:3"},
+		{Ref: "rabbitmq:4", Digest: "sha256:4"},
+		{Ref: "rancher/local-path-provisioner:v1", Digest: "sha256:5"},
+		{Ref: "index.docker.io/library/busybox:1", Digest: "sha256:6"},
+		{Ref: "ghcr.io/x/d:1", Digest: "sha256:7"},
+	}}
+
+	want := []string{"docker.io", "ghcr.io", "quay.io", "registry.example.com:5000"}
+	if got := m.RegistryHosts(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("RegistryHosts() = %v, want %v", got, want)
+	}
+}
+
+func TestArchPins(t *testing.T) {
+	const (
+		index = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		amd   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		arm   = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		one   = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	)
+	m := &Manifest{Images: []Image{
+		{Ref: "quay.io/x/agent:1@" + index, Digest: index, ArchDigests: map[string]string{"amd64": amd, "arm64": arm}},
+		{Ref: "quay.io/x/single:1@" + one, Digest: one, ArchDigests: map[string]string{"amd64": one}, Arches: []string{"amd64"}},
+		{Ref: "quay.io/x/tagged:1", Digest: "sha256:2"},
+	}}
+
+	if got, want := m.ArchPins("arm64"), map[string]string{index: arm}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ArchPins(arm64) = %v, want %v", got, want)
+	}
+	if got, want := m.ArchPins("amd64"), map[string]string{index: amd}; !reflect.DeepEqual(got, want) {
+		t.Errorf("ArchPins(amd64) = %v, want %v", got, want)
+	}
+}
+
+func TestRepository(t *testing.T) {
+	for name, want := range map[string]string{
+		"busybox":                          "docker.io/library/busybox",
+		"rancher/local-path-provisioner":   "docker.io/rancher/local-path-provisioner",
+		"docker.io/traefik":                "docker.io/library/traefik",
+		"index.docker.io/library/rabbitmq": "docker.io/library/rabbitmq",
+		"index.docker.io/versity/gw":       "docker.io/versity/gw",
+		"localhost/app":                    "localhost/app",
+		"registry.example.com:5000/a/b":    "registry.example.com:5000/a/b",
+		"quay.io/cilium/cilium":            "quay.io/cilium/cilium",
+	} {
+		if got := Repository(name); got != want {
+			t.Errorf("Repository(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

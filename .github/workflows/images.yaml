@@ -19,6 +19,13 @@ on:
         description: Also build the unsigned system and platform bundles and keep them with the images.
         type: boolean
         default: false
+      bundle-test-key:
+        description: >-
+          Build the manager trusting a throw-away bundle key made in the job instead of cosign.pub, and sign with it
+          the platform bundle of the boot test, kept as the bundle-test-<arch> artifact. For the long tests only, amd64
+          only, never with publish.
+        type: boolean
+        default: false
       arches:
         description: JSON array of the architectures to build.
         type: string
@@ -51,17 +58,7 @@ jobs:
           persist-credentials: false
 
       - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          docker image prune --all --force >/dev/null || true
-          df -h / "$GITHUB_WORKSPACE"
-          for path in / "$GITHUB_WORKSPACE"; do
-            free_gb="$(df --block-size=1G --output=avail "$path" | tail -n 1 | tr -d ' ')"
-            if [ "$free_gb" -lt 40 ]; then
-              echo "::error::Only ${free_gb} GB free on the filesystem of $path after clean-up; the image build needs at least 40 GB."
-              exit 1
-            fi
-          done
+        uses: ./.github/actions/free-disk-space
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -119,12 +116,58 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The private key stays in this job; the manager built next trusts only the public key.
+      - name: Make a throw-away bundle key
+        if: inputs.bundle-test-key
+        env:
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ "$PUBLISH" = true ] || [ "$ARCH" != amd64 ]; then
+            echo "::error::A bundle test key is made only for amd64 images that are not published."
+            exit 1
+          fi
+          fetch() { local output="$1" url="$2"; curl -fsSL --proto '=https' --tlsv1.2 -o "$output" "$url"; }
+          dir="$(mktemp -d)"
+          fetch "$dir/oras.tar.gz" https://github.com/oras-project/oras/releases/download/v1.4.0/oras_1.4.0_linux_amd64.tar.gz
+          fetch "$dir/cosign" https://github.com/sigstore/cosign/releases/download/v3.0.2/cosign-linux-amd64
+          sha256sum --check --strict <<EOF
+          d8e1dce2fd8ce996f1d901845b688eb0cf505a6082897606f053825bb47935d1  $dir/oras.tar.gz
+          46dbdcb5467a3dfec2526923d0b3365e40c8d9dc00ec23d5aca3437449e8cbfd  $dir/cosign
+          EOF
+          tar -xzf "$dir/oras.tar.gz" -C "$dir" oras
+          sudo install -m 0755 "$dir/oras" "$dir/cosign" /usr/local/bin/
+          key="$RUNNER_TEMP/bundle-key"
+          mkdir -p "$key"
+          (cd "$key" && COSIGN_PASSWORD='' cosign generate-key-pair)
+          echo "BUNDLE_TEST_KEY=$(base64 -w0 "$key/cosign.pub")" >>"$GITHUB_ENV"
+
       - name: Build images
         run: make images ARCH="$ARCH" REGISTRY="$REGISTRY"
+
+      # A published manager must trust only cosign.pub: no base64 PEM public key may be linked into it.
+      - name: Check the manager has no bundle test key
+        if: inputs.publish
+        run: |
+          test -s "out/$ARCH/manager/manager" || { echo "::error::out/$ARCH/manager/manager is missing or empty."; exit 1; }
+          if LC_ALL=C grep -q -a 'LS0tLS1CRUdJTiBQVUJMSUMgS0VZ' "out/$ARCH/manager/manager"; then
+            echo "::error::The manager binary holds a base64 PEM public key, a bundle test key."
+            exit 1
+          fi
 
       - name: Build bundles
         if: inputs.bundles
         run: make bundles ARCH="$ARCH"
+
+      # Signs in the local registry service, without a transparency log, and deletes the private key.
+      - name: Sign the boot test's platform bundle
+        if: inputs.bundle-test-key
+        run: |
+          COSIGN_PASSWORD='' ./test/boot/bundle.sh "$ARCH" "$RUNNER_TEMP/bundle-key/cosign.key" \
+            "out/$ARCH/platform-test.tar"
+
+      - name: Delete the throw-away bundle key
+        if: always() && inputs.bundle-test-key
+        run: rm -rf -- "$RUNNER_TEMP/bundle-key"
 
       # The boot test answers the wizard and changes settings in Chromium; the browser leaves no trace, video or
       # screenshot to upload. Only lock-file packages run here, after the registry log-in: CI type-checks the test
@@ -174,4 +217,13 @@ jobs:
             out/${{ matrix.arch }}/*.qcow2
             out/${{ matrix.arch }}/SHA256SUMS
             out/${{ matrix.arch }}/bundles/
+          retention-days: 3
+
+      - name: Upload the boot test's platform bundle
+        if: inputs.bundle-test-key
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundle-test-${{ matrix.arch }}
+          path: out/${{ matrix.arch }}/platform-test.tar
+          if-no-files-found: error
           retention-days: 3

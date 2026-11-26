@@ -93,6 +93,7 @@ var (
 		{restore.ErrUpgradeInProgress, refused(http.StatusConflict, "upgrade_in_progress",
 			"The platform is being upgraded; restore once the upgrade has finished.")},
 		{restore.ErrBackupRunning, refused(http.StatusConflict, "backup_running", "A backup is running; restore once it has finished.")},
+		{restore.ErrBundleLoading, refused(http.StatusConflict, codeBundleLoading, "An update bundle is loading; restore once it has finished.")},
 	}
 )
 

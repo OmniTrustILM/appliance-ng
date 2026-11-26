@@ -38,6 +38,8 @@ var (
 	ErrUpgradeInProgress = backup.ErrUpgradeInProgress
 	// ErrBackupRunning refuses a restore while a backup runs.
 	ErrBackupRunning = errors.New("a backup is running")
+	// ErrBundleLoading refuses a restore while an update bundle loads.
+	ErrBundleLoading = errors.New("an update bundle is loading")
 
 	errTimeout = errors.New("timed out")
 )
@@ -293,7 +295,10 @@ func (e *Engine) admit(ctx context.Context, file string, id age.Identity, opts O
 			}
 		})
 	})
-	if errors.Is(err, backup.ErrBusy) {
+	switch {
+	case errors.Is(err, backup.ErrHeld):
+		return ErrBundleLoading
+	case errors.Is(err, backup.ErrBusy):
 		return ErrBackupRunning
 	}
 	return err

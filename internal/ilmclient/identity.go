@@ -207,7 +207,8 @@ func (i *Identity) renew(ctx context.Context, c *Client, id *identity, ca tls.Ce
 	})
 	if !ran {
 		// The stored certificate is still valid; a later pass renews it.
-		log.FromContext(ctx).Info("a backup is running; the manager's ILM certificate is renewed after it", "user", id.userUUID)
+		// err is the fixed refusal of Exclusive: a backup runs or an update bundle loads.
+		log.FromContext(ctx).Info("the manager's ILM certificate is renewed later", "refused", err.Error(), "user", id.userUUID)
 		return c, nil
 	}
 	return renewed, err

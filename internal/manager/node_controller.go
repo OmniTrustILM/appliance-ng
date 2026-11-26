@@ -3,12 +3,15 @@ package manager
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	configdoc "github.com/siderolabs/talos/pkg/machinery/config/config"
+	"github.com/siderolabs/talos/pkg/machinery/config/types/cri"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/network"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/runtime"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/security"
@@ -27,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/addons"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/nodeconfig"
@@ -52,7 +56,8 @@ const (
 )
 
 // NodeReconciler keeps the node settings of the running machine configuration in line with the Appliance: the host
-// name, the gateway, the name and time servers, the proxy, the trusted CA certificates and the registry credentials.
+// name, the gateway, the name and time servers, the proxy, the trusted CA certificates, the registry credentials and,
+// once zot is ready, the registry mirrors that send every pull to zot first.
 // It replaces only the documents whose content changed and marks a reboot as required when the proxy environment or
 // the trusted CA certificates changed, which take effect only after a reboot. Putting back a document changed on the
 // node past the manager is recorded as an Event on the Appliance.
@@ -61,6 +66,11 @@ type NodeReconciler struct {
 	Recorder events.EventRecorder
 	// Talos returns the Talos API of the node, or ErrNoTalosAccess while there is none yet.
 	Talos func(context.Context) (talos.Node, error)
+	// Cluster and Steps tell whether the registry step of the add-ons passed; Upstreams are the registries the node
+	// pulls through zot once it did.
+	Cluster   kube.Cluster
+	Steps     []kube.Step
+	Upstreams []string
 
 	// applied holds the canonical encoding of each document by ID as last applied or found in line, nil before the
 	// first such pass of this process.
@@ -108,67 +118,77 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	observed := nodeObservation{address: nodeIP(a, node)}
 	observed.talos, observed.kubernetes = talosVersions(ctx, r.Talos)
-	reason, message, err := r.configure(ctx, a, node)
+	reason, message, waitingForZot, err := r.configure(ctx, a, node)
 	if serr := r.writeStatus(ctx, a, reason, message, observed); serr != nil {
 		return ctrl.Result{}, serr
 	}
 	if reason == reasonWaitingForTalosAccess {
 		return ctrl.Result{RequeueAfter: talosAccessRequeue}, nil
 	}
+	if waitingForZot {
+		// zot's Deployment is not watched, so the mirrors would otherwise wait for the periodic pass.
+		return ctrl.Result{RequeueAfter: registryRequeue}, nil
+	}
 	// The periodic pass puts back a node setting changed past the manager.
 	return ctrl.Result{RequeueAfter: resync}, err
 }
 
 // configure replaces the documents of the running machine configuration that differ from those of the Appliance and
-// returns the reason and message of the NodeConfigured condition.
-func (r *NodeReconciler) configure(ctx context.Context, a *v1alpha1.Appliance, node *corev1.Node) (string, string, error) {
+// returns the reason and message of the NodeConfigured condition, and whether the mirrors wait for zot.
+func (r *NodeReconciler) configure(ctx context.Context, a *v1alpha1.Appliance, node *corev1.Node) (string, string, bool, error) {
 	logger := log.FromContext(ctx)
 	tn, err := r.Talos(ctx)
 	if err != nil {
 		logger.Info("waiting for access to the Talos API", "error", err)
-		return reasonWaitingForTalosAccess, messageWaitingForTalosAccess, nil
+		return reasonWaitingForTalosAccess, messageWaitingForTalosAccess, false, nil
 	}
 	running, err := tn.Documents(ctx, nodeconfig.Kinds...)
 	if err != nil {
 		logger.Error(err, "could not read the running node settings")
-		return reasonFailed, messageNodeFailed, err
+		return reasonFailed, messageNodeFailed, false, err
 	}
 	secrets, err := nodeSecrets(ctx, r.Client, a)
 	if err != nil {
 		// A Secret written a moment ago may not be in the cache yet; the error names Secrets and keys, never values.
 		logger.Error(err, "could not read the trusted certificates or the registry credentials")
-		return reasonFailed, messageNodeFailed, err
+		return reasonFailed, messageNodeFailed, false, err
 	}
-	rendered, err := nodeconfig.Render(a, nodeconfig.Node{IP: nodeIP(a, node), Link: nodeconfig.StaticLink(running)}, secrets)
+	zot, err := r.registry(ctx, running)
+	if err != nil {
+		logger.Error(err, "could not tell whether zot is ready")
+		return reasonFailed, messageNodeFailed, false, err
+	}
+	waiting := zot == nil && slices.ContainsFunc(r.Steps, isRegistryStep)
+	rendered, err := nodeconfig.Render(a, nodeconfig.Node{IP: nodeIP(a, node), Link: nodeconfig.StaticLink(running), Registry: zot}, secrets)
 	if err != nil {
 		// Nothing changes until the Appliance does, which the watch reports.
 		logger.Error(err, "the node settings do not fit the node")
-		return reasonInvalid, messageNodeInvalid, nil
+		return reasonInvalid, messageNodeInvalid, false, nil
 	}
 	replace, remove, err := changes(running, rendered)
 	if err != nil {
 		logger.Error(err, "could not compare the node settings")
-		return reasonFailed, messageNodeFailed, err
+		return reasonFailed, messageNodeFailed, false, err
 	}
 	if len(replace) == 0 && len(remove) == 0 {
 		r.remember(rendered)
-		return reasonApplied, messageNodeApplied, nil
+		return reasonApplied, messageNodeApplied, waiting, nil
 	}
 	drifted := r.drifted(running, replace, remove)
 	if needsReboot(replace, remove) {
 		// Recorded before the change, so that a crash after it still leaves the reboot required.
 		if err := r.recordReboot(ctx, a, node.Status.NodeInfo.BootID); err != nil {
-			return reasonFailed, messageNodeFailed, err
+			return reasonFailed, messageNodeFailed, false, err
 		}
 	}
 	if err := tn.ReplaceDocuments(ctx, replace, remove); err != nil {
 		logger.Error(err, "could not apply the node settings")
-		return reasonFailed, messageNodeFailed, err
+		return reasonFailed, messageNodeFailed, false, err
 	}
 	logger.Info("node settings applied", "documents", documentIDs(replace), "removed", remove, "rebootRequired", needsReboot(replace, remove))
 	r.remember(rendered)
 	r.reportDrift(ctx, a, drifted)
-	return reasonApplied, messageNodeApplied, nil
+	return reasonApplied, messageNodeApplied, waiting, nil
 }
 
 // reportDrift records an Event on a naming the kinds of the documents put back after a change past the manager; the
@@ -220,6 +240,56 @@ func (r *NodeReconciler) drifted(running, replace []configdoc.Document, remove [
 	}
 	slices.Sort(kinds)
 	return slices.Compact(kinds)
+}
+
+// registryStep is the add-on step that runs zot.
+const registryStep = "registry"
+
+// registryRequeue is how soon the node settings are looked at again while the mirrors wait for zot.
+const registryRequeue = 30 * time.Second
+
+func isRegistryStep(s kube.Step) bool { return s.Name == registryStep }
+
+// registry returns zot for the node's documents once the registry step passed and the built-in CA that zot's
+// certificate is issued by is known, and nil before. A node that runs the mirrors keeps them while zot restarts,
+// with the CA they trust when the built-in one cannot be read.
+func (r *NodeReconciler) registry(ctx context.Context, running []configdoc.Document) (*nodeconfig.Registry, error) {
+	runningCA, runs := mirrorCA(running)
+	if !runs {
+		if ready, err := r.zotReady(ctx); err != nil || !ready {
+			return nil, err
+		}
+	}
+	ca, err := certs.RootCA(ctx, r.Client)
+	switch {
+	case errors.Is(err, certs.ErrNotIssued) && runs:
+		ca = runningCA
+	case errors.Is(err, certs.ErrNotIssued):
+		return nil, nil
+	case err != nil:
+		return nil, err
+	}
+	return &nodeconfig.Registry{CA: ca, Upstreams: r.Upstreams}, nil
+}
+
+// zotReady reports whether the waits of the registry step pass; without that step zot is never ready.
+func (r *NodeReconciler) zotReady(ctx context.Context) (bool, error) {
+	i := slices.IndexFunc(r.Steps, isRegistryStep)
+	if i < 0 {
+		return false, nil
+	}
+	progress, err := addons.Check(ctx, r.Cluster, r.Steps[i:i+1])
+	return progress.Done, err
+}
+
+// mirrorCA returns the CA of zot's TLS document among running, and whether the node runs it.
+func mirrorCA(running []configdoc.Document) ([]byte, bool) {
+	for _, doc := range running {
+		if tls, ok := doc.(*cri.RegistryTLSConfigV1Alpha1); ok && tls.MetaName == nodeconfig.MirrorHost {
+			return []byte(tls.TLSCA), true
+		}
+	}
+	return nil, false
 }
 
 // nodeIP returns the static address of the Appliance, or with DHCP the node's internal address, or "" when neither is

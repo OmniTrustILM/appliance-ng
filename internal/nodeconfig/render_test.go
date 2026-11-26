@@ -1,10 +1,18 @@
 package nodeconfig_test
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net/netip"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	coreconfig "github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/config"
@@ -300,5 +308,70 @@ func TestStaticLink(t *testing.T) {
 func TestNoProxy(t *testing.T) {
 	if got, want := nodeconfig.NoProxy("", ""), "localhost,127.0.0.1,10.244.0.0/16,10.96.0.0/12,.svc,.cluster.local"; got != want {
 		t.Errorf("NoProxy = %q, want %q", got, want)
+	}
+}
+
+// testCA returns the PEM certificate of a new self-signed CA.
+func testCA(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test CA"}, IsCA: true,
+		BasicConstraintsValid: true, NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+func TestRenderMirrorsAfterZotReady(t *testing.T) {
+	ca := testCA(t)
+	upstreams := []string{"docker.io", "ghcr.io", "quay.io"}
+	docs := render(t, appliance(), nodeconfig.Node{IP: nodeIP, Link: runningLink(),
+		Registry: &nodeconfig.Registry{CA: []byte(ca), Upstreams: upstreams}})
+
+	want := []string{network.HostnameKind, network.LinkKind, network.ResolverKind, network.TimeSyncKind, runtime.EnvironmentConfigKind,
+		cri.RegistryMirrorConfig, cri.RegistryMirrorConfig, cri.RegistryMirrorConfig, cri.RegistryTLSConfig}
+	if got := kinds(docs); !slices.Equal(got, want) {
+		t.Fatalf("kinds %v, want %v", got, want)
+	}
+	for _, kind := range []string{cri.RegistryMirrorConfig, cri.RegistryTLSConfig} {
+		if !slices.Contains(nodeconfig.Kinds, kind) {
+			t.Errorf("%s is not among the managed kinds", kind)
+		}
+	}
+	cfg := withDocuments(t, generated(t), docs)
+	if _, err := cfg.ValidateAsClient(metalMode{}, validation.WithStrict()); err != nil {
+		t.Fatalf("the configuration with the mirrors does not validate: %v", err)
+	}
+	mirrors := cfg.RegistryMirrorConfigs()
+	for _, host := range upstreams {
+		m := mirrors[host]
+		if m == nil {
+			t.Fatalf("no mirror for %s in %v", host, mirrors)
+		}
+		endpoints := m.Endpoints()
+		if len(endpoints) != 1 || endpoints[0].Endpoint() != "https://127.0.0.1:5443/v2/"+host || !endpoints[0].OverridePath() {
+			t.Errorf("mirror of %s = %+v, want zot at https://127.0.0.1:5443/v2/%s with the path as given", host, endpoints, host)
+		}
+		if m.SkipFallback() {
+			t.Errorf("mirror of %s skips the fallback to the upstream", host)
+		}
+	}
+	tls := cfg.RegistryTLSConfigs()[nodeconfig.MirrorHost]
+	if tls == nil || string(tls.CA()) != ca {
+		t.Errorf("TLS of %s = %+v, want the CA", nodeconfig.MirrorHost, tls)
+	}
+}
+
+func TestNoMirrorsWithoutZot(t *testing.T) {
+	docs := render(t, appliance(), nodeconfig.Node{IP: nodeIP, Link: runningLink()})
+	for _, kind := range kinds(docs) {
+		if kind == cri.RegistryMirrorConfig || kind == cri.RegistryTLSConfig {
+			t.Errorf("a %s before zot is ready", kind)
+		}
 	}
 }

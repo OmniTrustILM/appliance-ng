@@ -6,15 +6,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/update"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
@@ -37,7 +42,7 @@ func loadSteps(t *testing.T) []kube.Step {
 }
 
 func TestOrderSteps(t *testing.T) {
-	want := []string{"cilium", "storage", "cert-manager", "cnpg", "rabbitmq", "keycloak", "traefik", "ilm-operator"}
+	want := []string{"cilium", "storage", "cert-manager", "cnpg", "rabbitmq", "keycloak", "traefik", "ilm-operator", "registry"}
 	var got []string
 	for _, step := range loadSteps(t) {
 		got = append(got, step.Name)
@@ -294,5 +299,196 @@ func TestTraefikRedirectsHTTPWithTheLowestPriority(t *testing.T) {
 	})
 	if !found {
 		t.Errorf("no priority 1 route on the web entry point redirects to https on port 443; routes %+v", routes)
+	}
+}
+
+const zotImage = "ghcr.io/project-zot/zot-minimal:v2.1.23"
+
+// zotPod returns the zot Deployment's pod spec.
+func zotPod(t *testing.T) map[string]any {
+	t.Helper()
+	for _, doc := range docs(t, "zot.yaml") {
+		if doc["kind"] != "Deployment" {
+			continue
+		}
+		return doc["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	}
+	t.Fatal("zot.yaml has no Deployment")
+	return nil
+}
+
+func TestZotAddonPinned(t *testing.T) {
+	m, err := release.Load("../release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, img := range m.Images {
+		if img.Ref == zotImage {
+			found = true
+			if img.Bundle != release.BundleSystem || !strings.HasPrefix(img.Digest, "sha256:") || len(img.Digest) != len("sha256:")+64 {
+				t.Errorf("zot image is %+v, want a sha256 digest in the system bundle", img)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("release.yaml does not list %s", zotImage)
+	}
+	if !slices.ContainsFunc(m.Addons, func(a release.AddonFile) bool { return a.File == "zot.yaml" }) {
+		t.Error("release.yaml does not pin zot.yaml")
+	}
+
+	pod := zotPod(t)
+	containers := pod["containers"].([]any)
+	if len(containers) != 1 || containers[0].(map[string]any)["image"] != zotImage {
+		t.Errorf("zot containers = %v, want one with image %s", containers, zotImage)
+	}
+	container := containers[0].(map[string]any)
+	probe, _ := container["readinessProbe"].(map[string]any)["tcpSocket"].(map[string]any)
+	if probe["host"] != "127.0.0.1" || probe["port"] != float64(registry.Port) {
+		t.Errorf("readiness probe = %v, want a TCP check of 127.0.0.1:%d, where zot listens", probe, registry.Port)
+	}
+	sc, _ := container["securityContext"].(map[string]any)
+	caps, _ := sc["capabilities"].(map[string]any)
+	if sc["allowPrivilegeEscalation"] != false || sc["readOnlyRootFilesystem"] != true || fmt.Sprint(caps["drop"]) != "[ALL]" {
+		t.Errorf("container securityContext = %v, want no privilege escalation, a read-only root and all capabilities dropped", sc)
+	}
+	if pod["securityContext"].(map[string]any)["seccompProfile"].(map[string]any)["type"] != "RuntimeDefault" {
+		t.Error("zot pod has no RuntimeDefault seccomp profile")
+	}
+	if pod["hostNetwork"] != true {
+		t.Error("zot does not use the host network")
+	}
+	for _, p := range container["ports"].([]any) {
+		if port, ok := p.(map[string]any)["hostPort"]; ok {
+			t.Errorf("zot publishes host port %v; on the host network it listens there already", port)
+		}
+	}
+	var hostPaths []string
+	for _, v := range pod["volumes"].([]any) {
+		if hp, ok := v.(map[string]any)["hostPath"].(map[string]any); ok {
+			hostPaths = append(hostPaths, hp["path"].(string))
+		}
+	}
+	if !slices.Equal(hostPaths, []string{"/var/mnt/data/registry"}) {
+		t.Errorf("zot host paths = %v, want /var/mnt/data/registry", hostPaths)
+	}
+}
+
+// retentionPolicy is a retention policy of zot's storage.
+type retentionPolicy struct {
+	Repositories   []string `json:"repositories"`
+	DeleteUntagged *bool    `json:"deleteUntagged"`
+	KeepTags       []any    `json:"keepTags"`
+}
+
+// checkStorage checks that zot's dedupe is pinned on, and its retention. zot's default retention would delete the untagged manifest of a
+// previous bundle under its upstream name once a newer bundle moves its tag; in appliance/<kind>, it collects the
+// copies no bundle index lists any more. The first policy that matches a repository applies. No policy deletes a tag.
+// The copies of a bundle are untagged until its index is pushed, so the delay before an untagged manifest is deleted
+// is longer than a fetch may take.
+func checkStorage(t *testing.T, dedupe *bool, delay string, policies []retentionPolicy) {
+	t.Helper()
+	if dedupe == nil || !*dedupe {
+		t.Error("dedupe is not pinned on")
+	}
+	if d, err := time.ParseDuration(delay); err != nil || d <= update.FetchTimeout {
+		t.Errorf("retention delay %q, want longer than a fetch's %v", delay, update.FetchTimeout)
+	}
+	want := []struct {
+		repository     string
+		deleteUntagged bool
+	}{{"appliance/**", true}, {"**", false}}
+	ok := len(policies) == len(want)
+	for i := 0; ok && i < len(want); i++ {
+		p := policies[i]
+		ok = slices.Equal(p.Repositories, []string{want[i].repository}) && p.DeleteUntagged != nil &&
+			*p.DeleteUntagged == want[i].deleteUntagged && len(p.KeepTags) == 0
+	}
+	if !ok {
+		t.Errorf("retention policies = %+v, want %+v and every tag kept", policies, want)
+	}
+}
+
+func TestZotConfigReadAnonymousPushAuth(t *testing.T) {
+	var raw string
+	var cert map[string]any
+	for _, doc := range docs(t, "zot.yaml") {
+		switch {
+		case doc["kind"] == "ConfigMap" && doc["metadata"].(map[string]any)["name"] == "zot-config":
+			raw = doc["data"].(map[string]any)["config.json"].(string)
+		case doc["kind"] == "Certificate" && doc["metadata"].(map[string]any)["name"] == "zot-tls":
+			cert = doc["spec"].(map[string]any)
+		}
+	}
+	var config struct {
+		Storage struct {
+			RootDirectory string `json:"rootDirectory"`
+			GC            bool   `json:"gc"`
+			Dedupe        *bool  `json:"dedupe"`
+			Retention     struct {
+				Delay    string            `json:"delay"`
+				Policies []retentionPolicy `json:"policies"`
+			} `json:"retention"`
+		} `json:"storage"`
+		HTTP struct {
+			Address string   `json:"address"`
+			Port    string   `json:"port"`
+			Compat  []string `json:"compat"`
+			TLS     struct {
+				Cert string `json:"cert"`
+				Key  string `json:"key"`
+			} `json:"tls"`
+			Auth struct {
+				Htpasswd struct {
+					Path string `json:"path"`
+				} `json:"htpasswd"`
+			} `json:"auth"`
+			AccessControl struct {
+				Repositories map[string]struct {
+					AnonymousPolicy []string `json:"anonymousPolicy"`
+					Policies        []struct {
+						Users   []string `json:"users"`
+						Actions []string `json:"actions"`
+					} `json:"policies"`
+				} `json:"repositories"`
+			} `json:"accessControl"`
+		} `json:"http"`
+		Extensions map[string]any `json:"extensions"`
+	}
+	if err := yaml.Unmarshal([]byte(raw), &config); err != nil {
+		t.Fatalf("zot-config config.json: %v", err)
+	}
+	if config.HTTP.Address != "127.0.0.1" {
+		t.Errorf("address = %q, want 127.0.0.1", config.HTTP.Address)
+	}
+	if config.HTTP.Port != strconv.Itoa(registry.Port) {
+		t.Errorf("port = %q, want %d", config.HTTP.Port, registry.Port)
+	}
+	// Many release images, the installer and the Kubernetes ones among them, are Docker schema 2 manifests.
+	if !slices.Contains(config.HTTP.Compat, "docker2s2") {
+		t.Errorf("compat = %q, want docker2s2 so that Docker manifests are accepted", config.HTTP.Compat)
+	}
+	if !config.Storage.GC {
+		t.Error("garbage collection is off")
+	}
+	checkStorage(t, config.Storage.Dedupe, config.Storage.Retention.Delay, config.Storage.Retention.Policies)
+	if _, scrub := config.Extensions["scrub"]; scrub {
+		t.Error("scrub is configured")
+	}
+	if config.HTTP.TLS.Cert == "" || config.HTTP.TLS.Key == "" || config.HTTP.Auth.Htpasswd.Path == "" {
+		t.Errorf("TLS %+v and htpasswd %q are not both configured", config.HTTP.TLS, config.HTTP.Auth.Htpasswd.Path)
+	}
+	repo, ok := config.HTTP.AccessControl.Repositories["**"]
+	if !ok || !slices.Equal(repo.AnonymousPolicy, []string{"read"}) {
+		t.Fatalf("access control = %+v, want anonymous read on **", config.HTTP.AccessControl.Repositories)
+	}
+	if len(repo.Policies) != 1 || !slices.Equal(repo.Policies[0].Users, []string{registry.PushUser}) ||
+		!slices.Contains(repo.Policies[0].Actions, "create") || !slices.Contains(repo.Policies[0].Actions, "update") {
+		t.Errorf("policies = %+v, want %s to push", repo.Policies, registry.PushUser)
+	}
+	issuer, _ := cert["issuerRef"].(map[string]any)
+	if cert == nil || issuer["name"] != "appliance-ca" || issuer["kind"] != "ClusterIssuer" || cert["secretName"] != "zot-tls" {
+		t.Errorf("zot-tls Certificate spec = %v, want one from ClusterIssuer appliance-ca into Secret zot-tls", cert)
 	}
 }

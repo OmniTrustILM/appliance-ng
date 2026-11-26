@@ -4,18 +4,23 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
+	"strconv"
 	"sync"
 	"time"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
 	"github.com/go-logr/logr"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -31,18 +36,22 @@ import (
 	appliance "github.com/OmniTrustILM/appliance-ng"
 	"github.com/OmniTrustILM/appliance-ng/addons"
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	addonpass "github.com/OmniTrustILM/appliance-ng/internal/addons"
 	apiserver "github.com/OmniTrustILM/appliance-ng/internal/api"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
+	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/console"
 	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/manager"
+	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/restore"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
+	"github.com/OmniTrustILM/appliance-ng/internal/update"
 )
 
 // Set at build time with -ldflags "-X main.version=...".
@@ -57,6 +66,10 @@ const (
 	backupDir = "backups"
 	// restoreDir, under the data directory, keeps the backup uploaded or fetched for a restore.
 	restoreDir = "restore"
+	// bundlesDir, under the data directory, keeps the files of the loaded bundles; updatesDir the uploaded ones until
+	// they are loaded.
+	bundlesDir = "bundles"
+	updatesDir = "updates"
 	// postgresImage, cached offline, runs the dumps, loads and checks of an external database.
 	postgresImage = "ghcr.io/cloudnative-pg/postgresql:18"
 )
@@ -65,6 +78,8 @@ func main() {
 	listen := flag.String("listen", ":8443", "HTTPS address of the console")
 	data := flag.String("data", "/data", "directory for the manager's persistent data: the audit log and the local backups")
 	talosEndpoint := flag.String("talos-endpoint", "127.0.0.1:50000", "Talos API endpoint")
+	updateRepository := flag.String("update-repository", update.DefaultRepository,
+		"repository holding the system and platform bundles in <repository>/system and <repository>/platform")
 	flag.Parse()
 
 	handler := slog.NewJSONHandler(os.Stdout, nil)
@@ -72,8 +87,9 @@ func main() {
 	slog.SetDefault(log)
 	ctrl.SetLogger(logr.FromSlogHandler(handler))
 
-	log.Info("appliance manager starting", "version", version, "listen", *listen, "data", *data, "talosEndpoint", *talosEndpoint)
-	if err := run(ctrl.SetupSignalHandler(), log, *listen, *data, *talosEndpoint); err != nil {
+	log.Info("appliance manager starting", "version", version, "listen", *listen, "data", *data, "talosEndpoint", *talosEndpoint,
+		"updateRepository", *updateRepository)
+	if err := run(ctrl.SetupSignalHandler(), log, *listen, *data, *talosEndpoint, *updateRepository); err != nil {
 		log.Error("appliance manager failed", "error", err)
 		os.Exit(1)
 	}
@@ -90,7 +106,7 @@ func newScheme() (*runtime.Scheme, error) {
 	return scheme, nil
 }
 
-func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint string) error {
+func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, updateRepository string) error {
 	scheme, err := newScheme()
 	if err != nil {
 		return err
@@ -137,7 +153,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		APIReader: mgr.GetAPIReader(),
 		Cluster:   cluster,
 		Steps:     steps,
-		Addons:    addons.FS,
+		Addons:    addonpass.Pinned(addons.FS, rel.ArchPins(goruntime.GOARCH)),
 		Release:   rel,
 		Recorder:  mgr.GetEventRecorder(kube.ManagerFieldManager),
 		Version:   version,
@@ -158,7 +174,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 	// One Talos client for the controllers and the API.
 	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
 		talosEndpoint, talos.DialAPI)
-	if err := setupNodeControllers(mgr, users, talosAccess); err != nil {
+	if err := setupNodeControllers(mgr, users, talosAccess, reconciler); err != nil {
 		return err
 	}
 
@@ -172,10 +188,11 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		return err
 	}
 	s := services{mgr: mgr, direct: direct, audit: auditLog, log: log, external: backup.ExternalDumpers(direct, cfg, postgres)}
-	backups, restorer, err := newBackupAndRestore(ctx, s, rel, reconciler, data)
+	ops, err := newOperations(ctx, s, rel, reconciler, data, updateRepository)
 	if err != nil {
 		return err
 	}
+	backups := ops.backups
 	identity, err := setupILMController(mgr, reconciler, direct, cfg, backups)
 	if err != nil {
 		return err
@@ -192,13 +209,16 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint stri
 		Log:        log,
 		Talos:      talosAccess,
 		Backups:    backups,
-		Restore:    restorer,
+		Restore:    ops.restorer,
 		RestoreDir: filepath.Join(data, restoreDir),
 		CheckDatabase: func(ctx context.Context, db backup.ExternalDatabase, username, password string, ca []byte) error {
 			db.Image = postgres
 			return backup.CheckExternal(ctx, direct, cfg, db, username, password, ca)
 		},
-		ILM: manager.ILMClient(mgr.GetClient(), mgr.GetAPIReader(), identity),
+		ILM:        manager.ILMClient(mgr.GetClient(), mgr.GetAPIReader(), identity),
+		Updates:    ops.loader,
+		Finder:     ops.finder,
+		UpdatesDir: filepath.Join(data, updatesDir),
 	})
 	if err := addConsole(mgr, log, listen, api.Handler()); err != nil {
 		return err
@@ -239,6 +259,28 @@ type services struct {
 	external func(v1alpha1.ExternalDatabase) backup.Dumper
 }
 
+// operations are the long operations, which share the backup runner's admission.
+type operations struct {
+	backups  *backup.Runner
+	restorer *restore.Engine
+	loader   *update.Loader
+	finder   *update.Finder
+}
+
+// newOperations returns the backup runner with its schedule, the restore engine, and the bundle loader and finder of
+// the bundles in repository.
+func newOperations(ctx context.Context, s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data, repository string) (operations, error) {
+	backups, restorer, err := newBackupAndRestore(ctx, s, rel, reconciler, data)
+	if err != nil {
+		return operations{}, err
+	}
+	loader, finder, err := newUpdates(s, rel, backups, data, repository)
+	if err != nil {
+		return operations{}, err
+	}
+	return operations{backups: backups, restorer: restorer, loader: loader, finder: finder}, nil
+}
+
 // newBackupAndRestore returns the backup runner on the data directory data, with its schedule, and the restore
 // engine.
 func newBackupAndRestore(ctx context.Context, s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data string) (*backup.Runner, *restore.Engine, error) {
@@ -252,15 +294,71 @@ func newBackupAndRestore(ctx context.Context, s services, rel *release.Manifest,
 	return backups, newRestoreEngine(ctx, s, backups, reconciler.OperatorLock), nil
 }
 
-// setupNodeControllers sets up the hand-over and the node controllers with mgr.
-func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAccess func(context.Context) (talos.Node, error)) error {
+// newUpdates returns the bundle loader and the finder of the bundles in repository, which checks daily with mgr. The
+// loader shares the admission of backups, pushes into zot with the push user's password, which never leaves the
+// manager, and starts with no upload left from before a restart.
+func newUpdates(s services, rel *release.Manifest, backups *backup.Runner, data, repository string) (*update.Loader, *update.Finder, error) {
+	repo, err := name.NewRepository(repository + "/" + release.BundleSystem)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the update repository %q: %w", repository, err)
+	}
+	uploads := filepath.Join(data, updatesDir)
+	if err := os.RemoveAll(uploads); err != nil {
+		return nil, nil, fmt.Errorf("remove the uploads left from before: %w", err)
+	}
+	reader := s.mgr.GetAPIReader()
+	online := update.Online{Repository: repository, Options: update.ApplianceOptions(reader, repo.RegistryStr())}
+	loader := update.NewLoader(update.LoaderDeps{
+		Client:    s.direct,
+		Registry:  func(ctx context.Context) (update.Registry, error) { return zotClient(ctx, reader) },
+		Admission: backups,
+		Audit:     s.audit,
+		Log:       s.log,
+		Release:   rel,
+		Dir:       filepath.Join(data, bundlesDir),
+		Uploads:   uploads,
+		Online:    online,
+	})
+	finder := update.NewFinder(update.FinderDeps{
+		Client: s.direct, Online: online, Release: rel, Dir: filepath.Join(data, bundlesDir), Uploads: uploads, Log: s.log,
+	})
+	if err := s.mgr.Add(crmanager.RunnableFunc(finder.Start)); err != nil {
+		return nil, nil, fmt.Errorf("add the daily check for updates: %w", err)
+	}
+	return loader, finder, nil
+}
+
+// zotClient returns a client that pushes into zot on the node's loopback address, trusting the built-in CA.
+func zotClient(ctx context.Context, reader client.Reader) (*registry.Client, error) {
+	ca, err := certs.RootCA(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return nil, errors.New("the built-in CA certificate does not parse")
+	}
+	secret := &corev1.Secret{}
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: registry.SecretName}, secret); err != nil {
+		return nil, fmt.Errorf("read the registry push password: %w", err)
+	}
+	endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(registry.Port))
+	return registry.New(endpoint, roots, registry.PushUser, string(secret.Data["password"])), nil
+}
+
+// setupNodeControllers sets up the hand-over and the node controllers with mgr; the node controller tells from the
+// add-on steps of reconciler whether zot is ready.
+func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAccess func(context.Context) (talos.Node, error), reconciler *manager.ApplianceReconciler) error {
 	handover := &manager.HandoverReconciler{
 		Client: mgr.GetClient(), Users: users, Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess,
 	}
 	if err := handover.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the hand-over controller: %w", err)
 	}
-	node := &manager.NodeReconciler{Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess}
+	node := &manager.NodeReconciler{
+		Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess,
+		Cluster: reconciler.Cluster, Steps: reconciler.Steps, Upstreams: reconciler.Release.RegistryHosts(),
+	}
 	if err := node.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the node controller: %w", err)
 	}

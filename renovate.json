@@ -119,6 +119,7 @@
         "docker.io/library/busybox",
         "docker.io/traefik",
         "ghcr.io/cloudnative-pg/cloudnative-pg",
+        "ghcr.io/project-zot/zot-minimal",
         "ghcr.io/rabbitmq/cluster-operator",
         "ghcr.io/rabbitmq/messaging-topology-operator",
         "hub.omnitrustregistry.com/ilm/operator",

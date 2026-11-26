@@ -42,6 +42,8 @@ var (
 		Message: "The platform is not ready yet. Try again when it is."}
 	backupRunningConflict = ConflictJSONResponse{Code: "backup_running",
 		Message: "A backup is running. Set a new password once it has finished."}
+	bundleLoadingConflict = ConflictJSONResponse{Code: codeBundleLoading,
+		Message: "An update bundle is loading. Set a new password once it has finished."}
 	resetRunningConflict = ConflictJSONResponse{Code: "reset_running",
 		Message: "A new password is being set. Try again in a moment."}
 )
@@ -130,6 +132,8 @@ func (s *Server) PutPlatformAdminPassword(ctx context.Context, _ PutPlatformAdmi
 		return nil
 	})
 	switch {
+	case errors.Is(err, backup.ErrHeld):
+		return PutPlatformAdminPassword409JSONResponse{ConflictJSONResponse: bundleLoadingConflict}, nil
 	case errors.Is(err, backup.ErrBusy):
 		return PutPlatformAdminPassword409JSONResponse{ConflictJSONResponse: backupRunningConflict}, nil
 	case err != nil:

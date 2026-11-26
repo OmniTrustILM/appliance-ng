@@ -389,3 +389,44 @@ func TestCBOMS3SetExactlyForS3Storage(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateStatusRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	a := newAppliance(v1alpha1.ApplianceName)
+	if err := create(t, a); err != nil {
+		t.Fatal(err)
+	}
+	now := metav1.Now()
+	a.Status.Versions.PlatformBundle = "1.2.0"
+	a.Status.Updates = &v1alpha1.UpdatesStatus{
+		LastCheck:      &now,
+		LastCheckError: "unreachable",
+		Available: []v1alpha1.BundleInfo{{
+			Kind: "platform", Version: "1.3.0", Arch: "amd64", ILM: "2.18.0", Operator: "2.4.0", MinAppliance: "1.2.0",
+			SizeBytes: 1 << 30, Blocked: "needsAppliance", Needs: "1.2.0",
+		}},
+		Loaded: []v1alpha1.BundleInfo{{Kind: "system", Version: "1.2.0", Arch: "amd64", OperatorRange: ">=2.0.0 <3.0.0", LoadedAt: &now}},
+	}
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: "system", From: "1.2.0", To: "1.3.0", Step: "pushing", Message: "Loading the images", Backup: "pre-update",
+		StartedAt: now, PointOfNoReturn: true,
+	}
+	if err := testClient.Status().Update(ctx, a); err != nil {
+		t.Fatalf("status update: %v", err)
+	}
+	var got v1alpha1.Appliance
+	if err := testClient.Get(ctx, client.ObjectKeyFromObject(a), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Versions.PlatformBundle != "1.2.0" || got.Status.Updates == nil || got.Status.Update == nil {
+		t.Fatalf("status lost: %+v", got.Status)
+	}
+	u := got.Status.Updates
+	if u.LastCheckError != "unreachable" || len(u.Available) != 1 || u.Available[0].Needs != "1.2.0" ||
+		u.Available[0].SizeBytes != 1<<30 || len(u.Loaded) != 1 || u.Loaded[0].LoadedAt == nil {
+		t.Fatalf("updates lost: %+v", u)
+	}
+	if s := got.Status.Update; s.To != "1.3.0" || s.Backup != "pre-update" || !s.PointOfNoReturn || s.StartedAt.IsZero() {
+		t.Fatalf("update lost: %+v", s)
+	}
+}

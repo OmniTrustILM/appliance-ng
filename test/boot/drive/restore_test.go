@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,20 +11,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
+	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 )
 
 const (
 	testRestoreHost   = "restored.appliance.internal"
 	testBackupContent = "encrypted-backup-bytes-5c1d"
 	testNewKitContent = "reissued-kit-bytes-9a0e"
+	testNodeIP        = "10.0.2.15"
 )
 
 // restoreConsole models the console's restore API: a started restore waits for its kit once, is resumed and is done
-// on the poll after that. The reissued kit is newKit.
+// on the poll after that. The reissued kit is newKit. Like the console, it serves the setup certificate until the
+// restore completes the setup and the built-in certificate for testRestoreHost from then on.
 type restoreConsole struct {
 	kit, newKit                  []byte
 	uploaded, uploadName         string
@@ -31,6 +37,9 @@ type restoreConsole struct {
 	polls                        int
 	confirmed                    bool
 	refuseInspect, failRestore   bool
+	setupCert, builtinCert       tls.Certificate
+	rootPEM                      []byte
+	complete                     atomic.Bool
 }
 
 // multipartFields reads the parts of a multipart request into a map.
@@ -77,9 +86,13 @@ func (rc *restoreConsole) serve(t *testing.T) *httptest.Server {
 			progress["step"], progress["pausedStep"] = "waitingForKit", "database"
 		default:
 			progress["step"] = "done"
+			rc.complete.Store(true)
+			// The next request makes a new connection, which gets the certificate served now.
+			w.Header().Set("Connection", "close")
 		}
 		reply(w, http.StatusOK, map[string]any{"setup": "restore", "restore": progress})
 	})
+	mux.HandleFunc("GET /appliance/api/v1/ca.pem", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(rc.rootPEM) })
 	mux.HandleFunc("PUT /appliance/api/v1/restore/upload", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := io.ReadAll(r.Body)
 		rc.uploaded, rc.uploadName = string(data), r.URL.Query().Get("name")
@@ -125,9 +138,30 @@ func (rc *restoreConsole) serve(t *testing.T) *httptest.Server {
 		rc.confirmed = true
 		w.WriteHeader(http.StatusNoContent)
 	})
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewUnstartedServer(mux)
+	// Called for every handshake, also those without SNI, which a client of the node address sends none of.
+	srv.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		served := rc.setupCert
+		if rc.complete.Load() {
+			served = rc.builtinCert
+		}
+		return &tls.Config{Certificates: []tls.Certificate{served}}, nil
+	}}
+	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// setupClient returns a client of srv that trusts only the setup certificate, as drive starts a restore.
+func (rc *restoreConsole) setupClient(t *testing.T, srv *httptest.Server) *client {
+	t.Helper()
+	cert, err := x509.ParseCertificate(rc.setupCert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	return newClient(srv.URL, roots, testNodeIP)
 }
 
 // newRestoreConsole returns a console, the options of a restore onto it and the secrets drive must not print.
@@ -154,6 +188,11 @@ func newRestoreConsole(t *testing.T) (*restoreConsole, options, []string) {
 		}
 	}
 	rc := &restoreConsole{kit: build(testKubeSecret), newKit: build("new-" + testKubeSecret)}
+	rc.setupCert, _, err = setup.SelfSigned([]string{testNodeIP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rc.rootPEM, rc.builtinCert = builtinCA(t, testRestoreHost)
 	kitFile := filepath.Join(dir, "kit.tar.age")
 	if err := os.WriteFile(kitFile, rc.kit, 0o600); err != nil {
 		t.Fatal(err)
@@ -178,7 +217,7 @@ func TestDriveRestoreNeverPrintsSecrets(t *testing.T) {
 	srv := rc.serve(t)
 	cl := &fakeCluster{}
 	var err error
-	out := captureStdout(t, func() { err = newClient(srv.URL, nil, "").restore(context.Background(), o, cl) })
+	out := captureStdout(t, func() { err = rc.setupClient(t, srv).restore(context.Background(), o, cl) })
 	if err != nil {
 		t.Fatalf("restore = %v\n%s", err, out)
 	}
@@ -187,7 +226,7 @@ func TestDriveRestoreNeverPrintsSecrets(t *testing.T) {
 			t.Errorf("drive printed a secret:\n%s", out)
 		}
 	}
-	for _, want := range []string{testBackup, "ILM 2.20.0", testHostName, "waitingForKit", "done", "last restore test"} {
+	for _, want := range []string{testBackup, "ILM 2.20.0", testHostName, "waitingForKit", "done", "built-in certificate", "last restore test"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("drive printed no %q:\n%s", want, out)
 		}
@@ -240,7 +279,7 @@ func TestDriveRestoreFails(t *testing.T) {
 			tc.change(rc)
 			srv := rc.serve(t)
 			var err error
-			out := captureStdout(t, func() { err = newClient(srv.URL, nil, "").restore(context.Background(), o, &fakeCluster{}) })
+			out := captureStdout(t, func() { err = rc.setupClient(t, srv).restore(context.Background(), o, &fakeCluster{}) })
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("restore = %v, want an error naming %q", err, tc.want)
 			}

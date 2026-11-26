@@ -1,6 +1,7 @@
 # Apply order and readiness waits of the add-ons. Each step's files are applied in order,
 # then its waits must pass before the next step starts. platform.yaml holds reference defaults and is applied by
-# no step.
+# no step. The registry comes last: the steps before it are not held back by a zot that does not start, but the
+# add-ons are not ready, and the platform is not reconciled, until zot is available.
 steps:
   - name: cilium
     files: [cilium.yaml]
@@ -47,3 +48,7 @@ steps:
     wait:
       - { kind: CustomResourceDefinition, name: platforms.otilm.com, for: Established }
       - { kind: Deployment, namespace: ilm-operator-system, name: ilm-operator-controller-manager, for: Available }
+  - name: registry
+    files: [zot.yaml]
+    wait:
+      - { kind: Deployment, namespace: appliance-system, name: zot, for: Available }

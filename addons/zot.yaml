@@ -1,0 +1,120 @@
+# zot, the in-cluster registry the node pulls its images from and the manager pushes bundles into. It listens on the
+# node's loopback address, port 5443, over TLS from the built-in CA. Anyone may pull; only the appliance-manager user
+# may push. The Appliance Manager creates the Secret zot-htpasswd. zot runs as root because the kubelet creates the
+# hostPath directory owned by root; it reloads a renewed certificate from the mounted Secret on its own. The manager
+# deletes the manifests of older bundles. The retention policies keep untagged manifests under upstream names and
+# collect those in appliance/<kind> that no bundle index lists, after a delay longer than a bundle fetch, during which
+# a bundle's copies are untagged; garbage collection frees what is deleted.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config
+  namespace: appliance-system
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.0",
+      "storage": {
+        "rootDirectory": "/var/lib/zot",
+        "dedupe": true,
+        "gc": true,
+        "gcDelay": "1h",
+        "gcInterval": "1h",
+        "retention": {
+          "delay": "5h",
+          "policies": [
+            { "repositories": ["appliance/**"], "deleteUntagged": true },
+            { "repositories": ["**"], "deleteUntagged": false }
+          ]
+        }
+      },
+      "http": {
+        "address": "127.0.0.1",
+        "port": "5443",
+        "compat": ["docker2s2"],
+        "tls": {
+          "cert": "/etc/zot/tls/tls.crt",
+          "key": "/etc/zot/tls/tls.key"
+        },
+        "auth": {
+          "htpasswd": { "path": "/etc/zot/auth/htpasswd" }
+        },
+        "accessControl": {
+          "repositories": {
+            "**": {
+              "anonymousPolicy": ["read"],
+              "policies": [
+                { "users": ["appliance-manager"], "actions": ["read", "create", "update", "delete"] }
+              ]
+            }
+          }
+        }
+      },
+      "log": { "level": "info" }
+    }
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: zot-tls
+  namespace: appliance-system
+spec:
+  secretName: zot-tls
+  commonName: zot
+  dnsNames: [localhost]
+  ipAddresses: ["127.0.0.1"]
+  duration: 8760h
+  renewBefore: 720h
+  privateKey: { algorithm: ECDSA, size: 256 }
+  issuerRef: { name: appliance-ca, kind: ClusterIssuer, group: cert-manager.io }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zot
+  namespace: appliance-system
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: zot }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: zot }
+    spec:
+      hostNetwork: true
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: zot
+          image: ghcr.io/project-zot/zot-minimal:v2.1.23
+          args: ["serve", "/etc/zot/config/config.json"]
+          ports:
+            - { name: https, containerPort: 5443 }
+          readinessProbe:
+            tcpSocket: { host: 127.0.0.1, port: 5443 }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: config, mountPath: /etc/zot/config, readOnly: true }
+            - { name: tls, mountPath: /etc/zot/tls, readOnly: true }
+            - { name: auth, mountPath: /etc/zot/auth, readOnly: true }
+            - { name: data, mountPath: /var/lib/zot }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap: { name: zot-config }
+        - name: tls
+          secret: { secretName: zot-tls }
+        - name: auth
+          secret:
+            secretName: zot-htpasswd
+            items: [{ key: htpasswd, path: htpasswd }]
+        - name: data
+          hostPath: { path: /var/mnt/data/registry, type: DirectoryOrCreate }

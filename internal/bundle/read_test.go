@@ -181,3 +181,25 @@ func paxRecord(k, v string) string {
 	}
 	return strconv.Itoa(n) + s
 }
+
+func TestTarNamesRefusesSparseEntries(t *testing.T) {
+	for name, item := range map[string]tarItem{
+		"PAX": {
+			pax: map[string]string{"GNU.sparse.size": "104857600", "GNU.sparse.numblocks": "1", "GNU.sparse.map": "0,5"},
+			h:   tar.Header{Name: "a.yaml", Typeflag: tar.TypeReg, Mode: 0o644, Size: 5}, content: "hello",
+		},
+		"GNU": {h: tar.Header{Name: "a.yaml", Typeflag: tar.TypeGNUSparse, Mode: 0o644, Format: tar.FormatGNU}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "files.tar")
+			writeTar(t, path, []tarItem{item})
+			archive, err := os.ReadFile(path) //nolint:gosec // a test file
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tarNames(archive); err == nil {
+				t.Fatal("tarNames: want an error for a sparse entry")
+			}
+		})
+	}
+}

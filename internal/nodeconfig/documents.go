@@ -4,10 +4,12 @@ package nodeconfig
 
 import (
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/siderolabs/go-pointer"
+	"github.com/siderolabs/talos/pkg/machinery/config/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/cri"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/meta"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/network"
@@ -127,4 +129,25 @@ func RegistryAuthConfig(r RegistryAuth) *cri.RegistryAuthConfigV1Alpha1 {
 	doc.RegistryUsername = r.Username
 	doc.RegistryPassword = r.Password
 	return doc
+}
+
+// MirrorHost is where zot serves the node: its loopback address and zot's port.
+const MirrorHost = "127.0.0.1:5443"
+
+// RegistryMirrors returns the documents that send the pulls from each registry of upstreams to zot first, trusting
+// the CA caPEM. A pull zot cannot serve falls back to the upstream registry.
+func RegistryMirrors(caPEM []byte, upstreams []string) []config.Document {
+	docs := make([]config.Document, 0, len(upstreams)+1)
+	for _, host := range upstreams {
+		doc := cri.NewRegistryMirrorConfigV1Alpha1(host)
+		doc.RegistryEndpoints = []cri.RegistryEndpoint{{
+			// zot keeps each image under its upstream registry's name.
+			EndpointURL:          meta.URL{URL: &url.URL{Scheme: "https", Host: MirrorHost, Path: "/v2/" + host}},
+			EndpointOverridePath: pointer.To(true),
+		}}
+		docs = append(docs, doc)
+	}
+	tls := cri.NewRegistryTLSConfigV1Alpha1(MirrorHost)
+	tls.TLSCA = string(caPEM)
+	return append(docs, tls)
 }

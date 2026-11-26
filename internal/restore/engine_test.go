@@ -97,12 +97,16 @@ func (d *fakeDumper) Recreate(ctx context.Context) error {
 // fakeBackups admits a restore unless busy and counts the restores recorded during their admission.
 type fakeBackups struct {
 	busy             bool
+	held             bool
 	recordedInAdmits int
 }
 
 func (b *fakeBackups) Exclusive(admit func() error) error {
 	if b.busy {
 		return backup.ErrBusy
+	}
+	if b.held {
+		return backup.ErrHeld
 	}
 	err := admit()
 	a := &v1alpha1.Appliance{}
@@ -352,6 +356,7 @@ func newRestoreFixture(t *testing.T, inPlace bool) *restoreFixture {
 	mustCreate(t, usersKey)
 	mustCreate(t, portableSecret("appliance-system", recovery.RecipientSecret, "", nil, map[string]string{recovery.RecipientKey: "age1current", recovery.IssuanceKey: "c1"}))
 	mustCreate(t, portableSecret("appliance-system", certs.SecretName, corev1.SecretTypeTLS, nil, tlsData("current-leaf")))
+	mustCreate(t, portableSecret("appliance-system", certs.RegistrySecretName, corev1.SecretTypeTLS, nil, tlsData("current-zot")))
 
 	deployment(t, "ilm-operator-system", "ilm-operator-controller-manager", nil)
 	deployment(t, "ilm", "core", map[string]string{"app.kubernetes.io/managed-by": "ilm-operator"})
@@ -721,6 +726,9 @@ func TestInPlaceSkipsPlatformAndCertificate(t *testing.T) {
 	if got := string(getSecret(t, "appliance-system", certs.SecretName).Data[corev1.TLSCertKey]); got != "current-leaf-crt" {
 		t.Errorf("leaf = %q, want it untouched", got)
 	}
+	if got := string(getSecret(t, "appliance-system", certs.RegistrySecretName).Data[corev1.TLSCertKey]); got != "current-zot-crt" {
+		t.Errorf("zot's certificate = %q, want it untouched", got)
+	}
 	if e := f.audit.all(); len(e) != 1 || e[0].Details["inPlace"] != "true" {
 		t.Errorf("audit %+v", e)
 	}
@@ -730,10 +738,7 @@ func TestFreshRestoreReissuesTheBuiltinCertificate(t *testing.T) {
 	f := newRestoreFixture(t, false)
 	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
 	f.wantDone(t)
-	s := &corev1.Secret{}
-	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: "appliance-system", Name: certs.SecretName}, s); !apierrors.IsNotFound(err) {
-		t.Errorf("leaf Secret: %v, want it deleted for cert-manager to reissue", err)
-	}
+	wantReissued(t)
 	leaf := unstructuredObject(schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "Certificate"}, "", "", map[string]any{})
 	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: "appliance-system", Name: certs.CertificateName}, leaf); err != nil {
 		t.Fatal(err)
@@ -769,8 +774,18 @@ func TestFreshRestoreWarnsAboutAnUploadedCertificate(t *testing.T) {
 	if !strings.Contains(st.Warning, newHost) {
 		t.Errorf("warning = %q, want the uncovered host named", st.Warning)
 	}
-	if got := string(getSecret(t, "appliance-system", certs.SecretName).Data[corev1.TLSCertKey]); got != "current-leaf-crt" {
-		t.Errorf("the built-in leaf changed with an uploaded certificate: %q", got)
+	wantReissued(t)
+}
+
+// wantReissued fails unless the Secrets of the certificates the built-in CA issues are deleted, for cert-manager to
+// issue them again from the restored root CA.
+func wantReissued(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{certs.SecretName, certs.RegistrySecretName} {
+		err := testClient.Get(context.Background(), client.ObjectKey{Namespace: "appliance-system", Name: name}, &corev1.Secret{})
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("Secret %s: %v, want it deleted for cert-manager to reissue", name, err)
+		}
 	}
 }
 
@@ -803,6 +818,11 @@ func TestRestoreRefusals(t *testing.T) {
 		t.Errorf("during a backup: %v, want ErrBackupRunning", err)
 	}
 	f.backups.busy = false
+	f.backups.held = true
+	if err := e.Start(ctx, f.file, f.key, Options{}); !errors.Is(err, ErrBundleLoading) {
+		t.Errorf("during a bundle load: %v, want ErrBundleLoading", err)
+	}
+	f.backups.held = false
 	if err := e.Start(ctx, f.file, f.key, Options{InPlace: true}); !errors.Is(err, ErrSetup) {
 		t.Errorf("in place on a fresh appliance: %v, want ErrSetup", err)
 	}

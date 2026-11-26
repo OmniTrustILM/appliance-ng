@@ -408,11 +408,12 @@ func TestLoadStepsFromEmbeddedAddons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(steps) != 8 {
-		t.Fatalf("got %d steps, want 8", len(steps))
+	if len(steps) != 9 {
+		t.Fatalf("got %d steps, want 9", len(steps))
 	}
-	if last := steps[len(steps)-1]; last.Name != "ilm-operator" {
-		t.Errorf("last step = %q, want ilm-operator", last.Name)
+	// zot comes last, so that a registry that does not start holds back no other add-on.
+	if last := steps[len(steps)-1]; last.Name != "registry" {
+		t.Errorf("last step = %q, want registry", last.Name)
 	}
 	if got := steps[1].NamespaceLabels["local-path-storage"]["pod-security.kubernetes.io/enforce"]; got != "privileged" {
 		t.Errorf("storage namespace label = %q", got)

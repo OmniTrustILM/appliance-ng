@@ -9,6 +9,7 @@ import { expiryNotice, warnWithinMs } from '../certificate/expiry';
 import { formatBytes } from '../shared/format';
 import { BackupCard, BackupWarnings } from './BackupSummary';
 import { ConditionAreas } from './ConditionAreas';
+import { UpdateNotice } from './UpdateNotice';
 import { useStatus, type Status } from './useStatus';
 
 const LINK = 'text-brand hover:underline';
@@ -94,6 +95,7 @@ export function DashboardPage() {
       {status && (
         <>
           <Warnings status={status} now={checkedAt} />
+          <UpdateNotice />
           <div className="grid gap-4 sm:grid-cols-2">
             <Card>
               <h2 className="mb-3 text-base font-semibold">Setup</h2>

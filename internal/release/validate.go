@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,14 +17,48 @@ import (
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-var imageRefPattern = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]+)?/[^ ]+:[^ ]+$`)
+var (
+	imageRefPattern = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]+)?/[^ ]+:[^ ]+$`)
+	digestPattern   = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
 
-// Validate checks the release version, the compatibility and the bundle of every image, every add-on file and
-// chart archive against its pinned hash, and reports each image the files or the connector catalogue use that the
-// manifest does not list, and a manager image placeholder that no add-on uses.
+// Arches are the architectures the appliance is built for.
+var Arches = []string{"amd64", "arm64"}
+
+// Validate checks the release version, the compatibility, the bundle and the per-arch digests of every image, every
+// add-on file and chart archive against its pinned hash, and reports each image the files or the connector catalogue
+// use that the manifest does not list, and a manager image placeholder that no add-on uses.
 func Validate(m *Manifest, addons fs.FS) []error {
 	errs, usage := validateContent(m, addons)
-	return append(errs, validateBundles(m, usage)...)
+	errs = append(errs, validateBundles(m, usage)...)
+	for _, img := range m.Images {
+		if err := img.checkArchDigests(); err != nil {
+			errs = append(errs, fmt.Errorf("image %s: %w", img.Ref, err))
+		}
+	}
+	return errs
+}
+
+// checkArchDigests checks that an image whose reference pins a digest, which may be an index, has the digest of its
+// image manifest for each architecture it is for, and that no other image has any.
+func (i Image) checkArchDigests() error {
+	if !strings.Contains(i.Ref, "@") {
+		if len(i.ArchDigests) > 0 {
+			return errors.New("has archDigests but its reference does not pin a digest")
+		}
+		return nil
+	}
+	for _, arch := range Arches {
+		if i.forArch(arch) && i.ArchDigests[arch] == "" {
+			return fmt.Errorf("no archDigests entry for %s", arch)
+		}
+	}
+	for _, arch := range slices.Sorted(maps.Keys(i.ArchDigests)) {
+		if !i.forArch(arch) || !slices.Contains(Arches, arch) || !digestPattern.MatchString(i.ArchDigests[arch]) {
+			return fmt.Errorf("archDigests %s: want sha256:<hex> for an arch the image is for", arch)
+		}
+	}
+	return nil
 }
 
 // validateContent checks the add-on files, charts and connectors. It also returns the images the add-ons use,

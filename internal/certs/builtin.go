@@ -33,6 +33,8 @@ const (
 	CertificateName          = "appliance-tls"
 	// SecretName is the TLS Secret, in Namespace, that holds the leaf certificate, its key and the root CA.
 	SecretName = "appliance-tls"
+	// RegistrySecretName is the TLS Secret, in Namespace, of zot's certificate, which the CA issuer issues.
+	RegistrySecretName = "zot-tls"
 	// SetupSecretName is the TLS Secret, in Namespace, that holds the setup certificate until setup is complete.
 	SetupSecretName = "appliance-setup-tls"
 	// FieldManager is the field manager of the manager's server-side applies.

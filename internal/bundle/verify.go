@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"archive/tar"
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -22,17 +24,47 @@ import (
 	appliance "github.com/OmniTrustILM/appliance-ng"
 )
 
+// testKey is the base64 of a PEM public key that replaces cosign.pub in a test build, set with
+// -ldflags "-X github.com/OmniTrustILM/appliance-ng/internal/bundle.testKey=<base64>". A release build leaves it empty.
+var testKey string
+
+const pemPublicKey = "-----BEGIN PUBLIC KEY-----"
+
 var embeddedKey = sync.OnceValue(func() crypto.PublicKey {
-	key, err := ParsePublicKey(appliance.CosignPublicKey)
+	key, err := signingKey(testKey)
 	if err != nil {
-		panic(fmt.Sprintf("embedded cosign.pub: %v", err))
+		panic(err)
 	}
 	return key
 })
 
-// PublicKey returns the bundle signing key embedded from cosign.pub.
+// PublicKey returns the bundle signing key: the test key of a test build, else the key embedded from cosign.pub.
 func PublicKey() crypto.PublicKey {
 	return embeddedKey()
+}
+
+// signingKey parses test, the base64 of a PEM public key, or cosign.pub when test is empty.
+func signingKey(test string) (crypto.PublicKey, error) {
+	if test == "" {
+		key, err := ParsePublicKey(appliance.CosignPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("embedded cosign.pub: %w", err)
+		}
+		return key, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(test)
+	if err != nil {
+		return nil, fmt.Errorf("bundle test key: %w", err)
+	}
+	// The release check finds a test key by the base64 of its first line, so nothing may come before or after it.
+	if _, rest := pem.Decode(data); !bytes.HasPrefix(data, []byte(pemPublicKey)) || len(bytes.TrimSpace(rest)) != 0 {
+		return nil, errors.New("bundle test key: not exactly one PEM public key")
+	}
+	key, err := ParsePublicKey(data)
+	if err != nil {
+		return nil, fmt.Errorf("bundle test key: %w", err)
+	}
+	return key, nil
 }
 
 // ParsePublicKey parses a PEM ECDSA public key as cosign writes it.
@@ -55,34 +87,117 @@ func ParsePublicKey(data []byte) (crypto.PublicKey, error) {
 // every image it lists is present and intact. It returns the metadata and makes the bundle's content available.
 func (b *Bundle) Verify(pub crypto.PublicKey, arch string) (Metadata, error) {
 	b.verified = nil
-	key, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		return Metadata{}, fmt.Errorf("%w: unsupported public key %T", ErrBadSignature, pub)
-	}
-	top, err := b.layoutIndex()
+	v, index, err := b.verifySigned(pub, arch)
 	if err != nil {
 		return Metadata{}, err
-	}
-	indexDesc, index, err := b.bundleIndex(top)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if err := b.checkSignature(key, top, indexDesc.Digest); err != nil {
-		return Metadata{}, err
-	}
-	v, err := b.readMetadata(index)
-	if err != nil {
-		return Metadata{}, err
-	}
-	if v.metadata.Arch != arch {
-		return Metadata{}, fmt.Errorf("%w: %s, not %s", ErrWrongArch, v.metadata.Arch, arch)
 	}
 	if err := b.checkImages(index, v.metadata.Images); err != nil {
 		return Metadata{}, err
 	}
-	v.index = indexDesc.Digest
+	v.images = true
 	b.verified = v
 	return v.metadata, nil
+}
+
+// VerifySigned checks the signature, the metadata and the arch as Verify does, and that the bundle index lists every
+// image of the metadata, but not the images' blobs, for a bundle whose images stay in its registry. Its files and notes
+// are available afterwards, its images are not.
+func (b *Bundle) VerifySigned(pub crypto.PublicKey, arch string) (Metadata, error) {
+	b.verified = nil
+	v, index, err := b.verifySigned(pub, arch)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if _, err := listedImages(index, v.metadata.Images); err != nil {
+		return Metadata{}, err
+	}
+	b.verified = v
+	return v.metadata, nil
+}
+
+func (b *Bundle) verifySigned(pub crypto.PublicKey, arch string) (*verified, *v1.IndexManifest, error) {
+	key, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("%w: unsupported public key %T", ErrBadSignature, pub)
+	}
+	top, err := b.layoutIndex()
+	if err != nil {
+		return nil, nil, err
+	}
+	indexDesc, index, err := b.bundleIndex(top)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := b.checkSignature(key, top, indexDesc.Digest); err != nil {
+		return nil, nil, err
+	}
+	v, err := b.readMetadata(index)
+	if err != nil {
+		return nil, nil, err
+	}
+	if v.metadata.Arch != arch {
+		return nil, nil, fmt.Errorf("%w: %s, not %s", ErrWrongArch, v.metadata.Arch, arch)
+	}
+	if err := b.checkContent(v); err != nil {
+		return nil, nil, err
+	}
+	v.index = indexDesc.Digest
+	return v, index, nil
+}
+
+// checkContent checks that the notes and every file the metadata names can be read, and that each name can stand
+// beside the notes and the metadata in a stored bundle's directory.
+func (b *Bundle) checkContent(v *verified) error {
+	if _, err := b.readBlob(v.notes, maxFilesSize); err != nil {
+		return fmt.Errorf("read the bundle notes: %w", err)
+	}
+	archive, err := b.readBlob(v.files, maxFilesSize)
+	if err != nil {
+		return fmt.Errorf("read the bundle manifests: %w", err)
+	}
+	names, err := tarNames(archive)
+	if err != nil {
+		return fmt.Errorf("read the bundle manifests: %w", err)
+	}
+	for _, name := range v.metadata.Files {
+		if !validFileName(name) {
+			return fmt.Errorf("the bundle names a file %q", name)
+		}
+		if !names[name] {
+			return fmt.Errorf("the bundle lacks its file %s", name)
+		}
+	}
+	return nil
+}
+
+// validFileName reports whether name is a plain, visible file name, without a separator, other than the notes and the
+// metadata.
+func validFileName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".") &&
+		name != NotesFile && name != MetadataFile
+}
+
+// tarNames reads every entry of a tar and returns their names. It refuses sparse entries, whose content can expand
+// far beyond the archive.
+func tarNames(archive []byte) (map[string]bool, error) {
+	names := map[string]bool{}
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return names, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if sparse(h) {
+			return nil, fmt.Errorf("%s is a sparse entry", h.Name)
+		}
+		if _, err := io.Copy(io.Discard, tr); err != nil {
+			return nil, err
+		}
+		names[h.Name] = true
+	}
 }
 
 func (b *Bundle) layoutIndex() (*v1.IndexManifest, error) {
@@ -239,7 +354,8 @@ func pae(payloadType string, payload []byte) []byte {
 
 // readMetadata reads the metadata artifact, the first entry of the signed bundle index, and checks its layers.
 func (b *Bundle) readMetadata(index *v1.IndexManifest) (*verified, error) {
-	if len(index.Manifests) == 0 || index.Manifests[0].ArtifactType != artifactTypeBundle {
+	if len(index.Manifests) == 0 || index.Manifests[0].ArtifactType != artifactTypeBundle ||
+		index.Manifests[0].MediaType != types.OCIManifestSchema1 {
 		return nil, errors.New("the bundle index does not start with the bundle metadata")
 	}
 	data, err := b.readBlob(index.Manifests[0], maxManifestSize)
@@ -278,21 +394,43 @@ func (b *Bundle) readMetadata(index *v1.IndexManifest) (*verified, error) {
 	return v, nil
 }
 
-// checkImages checks that every listed image is in the bundle index with its reference and that all its blobs are
-// present and intact.
-func (b *Bundle) checkImages(index *v1.IndexManifest, images []ImageRef) error {
+// listedImages returns the descriptor in the bundle index of each image, found by its reference and its digest. The
+// index may list nothing else besides the metadata, as a push copies all it lists.
+func listedImages(index *v1.IndexManifest, images []ImageRef) ([]v1.Descriptor, error) {
 	// Several references may name the same manifest, so a child is known by its reference and its digest.
 	type key struct{ ref, digest string }
 	children := map[key]v1.Descriptor{}
 	for _, d := range index.Manifests[1:] {
 		children[key{d.Annotations[annotationRefName], d.Digest.String()}] = d
 	}
+	listed := make([]v1.Descriptor, 0, len(images))
+	named := map[key]bool{}
 	for _, ref := range images {
-		d, ok := children[key{ref.Ref, ref.Digest}]
+		k := key{ref.Ref, ref.Digest}
+		d, ok := children[k]
 		if !ok || !d.MediaType.IsImage() {
-			return fmt.Errorf("%w: %s %s is not in the bundle index", ErrMissingImage, ref.Ref, ref.Digest)
+			return nil, fmt.Errorf("%w: %s %s is not in the bundle index", ErrMissingImage, ref.Ref, ref.Digest)
 		}
-		size, err := b.checkImage(d)
+		listed = append(listed, d)
+		named[k] = true
+	}
+	for k := range children {
+		if !named[k] {
+			return nil, fmt.Errorf("the bundle index lists %s %s, which the metadata does not", k.ref, k.digest)
+		}
+	}
+	return listed, nil
+}
+
+// checkImages checks that every listed image is in the bundle index with its reference and that all its blobs are
+// present and intact.
+func (b *Bundle) checkImages(index *v1.IndexManifest, images []ImageRef) error {
+	listed, err := listedImages(index, images)
+	if err != nil {
+		return err
+	}
+	for i, ref := range images {
+		size, err := b.checkImage(listed[i])
 		if err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrMissingImage, ref.Ref, err)
 		}

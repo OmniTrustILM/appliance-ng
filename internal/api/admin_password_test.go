@@ -304,6 +304,23 @@ func TestSetAdminPasswordWhileABackupRuns(t *testing.T) {
 	}
 }
 
+// heldRunner is a fakeRunner held by an update bundle load.
+type heldRunner struct{ *fakeRunner }
+
+func (heldRunner) Exclusive(func() error) error { return backup.ErrHeld }
+
+func TestSetAdminPasswordWhileABundleLoads(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	k := readyForReset(t, h)
+	runner, _ := newFakeRunner(t)
+	h.srv.deps.Backups = heldRunner{runner}
+	wantCode(t, h.request(http.MethodPut, pathAdminPassword, nil, s), http.StatusConflict, codeBundleLoading)
+	if calls, _ := k.state(); len(calls) != 0 {
+		t.Errorf("Keycloak was called while a bundle loads: %q", calls)
+	}
+}
+
 func TestSetAdminPasswordKeycloakFails(t *testing.T) {
 	for name, fail := range map[string]func(*fakeKeycloak, *harness){
 		"refused":      func(k *fakeKeycloak, _ *harness) { k.failWith = http.StatusBadRequest },

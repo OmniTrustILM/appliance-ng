@@ -586,8 +586,9 @@ func (e *Engine) cbomStore(ctx context.Context) (*cbom.Store, error) {
 	return store, err
 }
 
-// restoreCertificate has the built-in certificate issued again for this appliance's host names by the restored root
-// CA. An uploaded certificate stays; a warning names a host name it does not cover.
+// restoreCertificate has the built-in certificate, for this appliance's host names, and zot's issued again by the
+// restored root CA, which the node's mirrors and the manager trust zot by. An uploaded certificate stays; a warning
+// names a host name it does not cover.
 func (e *Engine) restoreCertificate(ctx context.Context, _ *job) error {
 	a, err := e.appliance(ctx)
 	if err != nil {
@@ -595,8 +596,24 @@ func (e *Engine) restoreCertificate(ctx context.Context, _ *job) error {
 	}
 	hosts := certs.Hosts(a)
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
-		return e.warnUncovered(ctx, a.Spec.TLS.SecretRef, hosts)
+		if err := e.warnUncovered(ctx, a.Spec.TLS.SecretRef, hosts); err != nil {
+			return err
+		}
+	} else if err := e.ensureBuiltin(ctx, a, hosts); err != nil {
+		return err
 	}
+	for _, name := range []string{certs.SecretName, certs.RegistrySecretName} {
+		s := &corev1.Secret{}
+		s.Namespace, s.Name = certs.Namespace, name
+		if err := e.deps.Client.Delete(ctx, s); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete secret %s/%s: %w", certs.Namespace, name, err)
+		}
+	}
+	return nil
+}
+
+// ensureBuiltin applies the built-in chain with a leaf for hosts and the node's address.
+func (e *Engine) ensureBuiltin(ctx context.Context, a *v1alpha1.Appliance, hosts []string) error {
 	var ips []netip.Addr
 	ip, found, err := certs.NodeAddress(ctx, e.deps.Client, a)
 	if err != nil {
@@ -605,15 +622,8 @@ func (e *Engine) restoreCertificate(ctx context.Context, _ *job) error {
 	if found {
 		ips = append(ips, ip)
 	}
-	if _, err := certs.EnsureBuiltin(ctx, e.deps.Client, hosts, ips); err != nil {
-		return err
-	}
-	leaf := &corev1.Secret{}
-	leaf.Namespace, leaf.Name = certs.Namespace, certs.SecretName
-	if err := e.deps.Client.Delete(ctx, leaf); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete secret %s/%s: %w", certs.Namespace, certs.SecretName, err)
-	}
-	return nil
+	_, err = certs.EnsureBuiltin(ctx, e.deps.Client, hosts, ips)
+	return err
 }
 
 func (e *Engine) warnUncovered(ctx context.Context, secretName string, hosts []string) error {

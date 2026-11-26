@@ -3,13 +3,8 @@ package bundle
 import (
 	"archive/tar"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"io/fs"
 	"log"
@@ -30,6 +25,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
+	"github.com/OmniTrustILM/appliance-ng/internal/bundle/bundletest"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
@@ -99,11 +95,14 @@ func (r *testRelease) pushIndex(t *testing.T, ref, bundle string, withDigest boo
 		t.Fatal(err)
 	}
 	digest := mustDigest(t, idx)
+	img := release.Image{Digest: digest, Bundle: bundle}
 	if withDigest {
 		r.digests[ref+"@"+digest] = r.digests[ref]
+		img.ArchDigests = r.digests[ref]
 		ref += "@" + digest
 	}
-	return release.Image{Ref: ref, Digest: digest, Bundle: bundle}
+	img.Ref = ref
+	return img
 }
 
 // pushImage pushes a single-arch OCI image of the system bundle limited to arch.
@@ -163,11 +162,7 @@ func fileSHA(t *testing.T, fsys fs.FS, path string) string {
 
 func newKey(t *testing.T) *ecdsa.PrivateKey {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return key
+	return bundletest.NewKey(t)
 }
 
 // build builds a bundle into a new directory and signs it with key unless key is nil.
@@ -184,89 +179,19 @@ func build(t *testing.T, r *testRelease, kind, arch string, key *ecdsa.PrivateKe
 	return dir, md
 }
 
-// sign signs the bundle index of the layout in dir as cosign v3 does: a sigstore bundle v0.3 with a DSSE envelope
-// around an in-toto statement, stored as a referrer manifest of the index and listed in index.json.
 func sign(t *testing.T, dir string, key *ecdsa.PrivateKey) {
 	t.Helper()
-	attach(t, dir, key, bundleIndexDescriptor(t, dir).Digest, cosignPredicate)
+	bundletest.Sign(t, dir, key)
 }
 
-// attach stores a sigstore bundle signed with key, whose statement names subject with predicateType, as a referrer
-// of the bundle index of the layout in dir.
 func attach(t *testing.T, dir string, key *ecdsa.PrivateKey, subject v1.Hash, predicateType string) {
 	t.Helper()
-	p := layout.Path(dir)
-	index := bundleIndexDescriptor(t, dir)
-
-	statement, err := json.Marshal(map[string]any{
-		"_type":         statementType,
-		"subject":       []any{map[string]any{"digest": map[string]string{"sha256": subject.Hex}}},
-		"predicateType": predicateType,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(pae(dssePayloadType, statement))
-	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hint := sha256.Sum256(spki)
-	sigstore := mustWriteJSON(t, p, types.MediaType(mediaTypeSigstoreBundle), map[string]any{
-		"mediaType":            mediaTypeSigstoreBundle,
-		"verificationMaterial": map[string]any{"publicKey": map[string]string{"hint": base64.StdEncoding.EncodeToString(hint[:])}},
-		"dsseEnvelope": map[string]any{
-			"payload":     base64.StdEncoding.EncodeToString(statement),
-			"payloadType": dssePayloadType,
-			"signatures":  []any{map[string]string{"sig": base64.StdEncoding.EncodeToString(sig)}},
-		},
-	})
-	config := mustWriteJSON(t, p, "application/vnd.oci.empty.v1+json", map[string]any{})
-	manifest := mustWriteJSON(t, p, types.OCIManifestSchema1, v1.Manifest{
-		SchemaVersion: 2,
-		MediaType:     types.OCIManifestSchema1,
-		ArtifactType:  mediaTypeSigstoreBundle,
-		Config:        config,
-		Layers:        []v1.Descriptor{sigstore},
-		Annotations:   map[string]string{"dev.sigstore.bundle.content": "dsse-envelope"},
-		Subject:       &index,
-	})
-	manifest.ArtifactType = "application/vnd.oci.empty.v1+json"
-	if err := p.AppendDescriptor(manifest); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func mustWriteJSON(t *testing.T, p layout.Path, mt types.MediaType, v any) v1.Descriptor {
-	t.Helper()
-	d, err := writeJSON(p, mt, v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return d
+	bundletest.Attach(t, dir, key, subject, predicateType)
 }
 
 func bundleIndexDescriptor(t *testing.T, dir string) v1.Descriptor {
 	t.Helper()
-	ii, err := layout.ImageIndexFromPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	im, err := ii.IndexManifest()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range im.Manifests {
-		if d.MediaType == types.OCIImageIndex {
-			return d
-		}
-	}
-	t.Fatal("no bundle index in the layout")
-	return v1.Descriptor{}
+	return bundletest.IndexDescriptor(t, dir)
 }
 
 func bundleIndex(t *testing.T, dir string) *v1.IndexManifest {
@@ -300,51 +225,9 @@ func blobPath(dir string, h v1.Hash) string {
 	return filepath.Join(dir, "blobs", h.Algorithm, h.Hex)
 }
 
-// tarLayout writes the layout in dir as a tar whose entries start with "./", as `tar -C dir -cf … .` writes them.
 func tarLayout(t *testing.T, dir string) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "bundle.tar")
-	f, err := os.Create(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	tw := tar.NewWriter(f)
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil || rel == "." {
-			return err
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		h, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		h.Name = "./" + filepath.ToSlash(rel)
-		if err := tw.WriteHeader(h); err != nil || d.IsDir() {
-			return err
-		}
-		src, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = src.Close() }()
-		_, err = io.Copy(tw, src)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return out
+	return bundletest.Tar(t, dir)
 }
 
 // tarEntry is where a regular file of a tar starts its data, its size and where its padded data ends.

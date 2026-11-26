@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the Appliance Manager for $ARCH, pushes its image as $MANAGER_REF, which cache.sh caches, and writes the
-# pushed digest to $OUT/manager.digest.
+# pushed digest to $OUT/manager.digest. BUNDLE_TEST_KEY, set only by the long tests, is the base64 of a throw-away cosign
+# public key the manager then trusts for bundles instead of cosign.pub.
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
@@ -12,9 +13,13 @@ mkdir -p "$ctx"
 log "building the console"
 (cd web && npm ci --ignore-scripts && npm run build)
 
+ldflags="-s -w -X main.version=$VERSION"
+if [[ -n "${BUNDLE_TEST_KEY:-}" ]]; then
+  log "trusting the bundle test key instead of cosign.pub"
+  ldflags+=" -X github.com/OmniTrustILM/appliance-ng/internal/bundle.testKey=$BUNDLE_TEST_KEY"
+fi
 log "building manager $VERSION for $ARCH"
-CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags "-s -w -X main.version=$VERSION" \
-  -o "$ctx/manager" ./cmd/manager
+CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags "$ldflags" -o "$ctx/manager" ./cmd/manager
 
 log "building and pushing $MANAGER_REF"
 docker buildx build --platform "linux/$ARCH" --provenance=false -f Dockerfile.manager \

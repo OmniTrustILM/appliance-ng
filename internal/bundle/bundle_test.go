@@ -7,16 +7,23 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
+	"github.com/google/go-containerregistry/pkg/v1/match"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
@@ -112,8 +119,8 @@ func TestFilesAndNotes(t *testing.T) {
 	if _, err := b.Notes(); err == nil {
 		t.Error("Notes before Verify: want an error")
 	}
-	for range b.Images() {
-		t.Error("Images before Verify: want none")
+	if _, err := b.Images(); err == nil {
+		t.Error("Images before Verify: want an error")
 	}
 	if _, err := b.Verify(&key.PublicKey, "amd64"); err != nil {
 		t.Fatal(err)
@@ -139,16 +146,17 @@ func TestFilesAndNotes(t *testing.T) {
 		t.Errorf("Notes = %q, want %q", notes, testNotes)
 	}
 
+	images, err := b.Images()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var seen []ImageRef
-	for ref, img := range b.Images() {
-		seen = append(seen, ref)
-		if img == nil {
-			t.Fatalf("image %s: nil", ref.Ref)
+	for _, im := range images {
+		seen = append(seen, im.Ref)
+		if got := mustDigest(t, im.Image); got != im.Ref.Digest {
+			t.Errorf("image %s digest %s, want %s", im.Ref.Ref, got, im.Ref.Digest)
 		}
-		if got := mustDigest(t, img); got != ref.Digest {
-			t.Errorf("image %s digest %s, want %s", ref.Ref, got, ref.Digest)
-		}
-		if _, err := img.Layers(); err != nil {
+		if _, err := im.Image.Layers(); err != nil {
 			t.Error(err)
 		}
 	}
@@ -271,6 +279,9 @@ func TestBuildRejects(t *testing.T) {
 		{name: "unknown arch", kind: release.BundleSystem, arch: "riscv64"},
 		{name: "digest differs from release.yaml", kind: release.BundleSystem, arch: "amd64", change: func(m *release.Manifest) {
 			m.Images[0].Digest = m.Images[2].Digest
+		}},
+		{name: "per-arch digest differs from release.yaml", kind: release.BundlePlatform, arch: "arm64", change: func(m *release.Manifest) {
+			m.Images[2].ArchDigests = map[string]string{"amd64": m.Images[2].ArchDigests["amd64"], "arm64": m.Images[2].ArchDigests["amd64"]}
 		}},
 		{name: "image lacks the arch", kind: release.BundleSystem, arch: "arm64", change: func(m *release.Manifest) {
 			m.Images[1].Arches = nil
@@ -446,10 +457,10 @@ func TestVerifyRefusesOtherInput(t *testing.T) {
 	}
 }
 
-func TestImagesStopsWhenAsked(t *testing.T) {
+func TestImagesReportsUnreadableImages(t *testing.T) {
 	r := newTestRelease(t)
 	key := newKey(t)
-	dir, _ := build(t, r, release.BundleSystem, "amd64", key)
+	dir, md := build(t, r, release.BundleSystem, "amd64", key)
 	b, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -457,13 +468,21 @@ func TestImagesStopsWhenAsked(t *testing.T) {
 	if _, err := b.Verify(&key.PublicKey, "amd64"); err != nil {
 		t.Fatal(err)
 	}
-	n := 0
-	for range b.Images() {
-		n++
-		break
+	h, err := v1.NewHash(md.Images[0].Digest)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("Images yielded %d images after a break, want 1", n)
+	if err := os.Remove(filepath.Join(dir, "blobs", "sha256", h.Hex)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Images(); err == nil || !strings.Contains(err.Error(), md.Images[0].Ref) {
+		t.Errorf("Images with a missing manifest = %v, want an error naming %s", err, md.Images[0].Ref)
+	}
+	if err := os.Remove(filepath.Join(dir, "index.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Images(); err == nil {
+		t.Error("Images without index.json: want an error")
 	}
 }
 
@@ -506,4 +525,144 @@ func mustParse(t *testing.T, ref string) name.Reference {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+// TestVerifySignedLeavesOutTheImages checks a bundle whose images are elsewhere: the signature, metadata and arch are
+// checked, its notes and files are available, and its images are not.
+func TestVerifySignedLeavesOutTheImages(t *testing.T) {
+	r := newTestRelease(t)
+	key := newKey(t)
+	dir, want := build(t, r, release.BundlePlatform, "amd64", key)
+	for _, m := range bundleIndex(t, dir).Manifests[1:] {
+		if err := os.Remove(blobPath(dir, m.Digest)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Verify(&key.PublicKey, "amd64"); !errors.Is(err, ErrMissingImage) {
+		t.Fatalf("Verify without images = %v, want %v", err, ErrMissingImage)
+	}
+	md, err := b.VerifySigned(&key.PublicKey, "amd64")
+	if err != nil || md.Version != want.Version || md.Kind != want.Kind {
+		t.Fatalf("VerifySigned = %+v, %v", md, err)
+	}
+	if notes, err := b.Notes(); err != nil || string(notes) != string(testNotes) {
+		t.Errorf("Notes = %q, %v", notes, err)
+	}
+	if _, err := b.File("ilm-operator.yaml"); err != nil {
+		t.Errorf("File: %v", err)
+	}
+	if _, err := b.Images(); err == nil {
+		t.Error("Images of a bundle verified without its images succeeded")
+	}
+	if _, err := b.VerifySigned(&newKey(t).PublicKey, "amd64"); !errors.Is(err, ErrBadSignature) {
+		t.Errorf("VerifySigned with another key = %v, want %v", err, ErrBadSignature)
+	}
+	if _, err := b.VerifySigned(&key.PublicKey, "arm64"); !errors.Is(err, ErrWrongArch) {
+		t.Errorf("VerifySigned for arm64 = %v, want %v", err, ErrWrongArch)
+	}
+}
+
+// TestVerifySignedRefusesImagesTheIndexDoesNotName checks that the images the metadata lists are in the signed bundle
+// index under their reference and digest, without reading their blobs.
+func TestVerifySignedRefusesImagesTheIndexDoesNotName(t *testing.T) {
+	r := newTestRelease(t)
+	key := newKey(t)
+	cases := map[string]func(d *v1.Descriptor){
+		"other reference": func(d *v1.Descriptor) { d.Annotations[annotationRefName] += "-other" },
+		"other digest":    func(d *v1.Descriptor) { d.Digest.Hex = strings.Repeat("0", 64) },
+		"not an image":    func(d *v1.Descriptor) { d.MediaType = types.OCIImageIndex },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := build(t, r, release.BundlePlatform, "amd64", nil)
+			resign(t, dir, key, func(im *v1.IndexManifest) { change(&im.Manifests[1]) })
+			b, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.VerifySigned(&key.PublicKey, "amd64"); !errors.Is(err, ErrMissingImage) {
+				t.Errorf("VerifySigned = %v, want %v", err, ErrMissingImage)
+			}
+		})
+	}
+}
+
+// resign replaces the bundle index of the layout in dir with a changed copy and signs that with key.
+func resign(t *testing.T, dir string, key *ecdsa.PrivateKey, change func(im *v1.IndexManifest)) {
+	t.Helper()
+	im := bundleIndex(t, dir)
+	change(im)
+	data, err := json.Marshal(im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, size, err := v1.SHA256(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := layout.Path(dir)
+	if err := p.WriteBlob(digest, io.NopCloser(bytes.NewReader(data))); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.RemoveDescriptors(match.MediaTypes(string(types.OCIImageIndex))); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AppendDescriptor(v1.Descriptor{MediaType: types.OCIImageIndex, Digest: digest, Size: size}); err != nil {
+		t.Fatal(err)
+	}
+	sign(t, dir, key)
+}
+
+func TestValidFileName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"release.yaml": true,
+		"":             false,
+		"/":            false,
+		"a/b.yaml":     false,
+		"/a.yaml":      false,
+		`a\b.yaml`:     false,
+		".hidden":      false,
+		"..":           false,
+		NotesFile:      false,
+		MetadataFile:   false,
+	} {
+		if got := validFileName(name); got != want {
+			t.Errorf("validFileName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// TestVerifyRefusesEntriesTheMetadataDoesNotList refuses a bundle index with an image the metadata does not list, or
+// whose metadata is not an image manifest.
+func TestVerifyRefusesEntriesTheMetadataDoesNotList(t *testing.T) {
+	r := newTestRelease(t)
+	key := newKey(t)
+	cases := map[string]func(im *v1.IndexManifest){
+		"surplus image": func(im *v1.IndexManifest) {
+			extra := im.Manifests[1]
+			extra.Annotations = map[string]string{annotationRefName: "ghcr.io/extra:v1"}
+			im.Manifests = append(im.Manifests, extra)
+		},
+		"metadata not a manifest": func(im *v1.IndexManifest) { im.Manifests[0].MediaType = types.OCIImageIndex },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := build(t, r, release.BundleSystem, "amd64", nil)
+			resign(t, dir, key, change)
+			b, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.Verify(&key.PublicKey, "amd64"); err == nil {
+				t.Error("Verify succeeded")
+			}
+			if _, err := b.VerifySigned(&key.PublicKey, "amd64"); err == nil {
+				t.Error("VerifySigned succeeded")
+			}
+		})
+	}
 }

@@ -187,7 +187,8 @@ func TestReconcileCertificateWaitsForTheNodeAddress(t *testing.T) {
 	}
 }
 
-func TestReconcileSecretSourceHasNoBuiltinCertificate(t *testing.T) {
+// zot's certificate is issued by the built-in CA, so an uploaded certificate keeps the built-in chain.
+func TestReconcileSecretSourceKeepsTheBuiltinChain(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
 		Node: v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
@@ -198,9 +199,10 @@ func TestReconcileSecretSourceHasNoBuiltinCertificate(t *testing.T) {
 	if c := meta.FindStatusCondition(getAppliance(t).Status.Conditions, v1alpha1.ConditionCertificateReady); c != nil {
 		t.Errorf("CertificateReady = %+v, want none for an uploaded certificate", c)
 	}
-	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: certs.Namespace, Name: certs.CertificateName}, certManagerObject("Certificate")); err == nil {
-		t.Error("the built-in certificate was requested for an uploaded one")
+	if err := testClient.Get(context.Background(), client.ObjectKey{Name: certs.CAIssuerName}, certManagerObject("ClusterIssuer")); err != nil {
+		t.Errorf("the built-in CA issuer: %v", err)
 	}
+	leafCertificate(t)
 }
 
 const marker = "marker-3e7c1"

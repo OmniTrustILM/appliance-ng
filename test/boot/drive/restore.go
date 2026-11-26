@@ -23,9 +23,10 @@ const (
 	partKit          = "kit"
 )
 
-// restoreBackup signs in to an appliance set up to restore and restores the backup of o onto it.
+// restoreBackup signs in to an appliance set up to restore and restores the backup of o onto it. Until the restore
+// completes the setup, the console serves the setup certificate of --ca-file.
 func restoreBackup(ctx context.Context, o options) error {
-	c, err := managerClient(ctx, o)
+	c, err := setupClient(ctx, o)
 	if err != nil {
 		return err
 	}
@@ -63,6 +64,9 @@ func (c *client) restore(ctx context.Context, o options, cl cluster) error {
 		return err
 	}
 	if err := c.waitRestored(ctx, o, kit, passphrase); err != nil {
+		return err
+	}
+	if err := c.trustBuiltin(ctx, o); err != nil {
 		return err
 	}
 	if err := c.restoreTested(ctx); err != nil {
@@ -205,6 +209,20 @@ func (c *client) reconnect(ctx context.Context, o options, err error) {
 		return
 	}
 	c.http.Transport = fresh.http.Transport
+}
+
+// trustBuiltin waits until the console serves a certificate of the built-in CA for o.hostName, which replaces the
+// setup certificate once the restore completed the setup, and then trusts only that CA, keeping the session.
+func (c *client) trustBuiltin(ctx context.Context, o options) error {
+	step("waiting for the built-in certificate")
+	return waitUntil(ctx, certificateTimeout, func() error {
+		fresh, err := trustBuiltinCA(ctx, c.base, o.hostName)
+		if err != nil {
+			return err
+		}
+		c.http.Transport = fresh.http.Transport
+		return nil
+	})
 }
 
 // restoreTested checks that the status records when the restore test succeeded.
