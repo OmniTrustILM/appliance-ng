@@ -35,6 +35,13 @@ func bundleOperator(embedded string, md *bundle.Metadata) bool {
 	return md != nil && older(embedded, md.Operator)
 }
 
+// EmbeddedOperatorOlder tells whether the ILM operator that the release m embeds is older than the running version,
+// so that the add-on pass would replace it with an older one once no platform bundle is recorded.
+func EmbeddedOperatorOlder(m *release.Manifest, running string) bool {
+	embedded, ok := m.Operator()
+	return ok && older(embedded.Version, running)
+}
+
 // InstalledPlatform returns the metadata of the installed platform bundle version for arch, stored under dir when it
 // was loaded; nil when version is empty, as while no platform bundle is installed.
 func InstalledPlatform(dir, version, arch string) (*bundle.Metadata, error) {

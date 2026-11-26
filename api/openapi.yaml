@@ -1884,7 +1884,8 @@ paths:
         reports its progress. Needs `confirm` set to true and the `inspection` of that check's summary. A restore in
         place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
         backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
-        check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
+        check that another one replaced since, `not_local`, `version_unavailable`, `operator_downgrade` for a fresh
+        restore that would replace the running ILM operator with the release's older one, `busy`, `setup`,
         `upgrade_in_progress`, `backup_running`, `bundle_loading`, and `tampered` or `truncated` for a backup changed
         since its check.
       security:

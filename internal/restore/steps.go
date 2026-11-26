@@ -398,8 +398,8 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 	if err != nil {
 		return err
 	}
-	if bundle := j.status.PlatformBundle; bundle != "" && !j.status.InPlace {
-		if err := e.usePlatformBundle(ctx, bundle); err != nil {
+	if !j.status.InPlace {
+		if err := e.usePlatformBundle(ctx, j.status.PlatformBundle); err != nil {
 			return err
 		}
 	}
@@ -424,8 +424,12 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 
 // usePlatformBundle makes the images of the loaded platform bundle version available in the appliance's registry,
 // before the platform is installed from them, and records it as the platform bundle that runs, from which the add-on
-// pass takes the ILM operator.
+// pass takes the ILM operator. An empty version records the release's own platform, replacing a bundle that an
+// earlier fresh restore recorded.
 func (e *Engine) usePlatformBundle(ctx context.Context, version string) error {
+	if version == "" {
+		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) { st.Versions.PlatformBundle = "" })
+	}
 	if e.deps.Images == nil {
 		return errors.New("no registry for the images of a platform bundle")
 	}

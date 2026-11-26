@@ -628,6 +628,22 @@ func TestFreshRestoreFromALoadedPlatformBundle(t *testing.T) {
 	}
 }
 
+// TestFreshRestoreOfTheReleasesILMAfterABundle clears the platform bundle that a failed fresh restore from a loaded
+// bundle recorded, when the restore is retried with a backup of the release's own ILM version.
+func TestFreshRestoreOfTheReleasesILMAfterABundle(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	a := getAppliance(t)
+	a.Status.Versions.PlatformBundle = "1.1.0"
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
+	f.wantDone(t)
+	if got := getAppliance(t).Status.Versions.PlatformBundle; got != "" {
+		t.Errorf("platform bundle %q, want none for the release's own platform", got)
+	}
+}
+
 // TestFreshRestoreStopsWithoutTheBundlesImages fails the restore at the appliance step, before the platform is set,
 // when the images of its platform bundle cannot be tagged.
 func TestFreshRestoreStopsWithoutTheBundlesImages(t *testing.T) {

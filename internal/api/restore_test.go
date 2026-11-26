@@ -28,6 +28,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/restore"
 	"github.com/OmniTrustILM/appliance-ng/internal/storage"
 )
@@ -324,6 +325,26 @@ func TestRestoreAcceptsLoadedILM(t *testing.T) {
 	if len(f.started) != 1 || f.started[0].opts.PlatformBundle != "1.1.0" {
 		t.Errorf("started %+v, want the restore from platform bundle 1.1.0", f.started)
 	}
+}
+
+// TestRestoreRefusesAnOlderOperator refuses a fresh restore of the release's own ILM version while a newer ILM
+// operator than the release's runs, as after a failed fresh restore from a loaded platform bundle, which the restore
+// would replace with the release's older one.
+func TestRestoreRefusesAnOlderOperator(t *testing.T) {
+	h, s, f, _, kit := freshRestore(t)
+	withOperator := *testRelease
+	withOperator.Addons = []release.AddonFile{{Name: release.OperatorAddon, Version: "1.4.0"}}
+	h.srv.deps.Release = &withOperator
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Versions.Operator = "1.5.0" })
+	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
+
+	start := RestoreStart{Confirm: true, Inspection: h.checked()}
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusConflict, "operator_downgrade")
+	if len(f.started) != 0 {
+		t.Fatalf("started %+v over a newer operator", f.started)
+	}
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Versions.Operator = "1.4.0" })
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusAccepted)
 }
 
 // TestRestoreRefusesABundlePrunedSinceTheCheck refuses the restore of a backup whose platform bundle a later load
