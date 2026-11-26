@@ -244,7 +244,9 @@ func (e *Engine) claims(ctx context.Context) ([]corev1.PersistentVolumeClaim, er
 }
 
 // chooseVersion sets the ILM version the platform is installed at again and records the platform bundle that runs,
-// from which the add-on pass takes the ILM operator.
+// from which the add-on pass takes the ILM operator. A bundle's images are tagged again first: a later bundle may have
+// moved their upstream tags to its own images. The release's own images need no tags, as the node's image cache,
+// which holds them, is consulted before the registry.
 func (e *Engine) chooseVersion(ctx context.Context, r *v1alpha1.RestoreRollback) error {
 	patch := fmt.Appendf(nil, `{"spec":{"platform":{"ilmVersion":%q}}}`, r.ILMVersion)
 	a := &v1alpha1.Appliance{}
@@ -252,7 +254,7 @@ func (e *Engine) chooseVersion(ctx context.Context, r *v1alpha1.RestoreRollback)
 	if err := e.deps.Client.Patch(ctx, a, client.RawPatch(types.MergePatchType, patch), client.FieldOwner(kube.ManagerFieldManager)); err != nil {
 		return fmt.Errorf("set the ILM version: %w", err)
 	}
-	return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) { st.Versions.PlatformBundle = r.PlatformBundle })
+	return e.usePlatformBundle(ctx, r.PlatformBundle)
 }
 
 // reinstall starts the ILM operator, which installs the platform again once the restore no longer pauses it, and

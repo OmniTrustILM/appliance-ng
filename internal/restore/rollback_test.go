@@ -546,3 +546,22 @@ func TestRollbackHolds(t *testing.T) {
 		}
 	}
 }
+
+// TestRollbackTagsTheBundlesImagesBeforeReinstall points the upstream tags at the images of the rolled back bundle,
+// which an update may have moved to its own, before the operator installs the platform again.
+func TestRollbackTagsTheBundlesImagesBeforeReinstall(t *testing.T) {
+	f := newRollbackFixture(t)
+	e := f.engine(testClient)
+	e.deps.Images = func(_ context.Context, version string) error {
+		if st := getAppliance(t).Status.Restore; st.Step != v1alpha1.RestoreStepUninstall {
+			t.Errorf("tagged at step %s, want before the reinstall", st.Step)
+		}
+		f.tagged = append(f.tagged, version)
+		return nil
+	}
+	f.start(t, e, rollbackOptions())
+	f.wantRolledBack(t)
+	if !slices.Equal(f.tagged, []string{rolledBundle}) {
+		t.Errorf("tagged the images of %v, want %s once", f.tagged, rolledBundle)
+	}
+}

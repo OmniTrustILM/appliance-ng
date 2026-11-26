@@ -121,7 +121,7 @@ type Deps struct {
 	// CBOMStore is the host:port of the CBOM repository's store on the appliance; empty is its Service's cluster IP.
 	CBOMStore string
 	// Images makes the images of a loaded platform bundle available in the appliance's registry under their upstream
-	// tags, for a fresh restore from that bundle.
+	// tags, for a fresh restore from that bundle or a rollback to it.
 	Images func(ctx context.Context, platformBundle string) error
 }
 

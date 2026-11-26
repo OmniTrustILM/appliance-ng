@@ -165,6 +165,8 @@ type restoreFixture struct {
 	stalled atomic.Bool
 	// cbomStore is the host:port of the CBOM store the restore writes to.
 	cbomStore string
+	// tagged are the platform bundles whose images the engine tagged.
+	tagged []string
 }
 
 // accountsSecrets returns the users Secret and its key Secret holding the named accounts, each with its origin in
@@ -470,6 +472,10 @@ func (f *restoreFixture) engine(c client.Client) *Engine {
 		Client: c, Dumper: f.dumper, Backups: f.backups, Audit: f.audit, Log: slog.New(slog.NewTextHandler(f.logs, nil)),
 		KeycloakURL: f.keycloak.url, CBOMStore: f.cbomStore,
 	})
+	e.deps.Images = func(_ context.Context, version string) error {
+		f.tagged = append(f.tagged, version)
+		return nil
+	}
 	e.retryDelay, e.poll, e.waitTimeout = 0, 5*time.Millisecond, 2*time.Second
 	e.afterStep = func(step string) bool {
 		f.ran = append(f.ran, step)
