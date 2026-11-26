@@ -162,14 +162,14 @@ type Jobs struct {
 	deps    JobDeps
 	mu      sync.Mutex
 	running bool
-	// base is the context the jobs run in once KeepResuming runs: the manager's, which ends at its shutdown.
-	base context.Context
+	// stopped is closed at the manager's shutdown, once KeepResuming runs; the jobs stop at their recorded step then.
+	stopped chan struct{}
 }
 
 // NewJobs returns Jobs on deps.
 func NewJobs(deps JobDeps) *Jobs {
 	deps.defaults()
-	return &Jobs{deps: deps}
+	return &Jobs{deps: deps, stopped: make(chan struct{})}
 }
 
 // job is an update this manager runs.
@@ -190,15 +190,21 @@ func (j *Jobs) begin() bool {
 	return true
 }
 
-// jobContext is the context a job started from ctx runs in: the manager's once KeepResuming runs, else ctx without
-// its end, which a request's end must not cut off.
-func (j *Jobs) jobContext(ctx context.Context) context.Context {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.base != nil {
-		return j.base
-	}
-	return context.WithoutCancel(ctx)
+// start runs jb in the background in ctx without its end, which a request's end must not cut off, until the
+// manager's shutdown.
+func (j *Jobs) start(ctx context.Context, jb *job) {
+	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		select {
+		case <-j.stopped:
+			cancel()
+		case <-jobCtx.Done():
+		}
+	}()
+	go func() {
+		defer cancel()
+		j.run(jobCtx, jb)
+	}()
 }
 
 func (j *Jobs) end() {
@@ -231,7 +237,7 @@ func (j *Jobs) StartPlatform(ctx context.Context, to, user string) error {
 	}
 	j.auditEntry(user, AuditUpdateStart, auditOK, st, "")
 	j.deps.Log.Info("platform update started", "from", st.From, "to", st.To)
-	go j.run(j.jobContext(ctx), &job{status: st, user: user, release: release})
+	j.start(ctx, &job{status: st, user: user, release: release})
 	return nil
 }
 
@@ -359,7 +365,7 @@ func (j *Jobs) Resume(ctx context.Context) error {
 		return j.holdRefusal(ctx, err)
 	}
 	j.deps.Log.Info("platform update resumed", "from", st.From, "to", st.To, "step", st.Step)
-	go j.run(j.jobContext(ctx), &job{status: *st, user: audit.SystemUser, release: release})
+	j.start(ctx, &job{status: *st, user: audit.SystemUser, release: release})
 	return nil
 }
 
@@ -385,17 +391,15 @@ func (j *Jobs) interrupted(ctx context.Context) (*v1alpha1.UpdateStatus, error) 
 
 // KeepResuming calls Resume every poll interval until ctx ends: at the manager's start, while a backup holds the
 // admission, and whenever an update was left unfinished without a job, as when its status could not be written.
-// Jobs run in ctx from then on, so that the manager's shutdown stops them at their recorded step.
+// The end of ctx, the manager's shutdown, stops the jobs at their recorded step. It runs once.
 func (j *Jobs) KeepResuming(ctx context.Context) error {
-	j.mu.Lock()
-	j.base = ctx
-	j.mu.Unlock()
 	for {
 		if err := j.Resume(ctx); err != nil {
 			j.deps.Log.Warn("could not resume the platform update", "reason", Reason(err), "error", err)
 		}
 		select {
 		case <-ctx.Done():
+			close(j.stopped)
 			return nil
 		case <-time.After(j.deps.Poll):
 		}

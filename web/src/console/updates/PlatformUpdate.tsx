@@ -8,11 +8,11 @@ type Bundle = components['schemas']['UpdateBundle'];
 type Progress = components['schemas']['UpdateProgress'];
 
 /** The steps at which an update, or the restore of a rollback, has ended or waits for the administrator. */
-const settled = ['done', 'abandoned', 'waitingForKit'];
+const settled = new Set(['done', 'abandoned', 'waitingForKit']);
 
 /** Whether an update or a rollback runs on its own: it neither ended nor failed nor waits for the kit. */
 export function updating(update?: Progress) {
-  return !!update && !settled.includes(update.step ?? '') && !update.message;
+  return !!update && !settled.has(update.step ?? '') && !update.message;
 }
 
 /** Whether version, X.Y.Z with an optional leading v, is newer than than; false when either is missing. */
