@@ -33,12 +33,15 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 	if a.Spec.TLS.Source != v1alpha1.TLSSourceACME {
 		r.removeACME(ctx)
 	}
-	if a.Spec.TLS.Source == v1alpha1.TLSSourceSecret {
+	// zot's certificate is issued by the built-in CA, so the built-in chain is kept for an uploaded certificate too.
+	uploaded := a.Spec.TLS.Source == v1alpha1.TLSSourceSecret
+	if uploaded {
 		meta.RemoveStatusCondition(&a.Status.Conditions, v1alpha1.ConditionCertificateReady)
-		return 0
 	}
 	notReady := func(reason, message string) {
-		setCondition(a, v1alpha1.ConditionCertificateReady, metav1.ConditionFalse, reason, message)
+		if !uploaded {
+			setCondition(a, v1alpha1.ConditionCertificateReady, metav1.ConditionFalse, reason, message)
+		}
 	}
 	if !stepPassed(r.Steps, progress, certManagerStep) {
 		notReady(reasonWaitingForCertManager, "waiting for cert-manager to run")
@@ -67,6 +70,8 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 		log.FromContext(ctx).Error(err, "request the built-in certificate")
 		notReady(reasonFailed, messageCertificateFailed)
 		return addonsRequeue
+	case uploaded:
+		return 0
 	case !ready:
 		notReady(reasonIssuing, "cert-manager is issuing the built-in certificate")
 		return addonsRequeue
