@@ -86,6 +86,7 @@ export function DonePage() {
     }
     if (response.status === 400 && error && 'field' in error && error.field === 'password') return setFieldError(error.message);
     if (response.status === 410) return setMessage('The administrator credential was already downloaded and cannot be downloaded again.');
+    if (response.status === 404 && error?.code === 'not_registered') return setMessage(error.message);
     if (response.status === 404) return setMessage('The administrator credential has not been issued yet. Try again in a few minutes.');
     setMessage(error?.message ?? failureMessage(response.status));
   }
