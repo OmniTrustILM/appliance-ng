@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
@@ -31,18 +32,26 @@ func (c *Client) PushBundle(ctx context.Context, b Source, md bundle.Metadata, p
 	if err != nil {
 		return err
 	}
+	targets, err := c.targets(images)
+	if err != nil {
+		return err
+	}
+	repo, err := c.repository(bundleRepository(md.Kind))
+	if err != nil {
+		return err
+	}
 	var total int64
 	for _, im := range images {
 		total += im.Ref.Size
 	}
 	var done int64
-	for _, im := range images {
+	for i, im := range images {
 		report := func(n int64) {
 			if progress != nil {
 				progress(done+min(n, im.Ref.Size), total)
 			}
 		}
-		if err := c.pushImage(ctx, im, report); err != nil {
+		if err := c.pushImage(ctx, targets[i], im.Image, report); err != nil {
 			return fmt.Errorf("push image %s: %w", im.Ref.Ref, err)
 		}
 		done += im.Ref.Size
@@ -54,10 +63,6 @@ func (c *Client) PushBundle(ctx context.Context, b Source, md bundle.Metadata, p
 		return err
 	}
 	tag := md.Version + "-" + md.Arch
-	repo, err := c.repository(bundleRepository(md.Kind))
-	if err != nil {
-		return err
-	}
 	if err := remote.WriteIndex(repo.Tag(tag), index, c.options(ctx)...); err != nil {
 		return fmt.Errorf("push bundle %s %s: %w", md.Kind, tag, err)
 	}
@@ -65,20 +70,30 @@ func (c *Client) PushBundle(ctx context.Context, b Source, md bundle.Metadata, p
 	return nil
 }
 
-// pushImage pushes im by its digest; report is told the bytes written of the image.
-func (c *Client) pushImage(ctx context.Context, im bundle.Image, report func(written int64)) error {
-	path, _, err := splitRef(im.Ref.Ref)
-	if err != nil {
-		return err
+// targets returns the reference by digest under its upstream name of each image, so that a bad reference is refused
+// before anything is pushed.
+func (c *Client) targets(images []bundle.Image) ([]name.Digest, error) {
+	refs := make([]name.Digest, 0, len(images))
+	for _, im := range images {
+		path, _, err := splitRef(im.Ref.Ref)
+		if err != nil {
+			return nil, err
+		}
+		repo, err := c.repository(path)
+		if err != nil {
+			return nil, err
+		}
+		digest, err := v1.NewHash(im.Ref.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("image %s: %w", im.Ref.Ref, err)
+		}
+		refs = append(refs, repo.Digest(digest.String()))
 	}
-	repo, err := c.repository(path)
-	if err != nil {
-		return err
-	}
-	digest, err := v1.NewHash(im.Ref.Digest)
-	if err != nil {
-		return err
-	}
+	return refs, nil
+}
+
+// pushImage pushes img as ref; report is told the bytes written of the image.
+func (c *Client) pushImage(ctx context.Context, ref name.Digest, img v1.Image, report func(written int64)) error {
 	updates := make(chan v1.Update, 16)
 	finished := make(chan struct{})
 	go func() {
@@ -89,7 +104,7 @@ func (c *Client) pushImage(ctx context.Context, im bundle.Image, report func(wri
 			}
 		}
 	}()
-	err = remote.Write(repo.Digest(digest.String()), im.Image, append(c.options(ctx), remote.WithProgress(updates))...)
+	err := remote.Write(ref, img, append(c.options(ctx), remote.WithProgress(updates))...)
 	<-finished
 	return err
 }

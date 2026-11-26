@@ -191,9 +191,13 @@ func TestPushBundleReportsSourceErrors(t *testing.T) {
 	if err := c.PushBundle(t.Context(), b, b.metadata("1"), nil); err == nil {
 		t.Error("want the source error")
 	}
-	b = newBundle(t, map[string]v1.Image{"ghcr.io/": newImage(t)})
+	good := newImage(t)
+	b = newBundle(t, map[string]v1.Image{"ghcr.io/good:v1": good, "zz.io/": newImage(t)})
 	if err := c.PushBundle(t.Context(), b, b.metadata("1"), nil); err == nil {
 		t.Error("want an error for a reference without a repository")
+	}
+	if exists(t, c, "ghcr.io/good@"+digestOf(t, good)) {
+		t.Error("an image was pushed before the bad reference was found")
 	}
 }
 
