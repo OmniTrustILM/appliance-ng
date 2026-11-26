@@ -178,10 +178,9 @@ preset_hidden() {
   fi
 }
 
-# capture_setup_certificate saves the self-signed certificate the first-boot service presents, for drive part1 to
-# trust. It is trusted on first use, as a user does who has no way to compare the fingerprint tty1 shows.
 tar_blob() { # tar_blob <OCI layout tar> <digest>: prints the blob digest of the layout
-  tar -xOf "$1" "blobs/sha256/${2#sha256:}"
+  local file="$1" digest="$2"
+  tar -xOf "$file" "blobs/sha256/${digest#sha256:}"
 }
 
 bundle_digest() { # bundle_digest <bundle tar> <ref>: prints the digest the bundle's metadata lists for the image ref
@@ -199,6 +198,8 @@ bundle_digest() { # bundle_digest <bundle tar> <ref>: prints the digest the bund
   return 1
 }
 
+# capture_setup_certificate saves the self-signed certificate the first-boot service presents, for drive part1 to
+# trust. It is trusted on first use, as a user does who has no way to compare the fingerprint tty1 shows.
 capture_setup_certificate() {
   local _
   for _ in $(seq 36); do
