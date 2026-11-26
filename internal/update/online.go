@@ -40,6 +40,12 @@ const (
 	sigstoreMedia = "application/vnd.dev.sigstore.bundle.v0.3+json"
 )
 
+// Steps of a fetch that read the bundle from the repository and write it into its layout.
+const (
+	stepRead  = "read the bundle"
+	stepWrite = "write the bundle"
+)
+
 // Online is a repository of bundles.
 type Online struct {
 	// Repository holds the bundle repositories <Repository>/system and <Repository>/platform.
@@ -76,7 +82,7 @@ func (o Online) signed(ctx context.Context, kind, tag, dir string, key crypto.Pu
 	}
 	desc, err := remote.Get(repo.Tag(tag), opts...)
 	if err != nil {
-		return nil, fail("read the bundle", err)
+		return nil, fail(stepRead, err)
 	}
 	digest, size, err := v1.SHA256(bytes.NewReader(desc.Manifest))
 	if err != nil || !desc.MediaType.IsIndex() || size > maxManifest {
@@ -84,7 +90,7 @@ func (o Online) signed(ctx context.Context, kind, tag, dir string, key crypto.Pu
 	}
 	index, err := remote.Index(repo.Digest(digest.String()), opts...)
 	if err != nil {
-		return nil, fail("read the bundle", err)
+		return nil, fail(stepRead, err)
 	}
 	if err := writeSigned(dir, repo, desc, digest, index, opts); err != nil {
 		return nil, err
@@ -113,13 +119,13 @@ func signatureError(err error) error {
 func writeSigned(dir string, repo name.Repository, desc *remote.Descriptor, digest v1.Hash, index v1.ImageIndex, opts []remote.Option) error {
 	p, err := layout.Write(dir, empty.Index)
 	if err != nil {
-		return fail("write the bundle", err)
+		return fail(stepWrite, err)
 	}
 	if err := p.WriteBlob(digest, io.NopCloser(bytes.NewReader(desc.Manifest))); err != nil {
-		return fail("write the bundle", err)
+		return fail(stepWrite, err)
 	}
 	if err := p.AppendDescriptor(v1.Descriptor{MediaType: desc.MediaType, Digest: digest, Size: int64(len(desc.Manifest))}); err != nil {
-		return fail("write the bundle", err)
+		return fail(stepWrite, err)
 	}
 	im, err := index.IndexManifest()
 	if err != nil || len(im.Manifests) == 0 {
@@ -169,27 +175,27 @@ func writeReferrers(p layout.Path, ref name.Digest, opts []remote.Option) error 
 func writeImage(p layout.Path, img v1.Image, limit int64, listed bool) error {
 	m, err := img.Manifest()
 	if err != nil {
-		return fail("read the bundle", err)
+		return fail(stepRead, err)
 	}
 	if err := withinLimit(append([]v1.Descriptor{m.Config}, m.Layers...), limit); err != nil {
 		return signatureError(err)
 	}
 	if err := p.WriteImage(img); err != nil {
-		return fail("write the bundle", err)
+		return fail(stepWrite, err)
 	}
 	if !listed {
 		return nil
 	}
 	raw, err := img.RawManifest()
 	if err != nil {
-		return fail("read the bundle", err)
+		return fail(stepRead, err)
 	}
 	digest, size, err := v1.SHA256(bytes.NewReader(raw))
 	if err != nil {
-		return fail("read the bundle", err)
+		return fail(stepRead, err)
 	}
 	if err := p.AppendDescriptor(v1.Descriptor{MediaType: m.MediaType, Digest: digest, Size: size}); err != nil {
-		return fail("write the bundle", err)
+		return fail(stepWrite, err)
 	}
 	return nil
 }
