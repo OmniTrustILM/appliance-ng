@@ -152,7 +152,7 @@ func TestEnsureIdentityRenewsBeforeExpiry(t *testing.T) {
 	if !slices.Contains(ilm.edgeRequests(), "PUT /api/v1/users/uuid-1") {
 		t.Fatalf("the renewal did not update the user: %v", ilm.edgeRequests())
 	}
-	if ilm.users["uuid-1"].fingerprint != fingerprint(renewed.Raw) {
+	if ilm.users["uuid-1"].fingerprint != Fingerprint(renewed.Raw) {
 		t.Fatal("ILM's user does not hold the renewed certificate")
 	}
 }
@@ -312,7 +312,7 @@ func TestEnsureIdentitySettlesAnInterruptedRenewal(t *testing.T) {
 	taken := issued(t, id, adminCA)
 	withPending(t, c, taken)
 	ilm.mu.Lock()
-	ilm.users["uuid-1"].fingerprint = fingerprint(taken.Certificate[0])
+	ilm.users["uuid-1"].fingerprint = Fingerprint(taken.Certificate[0])
 	ilm.mu.Unlock()
 	if _, err := id.Ensure(ctx, ilm.edgeAddr(), testHost, ilm.roots); err != nil {
 		t.Fatal(err)

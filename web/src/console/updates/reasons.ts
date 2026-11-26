@@ -46,6 +46,7 @@ const loadReasons: Record<string, string> = {
   wrongKind: 'The file is a bundle of the other kind.',
   wrongVersion: "The bundle's version is not the one asked for.",
   wrongArch: 'The bundle is for another architecture.',
+  unmirroredRegistry: 'The bundle has images from a registry this appliance does not mirror.',
   noSpace: "The data volume has too little free space: it needs twice the bundle's size.",
   busy: 'Another operation is running.',
   notFound: 'The bundle was not found in the online repository.',
@@ -71,4 +72,115 @@ const refusals: Record<string, string> = {
 export function refusalText(code: string | undefined, fallback: string) {
   if (code === 'bundle_loading') return refusals.busy;
   return (code && refusals[code]) || fallback;
+}
+
+const updateRefusals: Record<string, string> = {
+  update_running: 'Another update is running.',
+  backup_running: 'A backup is running. Update once it has finished.',
+  restore_running: 'A restore is running. Update once it has ended.',
+  bundle_loading: refusals.busy,
+  busy: refusals.busy,
+  upgrade_in_progress: 'The ILM operator is upgrading the platform. Update once it has finished.',
+  not_installed: 'The platform is not installed yet.',
+  last_update_failed: 'The last platform update failed. Roll it back before installing another.',
+  operator_older_than_running: "The bundle's ILM operator is older than the one that runs, which is never downgraded.",
+  blocked: 'This bundle cannot be installed on what runs.',
+  no_space: "The data volume has too little free space for the update: it needs twice the bundle's size.",
+  not_found: 'The bundle is neither loaded nor found online.',
+};
+
+/** The text of the code an update was refused with; an unknown code gets a general text. */
+export function updateRefusalText(code?: string) {
+  return (code && updateRefusals[code]) || 'The update could not be started.';
+}
+
+const steps: Record<string, string> = {
+  backup: 'taking a backup to every target',
+  images: "making the bundle's images available",
+  operator: "installing the bundle's ILM operator",
+  version: 'switching ILM to the new version',
+  wait: 'waiting for ILM to run the new version',
+};
+
+/** What an update does at step. */
+export function stepText(step?: string) {
+  return (step && steps[step]) || 'preparing';
+}
+
+const updateFailures: Record<string, string> = {
+  backupFailed: 'The backup to every target did not complete.',
+  backupIncomplete: 'The backup does not include the database, which could not be reached. Update once it answers again.',
+  bundleUnavailable: 'The bundle is no longer loaded and could not be fetched.',
+  imagesMissing: "Some of the bundle's images are missing from the appliance's registry.",
+  versionRejected: 'The ILM operator did not accept the new version.',
+  noSpace: 'The data volume has too little free space.',
+  timeout: 'The step did not finish in time.',
+  platformUpgrading: 'The ILM operator was upgrading the platform, so the new ILM version was not asked for.',
+  notInstalled: 'The platform is not installed.',
+  failed: 'A step failed. The manager log has the details.',
+};
+
+/** Why an update failed, from its fixed reason. */
+export function updateFailureText(reason: string) {
+  return updateFailures[reason] ?? 'The manager log has the details.';
+}
+
+const rollbackRefusals: Record<string, string> = {
+  no_pre_update_backup: 'There is no platform update to roll back, or the backup taken before it is gone.',
+  no_previous_bundle: 'The platform bundle that ran before the update is no longer on the appliance, and an older bundle cannot be loaded. Restore the backup taken before the update onto a fresh appliance instead.',
+  operator_changed: 'The update installed a newer ILM operator, which is never downgraded. Restore the backup onto a fresh appliance instead.',
+  not_needed: 'The update failed before it asked for the new ILM version, so ILM still runs the previous version. A rollback would only lose the data changed since the backup.',
+  external_database: 'The platform uses an external database, which a rollback cannot restore. Restore the backup onto a fresh appliance instead.',
+  foreign_kit: 'The kit does not open the backup taken before the update: the backup was encrypted to another backup key.',
+  backup_broken: 'The backup taken before the update cannot be restored: it is damaged, too new, or holds another ILM version.',
+  update_running: 'Another update or rollback is running.',
+  backup_running: 'A backup is running. Roll back once it has finished.',
+  restore_running: 'A restore is running. Roll back once it has ended.',
+  bundle_loading: refusals.busy,
+  busy: refusals.busy,
+  upgrade_in_progress: 'The ILM operator is upgrading the platform. Roll back once it has finished.',
+  not_installed: updateRefusals.not_installed,
+};
+
+/** The text of the code a rollback was refused with; undefined for a code the console does not know. */
+export function rollbackRefusalText(code?: string) {
+  return code ? rollbackRefusals[code] : undefined;
+}
+
+const rollbackUnavailable: Record<string, string> = {
+  notNeeded: "The last update failed before it asked for the new ILM version, so there is nothing to roll back: ILM still runs the previous version. The bundle's newer ILM operator may already run, which is never downgraded.",
+  externalDatabase: 'The last update cannot be rolled back: the platform uses an external database, which a rollback cannot restore. Restore the backup taken before it onto a fresh appliance instead.',
+  operatorChanged: 'The last update cannot be rolled back: it installed a newer ILM operator, which is never downgraded. The way back is to restore the backup taken before it onto a fresh appliance.',
+  noPreviousBundle: 'The last update cannot be rolled back: the platform bundle that ran before it is no longer on the appliance, and an older bundle cannot be loaded. Restore the backup taken before it onto a fresh appliance instead.',
+  upgradeInProgress: 'The ILM operator is upgrading the platform. The last update can be rolled back once it has finished.',
+};
+
+/** Why the last platform update cannot be rolled back, for the reasons worth telling; undefined for the others. */
+export function rollbackUnavailableText(reason?: string) {
+  return reason ? rollbackUnavailable[reason] : undefined;
+}
+
+const rollbackSteps: Record<string, string> = {
+  stop: 'stopping ILM',
+  uninstall: 'uninstalling the platform',
+  reinstall: 'installing ILM again at the previous version',
+  ilmSecrets: "writing ILM's secrets from the backup",
+  database: "loading the backup's database",
+  cbom: 'writing the stored CBOMs',
+  start: 'starting ILM',
+};
+
+/** What a rollback does at step, a step of the restore that does it. */
+export function rollbackStepText(step?: string) {
+  return (step && rollbackSteps[step]) || 'preparing';
+}
+
+const rollbackFailures: Record<string, string> = {
+  failed: 'a step failed; the manager log has the details',
+  timeout: 'a step did not finish in time',
+};
+
+/** Why a rollback stopped, from the restore's fixed reason. */
+export function rollbackFailureText(reason: string) {
+  return rollbackFailures[reason] ?? rollbackFailures.failed;
 }

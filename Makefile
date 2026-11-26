@@ -7,8 +7,14 @@ OAPI_CODEGEN ?= go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@
 addons:
 	./build/addons.sh
 
-# make images ARCH=amd64|arm64 REGISTRY=<registry>; defaults in build/lib.sh.
+# make images ARCH=amd64|arm64 REGISTRY=<registry>; defaults in build/lib.sh. ILM_VERSION=<x.y.z> first pins that
+# ILM version, an older one too, with the ILM operator release.yaml names; it rewrites release.yaml and the add-on
+# files in place, for a test build.
 images:
+ifdef ILM_VERSION
+	go run ./cmd/release pin --operator "$$(sed -n 's/.*name: ilm-operator,.*version: "v\([^"]*\)".*/\1/p' release.yaml)" \
+		--ilm "$(ILM_VERSION)" --older-ilm
+endif
 	./build/extension.sh
 	./build/manager.sh
 	./build/installer.sh

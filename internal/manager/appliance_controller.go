@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
+	"github.com/OmniTrustILM/appliance-ng/internal/update"
 )
 
 const (
@@ -128,6 +130,8 @@ type ApplianceReconciler struct {
 	OperatorLock sync.Locker
 	// ILM registers the v1 connectors in ILM; it is the identity the ILM settings controller uses.
 	ILM ILMIdentity
+	// BundlesDir keeps the files of the loaded bundles, where the installed platform bundle's ILM operator is read.
+	BundlesDir string
 
 	// The operator's kinds are watched only once its CRDs are served: the reconciler installs them itself.
 	controller  controller.Controller
@@ -136,11 +140,12 @@ type ApplianceReconciler struct {
 	watchedKind map[string]bool
 
 	// The last completed full add-on pass. The controller runs one reconcile at a time, so no lock is needed.
-	passed     bool
-	passedAt   time.Time
-	passedGen  int64
-	passedHeld bool
-	now        func() time.Time
+	passed         bool
+	passedAt       time.Time
+	passedGen      int64
+	passedHeld     bool
+	passedOperator string
+	now            func() time.Time
 }
 
 // AuditWriter appends entries to the audit log.
@@ -288,6 +293,10 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 		return ctrl.Result{}, err
 	}
 	progress, err := r.addonsProgress(ctx, a)
+	if errors.Is(err, errBundleMissing) {
+		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonBundleMissing, messageBundleMissing)
+		return ctrl.Result{}, err
+	}
 	if err != nil {
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, messageAddonsFailed)
 		return ctrl.Result{}, err
@@ -384,15 +393,55 @@ func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Ap
 	if err != nil {
 		return addons.Progress{}, err
 	}
-	if r.passed && a.Generation == r.passedGen && held == r.passedHeld && r.now().Sub(r.passedAt) < resync {
+	files, operator, err := r.operatorAddons(a)
+	if err != nil {
+		return addons.Progress{}, err
+	}
+	if r.passed && a.Generation == r.passedGen && held == r.passedHeld && operator == r.passedOperator &&
+		r.now().Sub(r.passedAt) < resync {
 		return addons.Check(ctx, r.Cluster, r.Steps)
 	}
-	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, r.Addons, operatorHold{r})
+	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, files, operatorHold{r})
 	r.passed = err == nil && progress.Done
 	if r.passed {
-		r.passedAt, r.passedGen, r.passedHeld = r.now(), a.Generation, held
+		r.passedAt, r.passedGen, r.passedHeld, r.passedOperator = r.now(), a.Generation, held, operator
+		keepKnown(&a.Status.Versions.Operator, operator)
 	}
 	return progress, err
+}
+
+// errBundleMissing is the installed platform bundle whose files are not on the data volume.
+var errBundleMissing = errors.New("the files of the installed platform bundle are missing")
+
+// operatorAddons returns the add-ons with the ILM operator manifest the pass applies, and the operator's version: the
+// installed platform bundle's when it is newer than the embedded one, else the embedded one. It fails with
+// errBundleMissing without the installed bundle's files.
+func (r *ApplianceReconciler) operatorAddons(a *v1alpha1.Appliance) (fs.FS, string, error) {
+	embedded, ok := r.Release.Operator()
+	if !ok {
+		return r.Addons, "", nil
+	}
+	active, err := update.InstalledPlatform(r.BundlesDir, a.Status.Versions.PlatformBundle, goruntime.GOARCH)
+	if err != nil || active == nil {
+		return r.Addons, embedded.Version, bundleMissing(err)
+	}
+	data, err := fs.ReadFile(r.Addons, embedded.File)
+	if err != nil {
+		return nil, "", fmt.Errorf("read the embedded ILM operator: %w", err)
+	}
+	manifest, version, err := update.ActiveOperator(data, embedded.Version, active, r.BundlesDir)
+	if err != nil {
+		return nil, "", bundleMissing(err)
+	}
+	return addons.Replaced(r.Addons, embedded.File, manifest), version, nil
+}
+
+// bundleMissing marks err with errBundleMissing when a file of the installed platform bundle is missing.
+func bundleMissing(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %w", errBundleMissing, err)
+	}
+	return err
 }
 
 // holdsOperator tells whether a restore needs the ILM operator stopped, from the Appliance as the API server has it:

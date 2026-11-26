@@ -23,6 +23,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/keycloak"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 // Refusals of Start and Resume.
@@ -31,6 +32,8 @@ var (
 	ErrBusy = errors.New("a restore is in progress")
 	// ErrNotWaiting refuses Resume when no restore waits for its kit or stopped on a failure.
 	ErrNotWaiting = errors.New("no restore waits to be resumed")
+	// ErrNotFailed refuses Abandon when no restore failed.
+	ErrNotFailed = errors.New("no restore failed")
 	// ErrSetup refuses a fresh restore on an appliance that is not set up to restore, and a restore in place on one
 	// whose setup is not complete.
 	ErrSetup = errors.New("the appliance's setup does not allow this restore")
@@ -38,8 +41,8 @@ var (
 	ErrUpgradeInProgress = backup.ErrUpgradeInProgress
 	// ErrBackupRunning refuses a restore while a backup runs.
 	ErrBackupRunning = errors.New("a backup is running")
-	// ErrBundleLoading refuses a restore while an update bundle loads.
-	ErrBundleLoading = errors.New("an update bundle is loading")
+	// ErrBundleLoading refuses a restore while an update or a bundle load runs.
+	ErrBundleLoading = errors.New("an update or a bundle load is running")
 
 	errTimeout = errors.New("timed out")
 )
@@ -77,12 +80,20 @@ type Options struct {
 	User string
 	// Dependencies replaces the backup's choice of the dependencies it names on a fresh restore; nil keeps them.
 	Dependencies *v1alpha1.RestoreDependencies
+	// PlatformBundle, on a fresh restore, is the loaded platform bundle whose ILM version the backup holds; empty for
+	// the release's own platform.
+	PlatformBundle string
+	// Rollback, on a restore in place, rolls a platform update back. Its caller holds the admission of the long
+	// operations while the rollback is admitted.
+	Rollback *Rollback
 }
 
 // BackupRunner admits a restore apart from the backups: Exclusive runs admit while no backup runs or passes its
-// checks, and refuses with backup.ErrBusy while one runs.
+// checks, and refuses with backup.ErrBusy while one runs. Unpin releases the pins of the backups of an update kind
+// but that of the backup keep once a rollback is done.
 type BackupRunner interface {
 	Exclusive(admit func() error) error
+	Unpin(kind, keep string) error
 }
 
 // AuditWriter appends entries to the audit log.
@@ -109,6 +120,9 @@ type Deps struct {
 	HTTPClient *http.Client
 	// CBOMStore is the host:port of the CBOM repository's store on the appliance; empty is its Service's cluster IP.
 	CBOMStore string
+	// Images makes the images of a loaded platform bundle available in the appliance's registry under their upstream
+	// tags, for a fresh restore from that bundle.
+	Images func(ctx context.Context, platformBundle string) error
 }
 
 // Engine restores a backup onto the appliance, one restore at a time and step by step. Each step is recorded in the
@@ -154,6 +168,8 @@ func New(deps Deps) *Engine {
 		v1alpha1.RestoreStepStart:       e.start,
 		v1alpha1.RestoreStepKeycloak:    e.rehostKeycloak,
 		v1alpha1.RestoreStepCertificate: e.restoreCertificate,
+		v1alpha1.RestoreStepUninstall:   e.uninstall,
+		v1alpha1.RestoreStepReinstall:   e.reinstall,
 	}
 	return e
 }
@@ -268,6 +284,10 @@ func (e *Engine) admit(ctx context.Context, file string, id age.Identity, opts O
 	if a.Status.Restore.Active() {
 		return ErrBusy
 	}
+	// An update a restart cut off holds no admission until it resumes; its status keeps the restore out meanwhile.
+	if a.Status.Update.Unfinished() {
+		return ErrBundleLoading
+	}
 	want := v1alpha1.SetupRestore
 	if opts.InPlace {
 		want = v1alpha1.SetupComplete
@@ -276,8 +296,12 @@ func (e *Engine) admit(ctx context.Context, file string, id age.Identity, opts O
 		return ErrSetup
 	}
 	// The whole file is read before the quick checks, which then stay right before the restore is recorded.
-	if _, err := verify(ctx, file, id); err != nil {
+	bm, err := verify(ctx, file, id)
+	if err != nil {
 		return err
+	}
+	if r := opts.Rollback; r != nil && bm.ILM != r.Version {
+		return ErrVersionUnavailable{Have: r.Version, Want: bm.ILM}
 	}
 	upgrading, err := backup.Upgrading(ctx, e.deps.Client)
 	if err != nil {
@@ -286,15 +310,37 @@ func (e *Engine) admit(ctx context.Context, file string, id age.Identity, opts O
 	if upgrading {
 		return ErrUpgradeInProgress
 	}
-	err = e.deps.Backups.Exclusive(func() error {
+	record := func() error {
 		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) {
-			st.Restore = &v1alpha1.RestoreStatus{
-				Backup: filepath.Base(file), File: file, InPlace: opts.InPlace, ILMHostName: opts.ILMHostName,
-				Dependencies: opts.Dependencies, Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.NewTime(e.now()),
-				StartedBy: opts.User,
+			st.Restore = e.newStatus(file, opts)
+			if r := opts.Rollback; r != nil {
+				u := r.Update
+				st.Update = &u
 			}
 		})
-	})
+	}
+	if opts.Rollback != nil {
+		return record()
+	}
+	return admission(e.deps.Backups.Exclusive(record))
+}
+
+// newStatus is the status of a restore of file with opts that starts now.
+func (e *Engine) newStatus(file string, opts Options) *v1alpha1.RestoreStatus {
+	st := &v1alpha1.RestoreStatus{
+		Backup: filepath.Base(file), File: file, InPlace: opts.InPlace, ILMHostName: opts.ILMHostName,
+		Dependencies: opts.Dependencies, Step: v1alpha1.RestoreStepSecrets, StartedAt: metav1.NewTime(e.now()),
+		StartedBy: opts.User, PlatformBundle: opts.PlatformBundle,
+	}
+	if r := opts.Rollback; r != nil {
+		st.Step = v1alpha1.RestoreStepStop
+		st.Rollback = &v1alpha1.RestoreRollback{ILMVersion: r.Version, PlatformBundle: r.PlatformBundle}
+	}
+	return st
+}
+
+// admission is the refusal an Exclusive call's error stands for; any other error is returned as it is.
+func admission(err error) error {
 	switch {
 	case errors.Is(err, backup.ErrHeld):
 		return ErrBundleLoading
@@ -321,6 +367,41 @@ func (e *Engine) resumable(ctx context.Context, id age.Identity) error {
 	return e.updateStatus(ctx, func(s *v1alpha1.ApplianceStatus) {
 		s.Restore.Step, s.Restore.PausedStep, s.Restore.Message = s.Restore.CurrentStep(), "", ""
 	})
+}
+
+// Abandon gives up a restore that failed: the ILM operator is started again and the restore's step becomes
+// abandoned, which releases what the failed restore holds; the step it failed at is kept. The appliance keeps the state the restore reached and the
+// backup file stays. It refuses with ErrBusy while a restore step runs, ErrNotFailed unless the restore failed, and
+// ErrBackupRunning or ErrBundleLoading while the admission lock is taken.
+func (e *Engine) Abandon(ctx context.Context) error {
+	if !e.begin() {
+		return ErrBusy
+	}
+	defer e.end()
+	err := e.deps.Backups.Exclusive(func() error {
+		a, err := e.appliance(ctx)
+		if err != nil {
+			return err
+		}
+		if st := a.Status.Restore; !st.Unsettled() || st.Message == "" {
+			return ErrNotFailed
+		}
+		if a.Status.Update.Unfinished() {
+			return ErrBundleLoading
+		}
+		if err := e.scaleOperator(ctx, 1); err != nil {
+			return err
+		}
+		return e.updateStatus(ctx, func(s *v1alpha1.ApplianceStatus) {
+			s.Restore.AbandonedStep = s.Restore.Step
+			s.Restore.Step, s.Restore.PausedStep, s.Restore.Message = v1alpha1.RestoreStepAbandoned, "", ""
+		})
+	})
+	if err = admission(err); err != nil {
+		return err
+	}
+	e.deps.Log.Info("failed restore abandoned")
+	return nil
 }
 
 // run runs the recorded step and the ones after it until the restore is done or fails. A status that cannot be read
@@ -399,11 +480,14 @@ func (e *Engine) attempt(ctx context.Context, j *job) error {
 }
 
 // advance records the step after the job's, or completes the restore after its last step.
+// After reinstall, a rollback goes on with the steps that restore the backup into the platform installed again.
 func (e *Engine) advance(ctx context.Context, j *job) error {
-	steps := freshSteps
-	if j.status.InPlace {
-		steps = inPlaceSteps
+	if j.status.Step == v1alpha1.RestoreStepReinstall {
+		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) {
+			st.Restore.Step, st.Restore.Rollback.Reinstalled = rollbackSteps[0], true
+		})
 	}
+	steps := stepsOf(j.status)
 	i := slices.Index(steps, j.status.Step)
 	if i+1 < len(steps) {
 		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) { st.Restore.Step = steps[i+1] })
@@ -413,7 +497,14 @@ func (e *Engine) advance(ctx context.Context, j *job) error {
 
 // finish completes the restore: setup is complete, a fresh restore counts as a restore test, and the audit log
 // records it.
+// A rollback also releases the pins of the platform backups but the one it restored, before it is recorded done, so
+// that a restart cannot skip it.
 func (e *Engine) finish(ctx context.Context, j *job) error {
+	if j.status.Rollback != nil {
+		if err := e.deps.Backups.Unpin(release.BundlePlatform, j.status.Backup); err != nil {
+			e.deps.Log.Warn("could not release the older pinned backups", "error", err)
+		}
+	}
 	now := metav1.NewTime(e.now())
 	err := e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) {
 		st.Restore.Step = v1alpha1.RestoreStepDone
@@ -479,6 +570,9 @@ func (e *Engine) audit(j *job, result string, details map[string]string) {
 			"backup": j.status.Backup, "inPlace": strconv.FormatBool(j.status.InPlace),
 			"started": j.status.StartedAt.UTC().Format(time.RFC3339),
 		},
+	}
+	if r := j.status.Rollback; r != nil {
+		entry.Details["rollback"] = r.ILMVersion
 	}
 	for k, v := range details {
 		entry.Details[k] = v

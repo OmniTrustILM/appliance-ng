@@ -207,7 +207,8 @@ subjects:
 # which answers its bootstrap endpoint only to localhost. For the ACME profile of ILM it admits cert-manager to Core's
 # HTTP port through its own network policy, removed when the profile is no longer used. The CBOM repository's store
 # keeps its data on a volume claim the manager creates once; turning the repository off deletes its Deployments,
-# Services, the copy of an external store's credentials and the repository's CA Secret.
+# Services, the copy of an external store's credentials and the repository's CA Secret. A Cilium network policy admits
+# only ILM's pods and the node to the repository and its store.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -225,6 +226,46 @@ rules:
   - apiGroups: [""]
     resources: [persistentvolumeclaims]
     verbs: [get, create]
+  # A rollback uninstalls the platform with the ILM operator stopped: it deletes the Platform, what the operators leave
+  # behind and the volume claims, and waits for them and the StatefulSets they own to be gone.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [list, delete]
+  - apiGroups: [otilm.com]
+    resources: [platforms]
+    resourceNames: [ilm]
+    verbs: [delete]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloakrealmimports]
+    resourceNames: [ilm-keycloak-realm]
+    verbs: [get, delete]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloaks]
+    resourceNames: [ilm-keycloak]
+    verbs: [delete]
+  - apiGroups: [rabbitmq.com]
+    resources: [bindings, queues, exchanges, permissions, users, vhosts]
+    verbs: [list, deletecollection]
+  - apiGroups: [rabbitmq.com]
+    resources: [rabbitmqclusters]
+    resourceNames: [ilm-messaging]
+    verbs: [get, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [databases]
+    resourceNames: [ilm-db-app]
+    verbs: [get, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [poolers]
+    resourceNames: [ilm-db-pooler]
+    verbs: [get, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: [ilm-db]
+    verbs: [delete]
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    resourceNames: [ilm-keycloak, ilm-messaging-server]
+    verbs: [get]
   - apiGroups: [apps]
     resources: [deployments]
     resourceNames: [cbom-s3, cbom-repository-deployment]
@@ -256,6 +297,13 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     resourceNames: [appliance-acme-to-core]
+    verbs: [patch, delete]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    verbs: [get, create]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    resourceNames: [cbom-repository-ingress]
     verbs: [patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

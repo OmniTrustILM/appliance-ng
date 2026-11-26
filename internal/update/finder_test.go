@@ -385,7 +385,7 @@ func TestFetchTimesOut(t *testing.T) {
 		return []remote.Option{remote.WithContext(ctx), remote.WithTransport(transportTo(stalled.Listener.Addr().String()))}, nil
 	}}
 	l := update.NewLoader(update.LoaderDeps{
-		Client: e.client, Admission: e.lock, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Client: e.client, Admission: e.lock, Backups: e.lock, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Release: e.rel, Dir: e.dir, Uploads: e.uploads, Online: online, Key: &e.key.PublicKey, Arch: testArch,
 		Space: e.space, FetchTimeout: 300 * time.Millisecond,
 	})

@@ -23,6 +23,9 @@ const (
 	// ConditionCBOMRepositoryApplied reports whether the CBOM repository and its store are applied; it is absent
 	// while the repository was never chosen.
 	ConditionCBOMRepositoryApplied = "CBOMRepositoryApplied"
+	// ConditionAdminCertificateRegistered reports whether ILM's administrator holds the certificate the console hands
+	// out; it is absent while there is none or ILM has no administrator to give it to.
+	ConditionAdminCertificateRegistered = "AdminCertificateRegistered"
 )
 
 // Setup phases reported in ApplianceStatus.Setup.
@@ -588,6 +591,9 @@ type UpdateStatus struct {
 	Kind string `json:"kind"`
 	From string `json:"from"`
 	To   string `json:"to"`
+	// FromBundle is the platform bundle that ran before the update; empty for the release's own platform.
+	// +optional
+	FromBundle string `json:"fromBundle,omitempty"`
 	// Step is the step the update is at.
 	// +optional
 	Step string `json:"step,omitempty"`
@@ -598,9 +604,21 @@ type UpdateStatus struct {
 	// +optional
 	Backup    string      `json:"backup,omitempty"`
 	StartedAt metav1.Time `json:"startedAt"`
-	// PointOfNoReturn is set once the update can no longer be abandoned.
+	// PointOfNoReturn is set once the update has asked for the new ILM version; from then on only a rollback undoes it.
 	// +optional
 	PointOfNoReturn bool `json:"pointOfNoReturn,omitempty"`
+}
+
+// The kind of a rollback in UpdateStatus, whose progress is that of its restore, and the step of a completed update.
+const (
+	UpdateKindRollback = "rollback"
+	UpdateStepDone     = "done"
+)
+
+// Unfinished tells whether u is an update that neither completed nor failed; the progress of a rollback is that of its
+// restore.
+func (u *UpdateStatus) Unfinished() bool {
+	return u != nil && u.Kind != UpdateKindRollback && u.Step != UpdateStepDone && u.Message == ""
 }
 
 // ConnectorState is the state of one chosen connector.
@@ -636,6 +654,10 @@ type BackupRecord struct {
 	SizeBytes int64       `json:"sizeBytes"`
 	// +kubebuilder:validation:Enum=included;notIncluded
 	Database string `json:"database"`
+	// Pinned is the kind of update the backup was taken for; the backup stays on the data volume until the next
+	// update of that kind finishes.
+	// +optional
+	Pinned string `json:"pinned,omitempty"`
 }
 
 // TargetStatus is the state of a backup target.

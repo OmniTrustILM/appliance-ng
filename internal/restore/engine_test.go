@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -99,6 +100,21 @@ type fakeBackups struct {
 	busy             bool
 	held             bool
 	recordedInAdmits int
+	mu               sync.Mutex
+	unpins           []string
+}
+
+func (b *fakeBackups) Unpin(kind, keep string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.unpins = append(b.unpins, kind+"/"+keep)
+	return nil
+}
+
+func (b *fakeBackups) unpinned() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.unpins)
 }
 
 func (b *fakeBackups) Exclusive(admit func() error) error {
@@ -585,6 +601,46 @@ func TestFreshRestore(t *testing.T) {
 	}
 	if strings.Contains(f.logs.String(), "SELECT") || strings.Contains(f.logs.String(), "backup-pw") {
 		t.Errorf("the log carries backup content:\n%s", f.logs)
+	}
+}
+
+// TestFreshRestoreFromALoadedPlatformBundle makes the images of the loaded platform bundle whose ILM version the
+// backup holds available before the platform is installed, and records the bundle.
+func TestFreshRestoreFromALoadedPlatformBundle(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	e := f.engine(testClient)
+	var tagged []string
+	e.deps.Images = func(_ context.Context, version string) error {
+		if getAppliance(t).Spec.Platform != nil {
+			t.Error("the platform was set before the bundle's images were tagged")
+		}
+		tagged = append(tagged, version)
+		return nil
+	}
+	f.start(t, e, Options{ILMHostName: newILMHost, PlatformBundle: "1.1.0"})
+	f.wantDone(t)
+	if !slices.Equal(tagged, []string{"1.1.0"}) {
+		t.Errorf("tagged the images of %v, want 1.1.0 once", tagged)
+	}
+	a := getAppliance(t)
+	if a.Status.Versions.PlatformBundle != "1.1.0" || a.Status.Restore.PlatformBundle != "1.1.0" {
+		t.Errorf("platform bundle %q, restore %+v", a.Status.Versions.PlatformBundle, a.Status.Restore)
+	}
+}
+
+// TestFreshRestoreStopsWithoutTheBundlesImages fails the restore at the appliance step, before the platform is set,
+// when the images of its platform bundle cannot be tagged.
+func TestFreshRestoreStopsWithoutTheBundlesImages(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	e := f.engine(testClient)
+	e.deps.Images = func(context.Context, string) error { return errors.New("manifest unknown") }
+	f.start(t, e, Options{PlatformBundle: "1.1.0"})
+	a := getAppliance(t)
+	if st := a.Status.Restore; st.Step != v1alpha1.RestoreStepAppliance || st.Message != v1alpha1.RestoreFailed {
+		t.Errorf("restore %+v, want failed at the appliance step", st)
+	}
+	if a.Spec.Platform != nil || a.Status.Versions.PlatformBundle != "" {
+		t.Errorf("platform %+v, bundle %q set without the bundle's images", a.Spec.Platform, a.Status.Versions.PlatformBundle)
 	}
 }
 
@@ -1858,5 +1914,122 @@ func TestPlatformNotAvailableBeforeItsKindExists(t *testing.T) {
 	ok, err := f.engine(c).platformAvailable(context.Background())
 	if ok || err != nil {
 		t.Errorf("platformAvailable without the Platform kind = %t, %v; want false, nil", ok, err)
+	}
+}
+
+// scaleTestOperator sets the replicas of the ILM operator's Deployment.
+func scaleTestOperator(t *testing.T, replicas int32) {
+	t.Helper()
+	d := &appsv1.Deployment{}
+	key := client.ObjectKey{Namespace: "ilm-operator-system", Name: "ilm-operator-controller-manager"}
+	if err := testClient.Get(context.Background(), key, d); err != nil {
+		t.Fatal(err)
+	}
+	d.Spec.Replicas = &replicas
+	if err := testClient.Update(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRestoreRefusedWhileAnUpdateIsUnfinished refuses a restore and the abandon of a failed one while the status
+// shows a platform update that has not ended, as after a restart before the update took the admission again.
+func TestRestoreRefusedWhileAnUpdateIsUnfinished(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	e := f.engine(testClient)
+	ctx := context.Background()
+	a := getAppliance(t)
+	a.Status.Update = &v1alpha1.UpdateStatus{Kind: "platform", From: "1.0.0", To: "1.1.0", Step: "wait", StartedAt: metav1.Now()}
+	if err := testClient.Status().Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Start(ctx, f.file, f.key, Options{}); !errors.Is(err, ErrBundleLoading) {
+		t.Errorf("restore while an update is unfinished: %v, want ErrBundleLoading", err)
+	}
+	if st := getAppliance(t).Status.Restore; st != nil {
+		t.Errorf("a refused restore left status %+v", st)
+	}
+	failed := &v1alpha1.RestoreStatus{Backup: "b", Step: v1alpha1.RestoreStepDatabase, Message: v1alpha1.RestoreFailed}
+	a = getAppliance(t)
+	a.Status.Restore = failed
+	if err := testClient.Status().Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Abandon(ctx); !errors.Is(err, ErrBundleLoading) {
+		t.Errorf("abandon while an update is unfinished: %v, want ErrBundleLoading", err)
+	}
+	if got := getAppliance(t).Status.Restore; !reflect.DeepEqual(got, failed) {
+		t.Errorf("status %+v, want the failure kept", got)
+	}
+}
+
+func TestAbandonRestartsOperatorAndReleasesHolds(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	f.dumper.loadErr = errors.New("load failed")
+	e := f.engine(testClient)
+	f.start(t, e, Options{ILMHostName: newILMHost})
+	// The operator that a failed restore could not start again.
+	scaleTestOperator(t, 0)
+	if err := e.Abandon(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st := getAppliance(t).Status.Restore
+	if st.Step != v1alpha1.RestoreStepAbandoned || st.Message != "" || st.Backup == "" || st.File != f.file ||
+		st.AbandonedStep != v1alpha1.RestoreStepDatabase {
+		t.Errorf("status %+v, want abandoned at the database with the backup file kept", st)
+	}
+	if st.Active() || st.Unsettled() || st.HoldsOperator() || st.PausesPlatform() {
+		t.Errorf("status %+v still holds", st)
+	}
+	if n := replicas(t, "ilm-operator-system", "ilm-operator-controller-manager"); n != 1 {
+		t.Errorf("operator replicas = %d, want 1", n)
+	}
+	// What is left is the appliance's own state: a second abandon has nothing to give up.
+	if err := e.Abandon(context.Background()); !errors.Is(err, ErrNotFailed) {
+		t.Errorf("second abandon = %v, want ErrNotFailed", err)
+	}
+}
+
+func TestAbandonRefusals(t *testing.T) {
+	for name, st := range map[string]*v1alpha1.RestoreStatus{
+		"no restore": nil,
+		"done":       {Backup: "b", Step: v1alpha1.RestoreStepDone},
+		"running":    {Backup: "b", Step: v1alpha1.RestoreStepDatabase},
+		"waiting":    {Backup: "b", Step: v1alpha1.RestoreStepWaitingForKit, PausedStep: v1alpha1.RestoreStepDatabase},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRestoreFixture(t, false)
+			a := getAppliance(t)
+			a.Status.Restore = st
+			if err := testClient.Status().Update(context.Background(), a); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.engine(testClient).Abandon(context.Background()); !errors.Is(err, ErrNotFailed) {
+				t.Errorf("abandon = %v, want ErrNotFailed", err)
+			}
+			if got := getAppliance(t).Status.Restore; !reflect.DeepEqual(got, st) {
+				t.Errorf("status %+v, want it unchanged", got)
+			}
+		})
+	}
+}
+
+func TestAbandonRefusedWhileAStepRunsOrABackupRuns(t *testing.T) {
+	f := newRestoreFixture(t, false)
+	f.dumper.loadErr = errors.New("load failed")
+	e := f.engine(testClient)
+	f.start(t, e, Options{ILMHostName: newILMHost})
+	if !e.begin() {
+		t.Fatal("the engine runs")
+	}
+	if err := e.Abandon(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Errorf("abandon during a step = %v, want ErrBusy", err)
+	}
+	e.end()
+	f.backups.busy = true
+	if err := e.Abandon(context.Background()); !errors.Is(err, ErrBackupRunning) {
+		t.Errorf("abandon during a backup = %v, want ErrBackupRunning", err)
+	}
+	if st := getAppliance(t).Status.Restore; st.Message != v1alpha1.RestoreFailed {
+		t.Errorf("status %+v, want the failure kept", st)
 	}
 }

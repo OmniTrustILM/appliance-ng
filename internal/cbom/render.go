@@ -125,7 +125,38 @@ func Workloads() []*unstructured.Unstructured {
 	add(appsV1, kindDeployment, repositoryDeploy)
 	add("v1", "Service", repositoryService)
 	add("v1", "Secret", trustedSecret)
+	add(ciliumV2, kindCiliumPolicy, policyName)
 	return out
+}
+
+// The policy that admits traffic to the repository and its store.
+const (
+	ciliumV2         = "cilium.io/v2"
+	kindCiliumPolicy = "CiliumNetworkPolicy"
+	policyName       = "cbom-repository-ingress"
+)
+
+// NetworkPolicy admits to the repository and its store only the pods of Namespace, where ILM's Core runs, and the
+// node, where the manager runs in the host network; ILM's own policies select only its parts.
+func NetworkPolicy() *unstructured.Unstructured {
+	u := &unstructured.Unstructured{Object: map[string]any{
+		"spec": map[string]any{
+			"endpointSelector": map[string]any{"matchExpressions": []any{map[string]any{
+				"key": labelName, "operator": "In", "values": []any{ChartName, StoreName},
+			}}},
+			"ingress": []any{
+				map[string]any{"fromEndpoints": []any{map[string]any{
+					"matchLabels": map[string]any{"k8s:io.kubernetes.pod.namespace": Namespace},
+				}}},
+				map[string]any{"fromEntities": []any{"host"}},
+			},
+		},
+	}}
+	u.SetAPIVersion(ciliumV2)
+	u.SetKind(kindCiliumPolicy)
+	u.SetNamespace(Namespace)
+	u.SetName(policyName)
+	return u
 }
 
 // Claim is the store's volume claim on the local-path storage of the data volume.

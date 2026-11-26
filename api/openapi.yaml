@@ -655,7 +655,8 @@ paths:
       description: |
         Returns the certificate and private key the platform generated for the ILM administrator as a PKCS#12 file
         encrypted with the password of the request. Each certificate is handed out once; later requests are answered
-        with 410 until the platform renews the certificate.
+        with 410 until the platform renews the certificate. A renewed certificate is answered with 404 `not_registered`
+        until ILM's administrator holds it.
       security:
         - session: []
       requestBody:
@@ -721,7 +722,7 @@ paths:
       description: |
         Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
         409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs,
-        `bundle_loading` while an update bundle loads, with 409 `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
+        `bundle_loading` while an update or a bundle load runs, with 409 `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
         in with an external identity provider. When Keycloak refuses or does not answer, the request is answered with
         502 and the stored password stays as it was.
       security:
@@ -1937,18 +1938,33 @@ paths:
     post:
       tags: [restore]
       operationId: postRestoreAbandon
-      summary: Set up a new appliance instead of restoring
+      summary: Give up a restore
       description: |
-        Gives up the restore a fresh appliance waits for and moves its setup to `part2`, the wizard's second part.
-        Refused with 409 `not_restoring` unless setup is `restore`, and with 409 `restore_started` once a restore
-        was started on this appliance, which then has to be installed again to set up a new appliance, and with 409
-        `handover_pending` while the appliance is still taking over the setup answers, and with 409 `busy` while
-        another restore operation runs.
+        Without a body, gives up the restore a fresh appliance waits for and moves its setup to `part2`, the
+        wizard's second part. Refused with 409 `not_restoring` unless setup is `restore`, and with 409
+        `restore_started` once a restore was started on this appliance, which then has to be installed again to set
+        up a new appliance, and with 409 `handover_pending` while the appliance is still taking over the setup
+        answers, and with 409 `busy` while another restore operation runs.
+
+        With `{confirm: true}`, abandons a restore that failed: the ILM operator is started again, the holds the
+        restore keeps on the add-ons, the ILM settings and the backups are released, and the restore's step becomes
+        `abandoned`. The appliance keeps whatever state the restore reached, and the backup file stays. Refused with
+        400 when `confirm` is not true, and with 409 `not_failed` unless the restore failed, with 409 `busy` while a
+        restore step runs, with 409 `backup_running` while a backup runs, and with 409 `bundle_loading` while an
+        update or a bundle load runs, or an update a restart cut off has not ended.
       security:
         - session: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreAbandon'
       responses:
         '204':
-          description: The restore is given up; setup continues with part 2.
+          description: The restore is given up or abandoned.
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2066,6 +2082,87 @@ paths:
       responses:
         '202':
           description: The bundle is being loaded.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/platform:
+    post:
+      tags: [updates]
+      operationId: postUpdatesPlatform
+      summary: Install a platform bundle
+      description: |
+        Installs the platform bundle `version` for the appliance's architecture in the background, loaded or found
+        online: a backup to every target first, then the bundle's images, its ILM operator and the new ILM version.
+        `update` in GET /updates shows its progress. The way back is a reinstall and a restore of that backup, which
+        loses the data changed since. Needs `confirm` set to true; otherwise it is answered with 400. Refused with 409:
+        `update_running`, `backup_running`, `restore_running`, `bundle_loading`, `busy` while another operation is
+        being admitted, `upgrade_in_progress` while the ILM operator upgrades the platform, `not_installed` before the
+        platform is installed, `last_update_failed` while the last platform update failed past its point of no return
+        and can be rolled back, `blocked` when the bundle cannot be installed on what runs,
+        `operator_older_than_running` when the bundle's ILM operator is older than the one that runs, and `no_space`
+        when the data volume has less than twice the bundle's size free; with 404 `not_found` when the bundle is
+        neither loaded nor found online.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformUpdateStart'
+      responses:
+        '202':
+          description: The update is started.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/rollback:
+    post:
+      tags: [updates]
+      operationId: postUpdatesRollback
+      summary: Roll the last platform update back
+      description: |
+        Rolls the last platform update back, whether it completed or failed past its point of no return: the platform
+        is uninstalled, installed again at the ILM version that ran before and the backup taken before the update is
+        restored in place with the recovery kit's backup key. The data changed since that backup is lost. Only an
+        update that kept the ILM operator can be rolled back; after one that installed a newer operator, the way back
+        is a restore onto a fresh appliance. `update` in GET /updates shows its progress, with the steps of the
+        restore that does it; a restore that waits for its kit or failed is resumed with POST /restore/resume. Needs
+        `confirm` set to true; otherwise it is answered with 400. A wrong passphrase or an invalid kit is answered
+        as for POST /restore/inspect. Refused with 409: `no_pre_update_backup` when the last update is not a platform
+        update or the backup taken before it is gone, `no_previous_bundle` when the platform that ran before is not
+        at hand, `operator_changed` when the update installed a newer ILM operator, `not_needed` when the update
+        failed before it asked for the new ILM version, `external_database` when the platform uses an external database,
+        `foreign_kit` when the kit does not open the backup, `backup_broken` when the backup cannot be restored,
+        `upgrade_in_progress`, `update_running`, `backup_running`, `restore_running`, `bundle_loading`, `busy` and
+        `not_installed` as for POST /updates/platform. The request body is limited to 1 MiB.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RollbackStart'
+      responses:
+        '202':
+          description: The rollback is started.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2253,6 +2350,85 @@ components:
             $ref: '#/components/schemas/UpdateBundle'
         load:
           $ref: '#/components/schemas/BundleLoad'
+        update:
+          $ref: '#/components/schemas/UpdateProgress'
+        rollback:
+          $ref: '#/components/schemas/RollbackOffer'
+        operator:
+          type: string
+          description: >-
+            The ILM operator version that runs. A platform bundle with a newer one cannot be rolled back; the way back
+            from it is a restore onto a fresh appliance.
+    RollbackOffer:
+      type: object
+      description: Whether the last platform update can be rolled back now; absent where updates cannot be installed.
+      required: [available]
+      properties:
+        available:
+          type: boolean
+        reason:
+          type: string
+          description: >-
+            Why it cannot, a fixed reason: `noPreUpdateBackup`, `noPreviousBundle`, `operatorChanged`, `notNeeded`,
+            `externalDatabase`, `upgradeInProgress`, `updateRunning`, `restoreRunning` or `failed`; absent when it
+            can.
+    RollbackStart:
+      type: object
+      required: [kit, passphrase, confirm]
+      properties:
+        kit:
+          type: string
+          format: binary
+        passphrase:
+          type: string
+          format: password
+          writeOnly: true
+        confirm:
+          type: boolean
+          description: Must be true; the data changed since the backup taken before the update is lost.
+    PlatformUpdateStart:
+      type: object
+      required: [version, confirm]
+      properties:
+        version:
+          type: string
+          description: The version of the platform bundle, X.Y.Z.
+        confirm:
+          type: boolean
+          description: Must be true; the way back from the update is a reinstall and a restore of the backup taken first.
+    UpdateProgress:
+      type: object
+      description: The latest update, while it runs and once it ended.
+      required: [kind, from, to, startedAt, pointOfNoReturn]
+      properties:
+        kind:
+          type: string
+          enum: [platform, system, rollback]
+        from:
+          type: string
+          description: The version before the update.
+        to:
+          type: string
+          description: The version being installed.
+        step:
+          type: string
+          description: >-
+            The step the update is at: `backup`, `images`, `operator`, `version`, `wait`, and `done` once it
+            completed. A rollback is at the step of the restore that does it, as `step` in GET /restore.
+        message:
+          type: string
+          description: >-
+            Why the update failed at its step, a fixed reason; absent while it runs and once it completed. A failed
+            rollback has the restore's `message`.
+        backup:
+          type: string
+          description: The backup taken before the update.
+        startedAt:
+          type: string
+          format: date-time
+        pointOfNoReturn:
+          type: boolean
+          description: Set once the update has asked for the new ILM version; from then on only a rollback undoes it.
     UpdateBundle:
       type: object
       required: [kind, version, arch, sizeBytes, notes]
@@ -2308,8 +2484,8 @@ components:
           type: string
           description: >-
             Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`,
-            `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `noSpace`, `busy`, `notFound`,
-            `unreachable`, `timeout`, `failed`, or a reason of `blocked`.
+            `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `unmirroredRegistry`, `noSpace`,
+            `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`.
         startedAt:
           type: string
           format: date-time
@@ -2559,6 +2735,11 @@ components:
           $ref: '#/components/schemas/RecoveryKit'
         backup:
           $ref: '#/components/schemas/StatusBackup'
+        adminCredentialRenewed:
+          type: boolean
+          description: >-
+            The ILM administrator's certificate was renewed and ILM's administrator holds the new one, which has not
+            been downloaded yet; the credential downloaded before no longer signs in.
     DataVolume:
       type: object
       description: The size and free space of the data volume; absent while the manager cannot read it.
@@ -2733,7 +2914,8 @@ components:
             kubeconfig-revoke, talosconfig-issue, recovery-kit-issue, recovery-kit-reissue, recovery-kit-replace,
             recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
             backup-target-test, backup-host-key-scan, restore-upload, restore-fetch, restore-inspect, restore-start,
-            restore-resume, restore-abandon, restore, update-check, update-upload, update-fetch, bundle-loaded]
+            restore-resume, restore-abandon, restore, update-check, update-upload, update-fetch, bundle-loaded,
+            platform-update-start, platform-update, platform-rollback-start]
         result:
           type: string
           enum: [success, failure, denied]
@@ -3818,10 +4000,14 @@ components:
           type: boolean
         step:
           type: string
-          enum: [secrets, appliance, platform, stop, ilmSecrets, database, cbom, start, keycloak, certificate, done, waitingForKit]
+          enum: [secrets, appliance, platform, stop, ilmSecrets, database, cbom, start, keycloak, certificate, uninstall,
+            reinstall, done, waitingForKit, abandoned]
           x-enum-varnames: [StepSecrets, StepAppliance, StepPlatform, StepStop, StepILMSecrets, StepDatabase, StepCBOM, StepStart,
-            StepKeycloak, StepCertificate, StepDone, StepWaitingForKit]
-          description: The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+            StepKeycloak, StepCertificate, StepUninstall, StepReinstall, StepDone, StepWaitingForKit, StepAbandoned]
+          description: |
+            The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart and
+            `abandoned` once a failed restore was given up. A rollback of a platform update first stops ILM,
+            uninstalls the platform and installs it again (`uninstall`, `reinstall`), then restores the backup.
         pausedStep:
           type: string
           description: The step a restore waiting for its kit resumes at.
@@ -3838,6 +4024,14 @@ components:
         startedAt:
           type: string
           format: date-time
+        rollback:
+          type: string
+          enum: [reinstalling, restoring]
+          x-enum-varnames: [RollbackReinstalling, RollbackRestoring]
+          description: |
+            Set on a restore that rolls a platform update back: `reinstalling` until the platform runs the previous
+            ILM version again, from `stop` through `reinstall`, then `restoring` while the backup is restored into it,
+            from a second `stop` on.
     RestoreTargetRequest:
       type: object
       required: [target]
@@ -3905,6 +4099,13 @@ components:
           type: string
           format: password
           writeOnly: true
+    RestoreAbandon:
+      type: object
+      required: [confirm]
+      properties:
+        confirm:
+          type: boolean
+          description: Must be true; the appliance keeps whatever state the failed restore reached.
     RestoreSummary:
       type: object
       required: [inspection, backup, inPlace, time, hostName, ilmHostName, nodeHostName, ilm, operator, appliance,

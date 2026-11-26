@@ -69,7 +69,7 @@ describe('UpdatesPage', () => {
     stubApi({
       [UPDATES]: [200, updates({
         available: [system, platform],
-        loaded: [{ ...platform, version: '2.0.0', loadedAt: '2026-11-20T02:00:00Z' }],
+        loaded: [{ ...platform, version: '2.0.0', loadedAt: '2026-11-20T02:00:00Z', blocked: 'sameVersion' }],
         lastCheck: '2026-11-24T10:00:00Z',
       })],
     });
@@ -289,6 +289,7 @@ describe('UpdatesPage', () => {
     ['damaged', /damaged/i],
     ['noSpace', /free space/i],
     ['wrongKind', /other kind/i],
+    ['unmirroredRegistry', /does not mirror/i],
     ['olderThanRunning', /older than what runs/i],
     ['strange', /could not be loaded/i],
   ])('explains a refused load with the reason %s', async (reason, text) => {
@@ -377,5 +378,142 @@ describe('UpdatesPage', () => {
     stubApi({ [UPDATES]: hang });
     render(<UpdatesPage />);
     expect(screen.getByRole('status')).toBeInTheDocument();
+  });
+});
+
+const PLATFORM = 'POST /appliance/api/v1/updates/platform';
+const loadedPlatform = { ...platform, loadedAt: '2026-11-24T10:00:00Z' };
+
+function progress(over: object = {}) {
+  return { kind: 'platform', from: '2.0.0', to: '2.1.0', step: 'backup', startedAt: '2026-11-24T10:00:00Z', pointOfNoReturn: false, ...over };
+}
+
+describe('UpdatesPage platform update', () => {
+  it('offers Install only for a loaded platform bundle that can be installed', async () => {
+    stubApi({
+      [UPDATES]: [200, updates({
+        available: [platform],
+        loaded: [loadedPlatform, { ...system, loadedAt: '2026-11-24T10:00:00Z' }, { ...loadedPlatform, version: '1.9.0', blocked: 'olderThanRunning' }],
+      })],
+    });
+    render(<UpdatesPage />);
+    expect(await screen.findByRole('button', { name: 'Install 2.1.0' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^install/i })).toHaveLength(1);
+  });
+
+  it('says before the update that a backup comes first and that the way back loses the data since', async () => {
+    const { sent } = stubApi({ [UPDATES]: [200, updates({ loaded: [loadedPlatform], operator: 'v1.5.0' })] });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    const dialog = screen.getByRole('dialog', { name: /install platform 2\.1\.0/i });
+    expect(within(dialog).getByText(/ILM 3\.4\.0/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/takes a backup to every backup target first/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/the update stops if the backup fails/i)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(/rolled back: ILM is installed again at the previous version and that backup is restored/i);
+    expect(dialog).toHaveTextContent(/data changed after the backup is lost/i);
+    expect(dialog).toHaveTextContent(/needs the recovery kit and its passphrase/i);
+    expect(dialog).not.toHaveTextContent(/fresh appliance/i);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(sent[PLATFORM]).toBeUndefined();
+  });
+
+  it('says that the way back from a bundle with a newer ILM operator is a restore onto a fresh appliance', async () => {
+    stubApi({ [UPDATES]: [200, updates({ loaded: [loadedPlatform], operator: 'v1.4.2' })] });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    const dialog = screen.getByRole('dialog', { name: /install platform 2\.1\.0/i });
+    expect(dialog).toHaveTextContent(/newer ILM operator, which is never downgraded/i);
+    expect(dialog).toHaveTextContent(/restore that backup onto a fresh appliance/i);
+    expect(dialog).not.toHaveTextContent(/rolled back/i);
+  });
+
+  it('promises no rollback while the running ILM operator is not known', async () => {
+    stubApi({ [UPDATES]: [200, updates({ loaded: [loadedPlatform] })] });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    const dialog = screen.getByRole('dialog', { name: /install platform 2\.1\.0/i });
+    expect(dialog).toHaveTextContent(/ILM operator that runs is not known/i);
+    expect(dialog).toHaveTextContent(/restore that backup onto a fresh appliance/i);
+    expect(dialog).not.toHaveTextContent(/rolled back/i);
+  });
+
+  it('starts the confirmed update and follows its progress', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let update: object | undefined;
+    const { mock, sent } = stubApi({
+      [UPDATES]: () => [200, updates({ loaded: [loadedPlatform], update })],
+      [PLATFORM]: () => {
+        update = progress();
+        return [202];
+      },
+    });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Install' }));
+    expect(sent[PLATFORM]).toEqual([{ version: '2.1.0', confirm: true }]);
+    expect(await screen.findByText(/updating the platform from 2\.0\.0 to 2\.1\.0/i)).toBeInTheDocument();
+    expect(screen.getByText(/taking a backup to every target/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Install 2.1.0' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Check now' })).toBeDisabled();
+    update = progress({ step: 'wait', backup: 'backup-1', pointOfNoReturn: true });
+    await act(async () => { await vi.advanceTimersByTimeAsync(runningRefreshMs); });
+    expect(await screen.findByText(/waiting for ILM to run the new version/i)).toBeInTheDocument();
+    update = progress({ step: 'done', backup: 'backup-1' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(runningRefreshMs); });
+    expect(await screen.findByText(/the platform was updated to 2\.1\.0/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Install 2.1.0' })).toBeEnabled();
+    // The reads that follow the update are the page's own, which must not keep the session from going idle.
+    const reads = mock.mock.calls.map(([request]) => request).filter((request) => request.method === 'GET' && request.url.endsWith('/updates'));
+    expect(reads.slice(0, 2).map((request) => request.headers.get('X-Background-Refresh'))).toEqual([null, null]);
+    expect(reads.slice(2).map((request) => request.headers.get('X-Background-Refresh'))).toEqual(reads.slice(2).map(() => '1'));
+    expect(reads.length).toBeGreaterThan(2);
+  });
+
+  it.each([
+    ['images', 'imagesMissing', /failed while making the bundle's images available.*images are missing/i],
+    ['backup', 'backupFailed', /failed while taking a backup.*backup to every target did not complete/i],
+    ['backup', 'backupIncomplete', /failed while taking a backup.*backup does not include the database/i],
+    ['wait', 'timeout', /did not finish in time/i],
+    ['operator', 'strange', /the manager log has the details/i],
+    ['version', 'platformUpgrading', /operator was upgrading the platform, so the new ILM version was not asked for/i],
+    ['version', 'notInstalled', /platform is not installed/i],
+    ['wait', 'failed', /a step failed\. the manager log has the details/i],
+  ])('explains an update that failed at %s with %s', async (step, message, text) => {
+    stubApi({ [UPDATES]: [200, updates({ update: progress({ step, message, backup: 'backup-1' }) })] });
+    render(<UpdatesPage />);
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.getByText(/backup-1/)).toBeInTheDocument();
+  });
+
+  it.each([
+    [409, 'update_running', /another update is running/i],
+    [409, 'backup_running', /a backup is running/i],
+    [409, 'restore_running', /a restore is running/i],
+    [409, 'bundle_loading', /another operation is running/i],
+    [409, 'busy', /another operation is running/i],
+    [409, 'upgrade_in_progress', /operator is upgrading the platform/i],
+    [409, 'not_installed', /platform is not installed/i],
+    [409, 'last_update_failed', /last platform update failed\. roll it back/i],
+    [409, 'operator_older_than_running', /ILM operator is older than the one that runs/i],
+    [409, 'blocked', /cannot be installed on what runs/i],
+    [409, 'no_space', /twice the bundle's size/i],
+    [404, 'not_found', /neither loaded nor found online/i],
+    [500, 'internal', /could not be started/i],
+  ])('explains an update refused with %i %s', async (status, code, text) => {
+    stubApi({ [UPDATES]: [200, updates({ loaded: [loadedPlatform] })], [PLATFORM]: [status, { code, message: 'x' }] });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Install' }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('reports an update request that never reached the appliance', async () => {
+    stubApi({ [UPDATES]: [200, updates({ loaded: [loadedPlatform] })], [PLATFORM]: () => Promise.reject(new TypeError('offline')) });
+    render(<UpdatesPage />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Install' }));
+    expect(await screen.findByText(/cannot be reached/i)).toBeInTheDocument();
   });
 });

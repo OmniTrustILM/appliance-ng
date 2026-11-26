@@ -16,7 +16,8 @@ export function refusalOf(result: Result): Refusal | undefined {
   return { message: result.error?.message ?? failureMessage(result.response.status), field: result.error?.field };
 }
 
-function kitForm(kit: File, passphrase: string, fields: Record<string, string> = {}) {
+/** The multipart body of a request that carries the recovery kit, its passphrase and fields. */
+export function kitForm(kit: File, passphrase: string, fields: Record<string, string> = {}) {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
   form.append('kit', kit);
@@ -32,6 +33,11 @@ export function inspectBackup(source: 'upload' | 'local', name: string, kit: Fil
 /** Resumes the restore that waits for its kit, or one that failed. */
 export function resumeRestore(kit: File, passphrase: string) {
   return api.POST('/restore/resume', { body: kitForm(kit, passphrase) as never, signal: timeoutSignal(restoreTimeoutMs) });
+}
+
+/** Gives up the restore that failed; the appliance keeps whatever state the restore reached. */
+export function abandonRestore() {
+  return api.POST('/restore/abandon', { body: { confirm: true } });
 }
 
 /** Uploads file as the backup to restore; the upload runs as long as it keeps sending. */

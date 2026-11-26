@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot test: boots the appliance offline, drives the onboarding wizard through its API and waits until it is ready.
 #
-#   [E2E=1] [RESTORE=1] [BUNDLE=1] run.sh <iso|qcow2> <arch>
+#   [E2E=1] [RESTORE=1] [BUNDLE=1] [PLATFORM_UPDATE=1] run.sh <iso|qcow2> <arch>
 #
 # The VM gets a random setup code preset through SMBIOS. While the node waits in maintenance mode, no resource Talos
 # serves without credentials may show the preset. test/boot/drive then answers both wizard parts, checks the
@@ -20,19 +20,29 @@
 # out/<arch>/platform-test.tar, made by test/boot/bundle.sh with the key whose public key the images were built
 # with as BUNDLE_TEST_KEY), waits until it is loaded, runs a pod from the bundle's curl image by the address of the
 # appliance's registry and the digest the bundle lists for its arch, and checks that a copy with one changed byte is refused; see test/boot/drive.
-# Prints "PASS <seconds to ready>" (with RESTORE=1 "PASS <seconds> restored <seconds>") or "FAIL <reason>"; exits 0
-# or 1. The VMs are always stopped.
+# With PLATFORM_UPDATE=1 the images are those of make images ILM_VERSION=<old ILM> (ILM_VERSION, default 2.19.0),
+# built trusting BUNDLE_TEST_KEY, and PLATFORM_BUNDLE_FILE (default out/<arch>/platform-update.tar) is the platform
+# bundle of the branch, made by SAME_ILM=1 test/boot/bundle.sh with that key. Before the update drive downloads the
+# ILM administrator's credential instead of check, which needs certificate sign-in through the ILM edge that ILM
+# 2.19.0 refuses, and creates the ILM group restore-marker straight through ILM Core. It then loads and installs the
+# bundle, checks the marker through the ILM edge, rolls the update back with the kit and checks the marker straight
+# through ILM Core at ILM_VERSION again; see test/boot/drive.
+# Prints "PASS <seconds to ready>" (with RESTORE=1 "PASS <seconds> restored <seconds>", with PLATFORM_UPDATE=1 "PASS
+# <seconds> updated <seconds> rolled back <seconds>") or "FAIL <reason>"; exits 0 or 1. The VMs are always stopped.
+# PORT_OFFSET is added to every host port, as in vm.sh, so that the VM runs beside others.
 # VM state is kept in out/boot/<arch>-<media>/ (the second VM's in out/boot/<arch>-<media>-restore/) and recreated on
 # every run. TALOSCTL names the talosctl binary (default talosctl), which must match the Talos version of the release.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 VM="$REPO/test/boot/vm.sh"
-STATUS_URL=http://127.0.0.1:18444/status
-CONSOLE_URL=https://127.0.0.1:18443
-APID=127.0.0.1:15000
+export PORT_OFFSET="${PORT_OFFSET:-0}"
+STATUS_URL=http://127.0.0.1:$((18444 + PORT_OFFSET))/status
+CONSOLE_URL=https://127.0.0.1:$((18443 + PORT_OFFSET))
+APID=127.0.0.1:$((15000 + PORT_OFFSET))
 UI_HOST=ilm.appliance.internal
-UI_ADDR=127.0.0.1:10443
+UI_PORT=$((10443 + PORT_OFFSET))
+UI_ADDR=127.0.0.1:$UI_PORT
 # A public catalogue connector whose image is in the offline cache. The operator registers every connector as a v2
 # connector, so it has to serve the v2 info, health and metrics interfaces.
 COMPONENT=software-cryptography-provider
@@ -47,7 +57,10 @@ SECRET_ALPHABET=A-Za-z0-9
 PRESET_KEY=io.otilm.appliance.setup-code-sha256=
 ADMIN='admin'
 # QEMU's user network with restrict=on offers no router or DNS server by DHCP; wizard part 1 sets these.
-KUBE_API=127.0.0.1:16443
+KUBE_API=127.0.0.1:$((16443 + PORT_OFFSET))
+# The SFTP and S3 servers on the host, which the guest reaches at the same ports of HOST_ALIAS.
+SFTP_ADDR=127.0.0.1:$((2222 + PORT_OFFSET))
+S3_ADDR=127.0.0.1:$((9000 + PORT_OFFSET))
 # An unused address of QEMU's user network at which the guest reaches the SFTP and S3 servers on the host (see vm.sh).
 HOST_ALIAS=10.0.2.100
 GATEWAY=10.0.2.2
@@ -55,6 +68,8 @@ DNS=10.0.2.3
 E2E="${E2E:-0}"
 RESTORE="${RESTORE:-0}"
 BUNDLE="${BUNDLE:-0}"
+PLATFORM_UPDATE="${PLATFORM_UPDATE:-0}"
+ILM_VERSION="${ILM_VERSION:-2.19.0}"
 # The second VM's node and ILM host name, which the restore sets instead of the backup's, and its administrator,
 # whose name differs from the backup's account so that the restore adds that account instead of replacing this one.
 RESTORE_HOST=restored.appliance.internal
@@ -70,6 +85,8 @@ media="$1" arch="$2"
 case "$media" in iso) mode=iso ;; qcow2) mode=disk ;; *) usage ;; esac
 bundle_file="${BUNDLE_FILE:-$REPO/out/$arch/platform-test.tar}"
 bundle_image=""
+platform_bundle="${PLATFORM_BUNDLE_FILE:-$REPO/out/$arch/platform-update.tar}"
+updated="" rolled_back=""
 
 export CPUS=4 MEM=12G DISK=50G
 first_dir="$REPO/out/boot/$arch-$media"
@@ -212,7 +229,7 @@ capture_setup_certificate() {
   fail "could not read the certificate of the first-boot service"
 }
 
-drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bundle-load> [<SFTP host key fingerprint>]
+drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bundle-load|credential|update|rollback> [<SFTP host key fingerprint>]
   local part="$1"
   local fingerprint="${2:-}"
   local args=(--url "$CONSOLE_URL" --user "$admin" --password "$password" --seed-file "$seed_file"
@@ -221,32 +238,40 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bun
     # The node address is 10.0.2.15, drive's default --server-name.
     part1) args+=(--code "$code" --ca-file "$setup_cert" --gateway "$GATEWAY" --dns "$DNS" --mode "$setup_mode") ;;
     part2) args+=(--component "$COMPONENT" --ca-file "$setup_cert") ;;
-    check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$host:10443" --ui-addr "$UI_ADDR"
+    check) args+=(--connector "$CONNECTOR_NAME" --ui-url "https://$host:$UI_PORT" --ui-addr "$UI_ADDR"
       --credential "$p12_file" --credential-password-file "$p12_password_file") ;;
+    credential) args+=(--credential "$p12_file" --credential-password-file "$p12_password_file") ;;
     kit) args+=(--out "$kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     backup) args+=(--kit "$kit_file" --passphrase-file "$kit_passphrase_file" --dir "$targets_dir"
       --guest-host "$HOST_ALIAS" --sftp-fingerprint "$fingerprint" --sftp-password-file "$sftp_password_file"
-      --s3-secret-file "$s3_secret_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
+      --s3-secret-file "$s3_secret_file" --sftp "$SFTP_ADDR" --s3 "$S3_ADDR" --kube-addr "$KUBE_API" --apid "$APID") ;;
     access) args+=(--kube-addr "$KUBE_API" --apid "$APID") ;;
     restore) args+=(--backup "$backup_file" --kit "$kit_file" --passphrase-file "$kit_passphrase_file"
       --ilm-host "$RESTORE_HOST" --out "$restored_kit_file" --kube-addr "$KUBE_API" --apid "$APID"
       --ca-file "$setup_cert") ;;
     bundle-load) args+=(--file "$bundle_file" --image "$bundle_image" --kit "$kit_file"
       --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
+    update) args+=(--file "$platform_bundle") ;;
+    rollback) args+=(--kit "$kit_file" --passphrase-file "$kit_passphrase_file" --ilm-version "$ILM_VERSION") ;;
     *) fail "unknown wizard part $part" ;;
   esac
   "$drive" "$part" "${args[@]}" >&2 || fail "drive $part failed"
 }
 
-drive_marker() { # drive_marker <--create|--check>: creates or checks the ILM group restore-marker with the credential
-  local action="$1"
+# drive_marker <--create|--check|--present> [--direct]: creates, checks or finds the ILM group restore-marker with the
+# credential, through the ILM edge or with --direct straight through ILM Core
+drive_marker() {
+  local action="$1" direct="${2:-}"
   local args=(--url "$CONSOLE_URL" --host-name "$host" --credential "$p12_file"
-    --credential-password-file "$p12_password_file" --ui-url "https://$host:10443" --ui-addr "$UI_ADDR")
+    --credential-password-file "$p12_password_file" --ui-url "https://$host:$UI_PORT" --ui-addr "$UI_ADDR")
   if [[ "$action" == --check ]]; then
     args+=(--kit "$restored_kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID"
       --client-secret-out "$client_secret_file")
   fi
-  "$drive" ilm-marker "$action" "${args[@]}" >&2 || fail "drive ilm-marker $action failed"
+  if [[ -n "$direct" ]]; then
+    args+=(--direct --kit "$kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID")
+  fi
+  "$drive" ilm-marker "$action" "${args[@]}" >&2 || fail "drive ilm-marker $action $direct failed"
 }
 
 drive_cbom() { # drive_cbom <--create|--check>: turns the CBOM repository on and stores a CBOM, or checks it is there
@@ -260,7 +285,7 @@ drive_cbom() { # drive_cbom <--create|--check>: turns the CBOM repository on and
 serve_targets() {
   local _
   mkdir -p "$targets_dir"
-  "$drive" serve-targets --sftp 127.0.0.1:2222 --s3 127.0.0.1:9000 --dir "$targets_dir" --guest-host "$HOST_ALIAS" \
+  "$drive" serve-targets --sftp "$SFTP_ADDR" --s3 "$S3_ADDR" --dir "$targets_dir" --guest-host "$HOST_ALIAS" \
     --sftp-password-file "$sftp_password_file" --s3-secret-file "$s3_secret_file" >"$targets_log" 2>&1 &
   targets_pid=$!
   for _ in $(seq 20); do
@@ -356,7 +381,7 @@ ui_answers() { # ui_answers: waits until the ILM UI of the VM under test answers
   local answer="" _
   for _ in $(seq 12); do
     answer="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
-      --resolve "$host:10443:127.0.0.1" "https://$host:10443/administrator/" || true)"
+      --resolve "$host:$UI_PORT:127.0.0.1" "https://$host:$UI_PORT/administrator/" || true)"
     [[ "$answer" != 200 ]] || break
     sleep 5
   done
@@ -387,6 +412,22 @@ restore_test() {
   client_secret="$(cat "$client_secret_file")" || fail "drive ilm-marker kept no client secret"
 }
 
+# platform_update_test installs the platform bundle of the branch, checks the marker through the ILM edge at its ILM
+# version, rolls the update back with the kit and checks the marker straight through ILM Core at ILM_VERSION again.
+platform_update_test() {
+  local start=$SECONDS
+  drive_wizard update
+  updated=$((SECONDS - start))
+  log "platform updated in ${updated}s"
+  drive_marker --present
+  start=$SECONDS
+  drive_wizard rollback
+  rolled_back=$((SECONDS - start))
+  log "platform rolled back in ${rolled_back}s"
+  drive_marker --present --direct
+}
+
+if [[ "$PLATFORM_UPDATE" == 1 && "$RESTORE" == 1 ]]; then fail "PLATFORM_UPDATE=1 and RESTORE=1 run apart"; fi
 for d in "$first_dir" "$restore_dir"; do
   "$VM" stop "$d" >/dev/null 2>&1 || true
   rm -rf "$d"
@@ -395,6 +436,9 @@ mkdir -p "$dir"
 (cd "$REPO" && go build -o "$drive" ./test/boot/drive) || fail "could not build test/boot/drive"
 if [[ "$E2E" == 1 ]]; then
   [[ -d "$REPO/test/e2e/node_modules/@playwright/test" ]] || fail "test/e2e has no node_modules: run npm ci there"
+fi
+if [[ "$PLATFORM_UPDATE" == 1 ]]; then
+  [[ -f "$platform_bundle" ]] || fail "$platform_bundle not found, make it with SAME_ILM=1 test/boot/bundle.sh"
 fi
 if [[ "$BUNDLE" == 1 ]]; then
   [[ -f "$bundle_file" ]] || fail "$bundle_file not found, make it with test/boot/bundle.sh"
@@ -422,7 +466,8 @@ ui_answers
 
 answer="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$CONSOLE_URL/healthz" || true)"
 [[ "$answer" == 200 ]] || fail "console health check answered ${answer:-nothing}, expected 200"
-drive_wizard check
+# ILM 2.19.0 refuses certificate sign-in through the ILM edge, which check needs; ILMSettingsApplied stays False then.
+if [[ "$PLATFORM_UPDATE" == 1 ]]; then drive_wizard credential; else drive_wizard check; fi
 if [[ "$E2E" == 1 ]]; then
   browse settings.spec.ts
   log "console settings changed in the browser"
@@ -433,10 +478,12 @@ if [[ "$RESTORE" == 1 ]]; then
   drive_marker --create
   drive_cbom --create
 fi
+if [[ "$PLATFORM_UPDATE" == 1 ]]; then drive_marker --create --direct; fi
 serve_targets
 drive_wizard backup "$targets_fingerprint"
 drive_wizard access
 if [[ "$BUNDLE" == 1 ]]; then drive_wizard bundle-load; fi
+if [[ "$PLATFORM_UPDATE" == 1 ]]; then platform_update_test; fi
 first_ready=$ready
 if [[ "$RESTORE" == 1 ]]; then restore_test; fi
 
@@ -444,4 +491,10 @@ if leaked; then
   fail "serial log contains key material or a secret of the wizard"
 fi
 
-if [[ "$RESTORE" == 1 ]]; then echo "PASS $first_ready restored $restored"; else echo "PASS $first_ready"; fi
+if [[ "$RESTORE" == 1 ]]; then
+  echo "PASS $first_ready restored $restored"
+elif [[ "$PLATFORM_UPDATE" == 1 ]]; then
+  echo "PASS $first_ready updated $updated rolled back $rolled_back"
+else
+  echo "PASS $first_ready"
+fi

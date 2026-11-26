@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { attempt } from '../setup/failure';
 import { KitForm } from './KitForm';
+import { PlatformBundle } from './PlatformBundle';
 import { inspectBackup, refusalOf } from './restoreApi';
 import { SourceStep } from './SourceStep';
 import { SummaryStep } from './SummaryStep';
@@ -64,12 +65,15 @@ function SetUpNew() {
 export function FreshRestore({ onStarted }: Readonly<{ onStarted: () => void }>) {
   const [name, setName] = useState<string>();
   const [summary, setSummary] = useState<Summary>();
+  // Set once the backup holds an ILM version this appliance cannot run without its platform bundle.
+  const [needsBundle, setNeedsBundle] = useState(false);
   const begin = useLatest();
 
   function startOver() {
     begin();
     setSummary(undefined);
     setName(undefined);
+    setNeedsBundle(false);
   }
 
   async function check(kit: File, passphrase: string) {
@@ -77,6 +81,7 @@ export function FreshRestore({ onStarted }: Readonly<{ onStarted: () => void }>)
     const result = await attempt(() => inspectBackup('upload', name ?? '', kit, passphrase));
     if (!latest()) return undefined;
     if (result?.data) setSummary(result.data);
+    if (result?.error?.code === 'version_unavailable') setNeedsBundle(true);
     return refusalOf(result);
   }
 
@@ -90,6 +95,7 @@ export function FreshRestore({ onStarted }: Readonly<{ onStarted: () => void }>)
         <KitForm label="Check the backup" submitLabel="Check the backup" onSubmit={check}>
           <Button variant="secondary" onClick={startOver}>Choose another backup</Button>
         </KitForm>
+        {needsBundle && <PlatformBundle />}
         <SetUpNew />
       </>
     );

@@ -23,7 +23,7 @@ func registeredClient(t *testing.T) (*Client, *fakeILM) {
 	adminCA := newTestCA(t, "admin-ca")
 	ilm := newFakeILM(t, adminCA)
 	cert := adminCA.issue(t, commonName)
-	ilm.users["uuid-1"] = &fakeUser{uuid: "uuid-1", username: "appliance-manager", fingerprint: fingerprint(cert.Certificate[0])}
+	ilm.users["uuid-1"] = &fakeUser{uuid: "uuid-1", username: "appliance-manager", fingerprint: Fingerprint(cert.Certificate[0])}
 	return New(ilm.edgeAddr(), testHost, cert, ilm.roots), ilm
 }
 

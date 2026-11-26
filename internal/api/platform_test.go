@@ -185,6 +185,24 @@ func TestPlatformKeepsTheILMVersion(t *testing.T) {
 	}
 }
 
+// TestConsoleCannotChangeILMVersion refuses the ILM version of a loaded platform bundle through PUT /platform: only
+// a platform update installs it.
+func TestConsoleCannotChangeILMVersion(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	installedAppliance(t, "ejbca-ng-connector")
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Updates = &v1alpha1.UpdatesStatus{Loaded: []v1alpha1.BundleInfo{{Kind: "platform", Version: "1.1.0", ILM: "2.21.0"}}}
+	})
+
+	rec := h.request(http.MethodPut, pathPlatform, PlatformUpdate{HostName: "ilm.example.com", Components: []string{}, IlmVersion: ptr("2.21.0")}, s)
+	wantStatus(t, rec, http.StatusBadRequest)
+	wantField(t, rec.Body.Bytes(), "ilmVersion", "cannot be changed")
+	if got := getAppliance(t).Spec.Platform.ILMVersion; got != "2.19.0" {
+		t.Errorf("ILM version %q, want 2.19.0 kept", got)
+	}
+}
+
 func TestPlatformValidates(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
@@ -36,6 +37,13 @@ func run(m *testing.M) int {
 	crds := []*apiextensionsv1.CustomResourceDefinition{
 		openCRD("postgresql.cnpg.io", "v1", "Cluster", "clusters"),
 		openCRD("k8s.keycloak.org", "v2beta1", "Keycloak", "keycloaks"),
+		openCRD("k8s.keycloak.org", "v2beta1", "KeycloakRealmImport", "keycloakrealmimports"),
+		openCRD("postgresql.cnpg.io", "v1", "Database", "databases"),
+		openCRD("postgresql.cnpg.io", "v1", "Pooler", "poolers"),
+		openCRD("rabbitmq.com", "v1beta1", "RabbitmqCluster", "rabbitmqclusters"),
+	}
+	for _, kind := range []string{"Binding", "Queue", "Exchange", "Permission", "User", "Vhost"} {
+		crds = append(crds, openCRD("rabbitmq.com", "v1beta1", kind, strings.ToLower(kind)+"s"))
 	}
 	for _, kind := range []string{"Connector", "Platform"} {
 		crd, err := operatorCRD(filepath.Join("..", "..", "addons", "ilm-operator.yaml"), kind)

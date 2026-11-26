@@ -642,6 +642,11 @@ spec:
                         type: string
                       name:
                         type: string
+                      pinned:
+                        description: |-
+                          Pinned is the kind of update the backup was taken for; the backup stays on the data volume until the next
+                          update of that kind finishes.
+                        type: string
                       sizeBytes:
                         format: int64
                         type: integer
@@ -665,6 +670,11 @@ spec:
                           - notIncluded
                           type: string
                         name:
+                          type: string
+                        pinned:
+                          description: |-
+                            Pinned is the kind of update the backup was taken for; the backup stays on the data volume until the next
+                            update of that kind finishes.
                           type: string
                         sizeBytes:
                           format: int64
@@ -861,6 +871,23 @@ spec:
                 description: Restore is the latest restore of a backup; unset until
                   one starts.
                 properties:
+                  abandonedStep:
+                    description: AbandonedStep is the step an abandoned restore had
+                      failed at.
+                    enum:
+                    - secrets
+                    - appliance
+                    - platform
+                    - stop
+                    - ilmSecrets
+                    - database
+                    - cbom
+                    - start
+                    - keycloak
+                    - certificate
+                    - uninstall
+                    - reinstall
+                    type: string
                   backup:
                     description: Backup is the file name of the backup.
                     type: string
@@ -1045,7 +1072,33 @@ spec:
                     - start
                     - keycloak
                     - certificate
+                    - uninstall
+                    - reinstall
                     type: string
+                  platformBundle:
+                    description: |-
+                      PlatformBundle is the loaded platform bundle a fresh restore installs the platform from; empty for the
+                      release's own platform.
+                    type: string
+                  rollback:
+                    description: Rollback is set on a restore in place that rolls
+                      a platform update back.
+                    properties:
+                      ilmVersion:
+                        description: ILMVersion is the ILM version the platform is
+                          installed at again.
+                        type: string
+                      platformBundle:
+                        description: PlatformBundle is the platform bundle that runs
+                          again; empty for the release's own platform.
+                        type: string
+                      reinstalled:
+                        description: 'Reinstalled is set once the platform runs at
+                          ILMVersion again: the steps from stop on restore the backup.'
+                        type: boolean
+                    required:
+                    - ilmVersion
+                    type: object
                   startedAt:
                     format: date-time
                     type: string
@@ -1066,8 +1119,11 @@ spec:
                     - start
                     - keycloak
                     - certificate
+                    - uninstall
+                    - reinstall
                     - done
                     - waitingForKit
+                    - abandoned
                     type: string
                   warning:
                     description: |-
@@ -1095,6 +1151,10 @@ spec:
                     type: string
                   from:
                     type: string
+                  fromBundle:
+                    description: FromBundle is the platform bundle that ran before
+                      the update; empty for the release's own platform.
+                    type: string
                   kind:
                     enum:
                     - platform
@@ -1106,8 +1166,9 @@ spec:
                       component.
                     type: string
                   pointOfNoReturn:
-                    description: PointOfNoReturn is set once the update can no longer
-                      be abandoned.
+                    description: PointOfNoReturn is set once the update has asked
+                      for the new ILM version; from then on only a rollback undoes
+                      it.
                     type: boolean
                   startedAt:
                     format: date-time

@@ -19,8 +19,18 @@ const (
 	BundlePlatform = "platform"
 )
 
-// operatorAddon is the add-on that installs the ILM operator; its images belong to the platform bundle.
-const operatorAddon = "ilm-operator"
+// OperatorAddon is the add-on that installs the ILM operator; its images belong to the platform bundle, and its
+// version is the operator's, which does not report its own.
+const OperatorAddon = "ilm-operator"
+
+// Operator is the add-on of the ILM operator the release embeds; false when it has none.
+func (m *Manifest) Operator() (AddonFile, bool) {
+	i := slices.IndexFunc(m.Addons, func(f AddonFile) bool { return f.Name == OperatorAddon })
+	if i < 0 {
+		return AddonFile{}, false
+	}
+	return m.Addons[i], true
+}
 
 // applianceComponents are the components of the operator's bill of materials that the appliance deploys.
 var applianceComponents = []string{
@@ -100,8 +110,8 @@ func requiredBundles(m *Manifest, usage map[string][]string) (map[string]require
 	}
 	required := map[string]requirement{}
 	for ref, addons := range usage {
-		if slices.Contains(addons, operatorAddon) {
-			required[tagRef(ref)] = requirement{BundlePlatform, "an image of the " + operatorAddon + " add-on"}
+		if slices.Contains(addons, OperatorAddon) {
+			required[tagRef(ref)] = requirement{BundlePlatform, "an image of the " + OperatorAddon + " add-on"}
 		} else {
 			required[tagRef(ref)] = requirement{BundleSystem, "an add-on image"}
 		}
@@ -136,7 +146,7 @@ func validateCompatibility(m *Manifest) []error {
 		return append(errs, fmt.Errorf("compatibility.operator %q is not a version range: %w", m.Compatibility.Operator, err))
 	}
 	for _, addon := range m.Addons {
-		if addon.Name != operatorAddon {
+		if addon.Name != OperatorAddon {
 			continue
 		}
 		version, err := semver.NewVersion(addon.Version)
@@ -148,7 +158,7 @@ func validateCompatibility(m *Manifest) []error {
 		}
 		return errs
 	}
-	return append(errs, fmt.Errorf("the manifest has no %s add-on to check against compatibility.operator", operatorAddon))
+	return append(errs, fmt.Errorf("the manifest has no %s add-on to check against compatibility.operator", OperatorAddon))
 }
 
 // BOMImageRefs returns the references of the images the operator's bill of materials names for ilmVersion that the

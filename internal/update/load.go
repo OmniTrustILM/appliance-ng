@@ -59,6 +59,11 @@ type Admission interface {
 	Hold() (release func(), err error)
 }
 
+// LocalBackups lists the local backups, whose pins keep the way back of a platform update.
+type LocalBackups interface {
+	Local() ([]v1alpha1.BackupRecord, error)
+}
+
 // AuditWriter records the loads in the audit log.
 type AuditWriter interface {
 	Write(e audit.Entry) error
@@ -72,6 +77,7 @@ type LoaderDeps struct {
 	// Registry returns a client that pushes into the appliance's registry.
 	Registry  func(ctx context.Context) (Registry, error)
 	Admission Admission
+	Backups   LocalBackups
 	Audit     AuditWriter
 	Log       *slog.Logger
 	// Release is the running release; its operator range is what a system bundle is checked against.
@@ -185,13 +191,14 @@ func (l *Loader) Reserve(ctx context.Context, kind, user string) (*Reservation, 
 	return r, nil
 }
 
-// admit refuses a load while a restore is active.
+// admit refuses a load while a restore is active, and while an update has not ended: one a restart cut off holds no
+// admission until it resumes.
 func (l *Loader) admit(ctx context.Context) error {
 	a, err := l.appliance(ctx)
 	if err != nil {
 		return fail("admission", err)
 	}
-	if a.Status.Restore.Active() {
+	if a.Status.Restore.Active() || a.Status.Update.Unfinished() {
 		return &Error{Reason: Busy}
 	}
 	return nil
@@ -304,6 +311,9 @@ func (l *Loader) admissible(ctx context.Context, kind, version string, md bundle
 	if version != "" && md.Version != version {
 		return Current{}, &Error{Reason: WrongVersion}
 	}
+	if md.Kind == release.BundlePlatform && !mirrored(l.deps.Release, md) {
+		return Current{}, &Error{Reason: UnmirroredRegistry}
+	}
 	if _, err := semver.StrictNewVersion(md.Version); err != nil {
 		return Current{}, &Error{Reason: InvalidMetadata, err: err}
 	}
@@ -316,6 +326,17 @@ func (l *Loader) admissible(ctx context.Context, kind, version string, md bundle
 		return Current{}, &Error{Reason: blocked}
 	}
 	return cur, nil
+}
+
+// mirrored reports whether every image of md comes from a registry rel mirrors.
+func mirrored(rel *release.Manifest, md bundle.Metadata) bool {
+	hosts := rel.RegistryHosts()
+	for _, im := range md.Images {
+		if !slices.Contains(hosts, release.RegistryHost(im.Ref)) {
+			return false
+		}
+	}
+	return true
 }
 
 // files are the manifests and notes of a verified bundle.
@@ -338,6 +359,13 @@ func (l *Loader) install(ctx context.Context, src registry.Source, f files, md b
 		return fail("store the files", err)
 	}
 	keep := l.keep(md, cur)
+	if md.Kind == release.BundlePlatform {
+		back, err := l.wayBack(ctx)
+		if err != nil {
+			return err
+		}
+		keep = appendStored(keep, l.storedTags(md.Kind), back, l.deps.Arch)
+	}
 	if err := l.record(ctx, md, keep); err != nil {
 		return err
 	}
@@ -409,6 +437,41 @@ func (l *Loader) keep(md bundle.Metadata, cur Current) []string {
 	}
 	if other != "" {
 		keep = append(keep, other)
+	}
+	return keep
+}
+
+// wayBack names the platform bundle versions a rollback goes back to: the one the last update started from while a
+// backup is pinned for it, and the one a rollback that is not done installs again.
+func (l *Loader) wayBack(ctx context.Context) ([]string, error) {
+	a, err := l.appliance(ctx)
+	if err != nil {
+		return nil, fail("read the appliance", err)
+	}
+	var versions []string
+	if r := a.Status.Restore; r != nil && r.Rollback != nil && r.Step != v1alpha1.RestoreStepDone {
+		versions = append(versions, r.Rollback.PlatformBundle)
+	}
+	if a.Status.Update == nil {
+		return versions, nil
+	}
+	backups, err := l.deps.Backups.Local()
+	if err != nil {
+		return nil, fail("list the local backups", err)
+	}
+	if slices.ContainsFunc(backups, func(b v1alpha1.BackupRecord) bool { return b.Pinned == release.BundlePlatform }) {
+		versions = append(versions, a.Status.Update.From)
+	}
+	return versions, nil
+}
+
+// appendStored appends to keep the tag of each of versions for arch that is stored and not kept yet.
+func appendStored(keep, stored, versions []string, arch string) []string {
+	for _, v := range versions {
+		t := tag(v, arch)
+		if v != "" && slices.Contains(stored, t) && !slices.Contains(keep, t) {
+			keep = append(keep, t)
+		}
 	}
 	return keep
 }

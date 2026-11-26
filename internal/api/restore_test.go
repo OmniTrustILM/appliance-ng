@@ -54,10 +54,12 @@ const (
 
 // fakeRestorer records the restores it is asked to start and resume.
 type fakeRestorer struct {
-	started   []restoreCall
-	startErr  error
-	resumed   []age.Identity
-	resumeErr error
+	started    []restoreCall
+	startErr   error
+	resumed    []age.Identity
+	resumeErr  error
+	abandoned  int
+	abandonErr error
 }
 
 type restoreCall struct {
@@ -79,6 +81,14 @@ func (f *fakeRestorer) Resume(_ context.Context, id age.Identity) error {
 		return f.resumeErr
 	}
 	f.resumed = append(f.resumed, id)
+	return nil
+}
+
+func (f *fakeRestorer) Abandon(context.Context) error {
+	if f.abandonErr != nil {
+		return f.abandonErr
+	}
+	f.abandoned++
 	return nil
 }
 
@@ -292,6 +302,49 @@ func TestRestoreStartNeedsTheCheckItConfirms(t *testing.T) {
 	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, RestoreStart{Confirm: true, Inspection: second}, s), http.StatusAccepted)
 	if len(f.started) != 1 {
 		t.Errorf("started %d restores, want 1", len(f.started))
+	}
+}
+
+// TestRestoreAcceptsLoadedILM checks a backup of the ILM version a loaded platform bundle offers, which the cached
+// release does not, and restores it from that bundle.
+func TestRestoreAcceptsLoadedILM(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupRestore)
+	f, dir := withRestore(t, h)
+	key, kit := restoreKit(t)
+	putRestoreFile(t, dir, restoreName, sealedBackup(t, key, "2.21.0", testUser))
+	wantCode(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusConflict, "version_unavailable")
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Updates = &v1alpha1.UpdatesStatus{Loaded: []v1alpha1.BundleInfo{{Kind: "platform", Version: "1.1.0", ILM: "2.21.0"}}}
+	})
+	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
+	start := RestoreStart{Confirm: true, Inspection: h.checked()}
+	wantStatus(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusAccepted)
+	if len(f.started) != 1 || f.started[0].opts.PlatformBundle != "1.1.0" {
+		t.Errorf("started %+v, want the restore from platform bundle 1.1.0", f.started)
+	}
+}
+
+// TestRestoreRefusesABundlePrunedSinceTheCheck refuses the restore of a backup whose platform bundle a later load
+// pruned after the backup was checked.
+func TestRestoreRefusesABundlePrunedSinceTheCheck(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	createAppliance(t, v1alpha1.SetupRestore)
+	f, dir := withRestore(t, h)
+	key, kit := restoreKit(t)
+	putRestoreFile(t, dir, restoreName, sealedBackup(t, key, "2.21.0", testUser))
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Updates = &v1alpha1.UpdatesStatus{Loaded: []v1alpha1.BundleInfo{{Kind: "platform", Version: "1.1.0", ILM: "2.21.0"}}}
+	})
+	wantStatus(t, h.inspect("upload", restoreName, kit, restorePassphrase, s), http.StatusOK)
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) { st.Updates.Loaded = nil })
+
+	start := RestoreStart{Confirm: true, Inspection: h.checked()}
+	wantCode(t, h.request(http.MethodPost, pathRestoreStart, start, s), http.StatusConflict, "version_unavailable")
+	if len(f.started) != 0 {
+		t.Errorf("started %+v without the platform bundle of the backup's ILM", f.started)
 	}
 }
 
@@ -693,6 +746,64 @@ func TestAbandonRestoreWhenNotRestoring(t *testing.T) {
 	}
 }
 
+// failedRestore is a signed-in harness whose restore failed at its database step.
+func failedRestore(t *testing.T) (*harness, *session, *fakeRestorer) {
+	t.Helper()
+	h, s, f, _, _ := freshRestore(t)
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Restore = &v1alpha1.RestoreStatus{Backup: restoreName, Step: v1alpha1.RestoreStepDatabase, Message: v1alpha1.RestoreFailed}
+	})
+	return h, s, f
+}
+
+func TestAbandonFailedRestore(t *testing.T) {
+	h, s, f := failedRestore(t)
+	wantStatus(t, h.request(http.MethodPost, pathRestoreAbandon, RestoreAbandon{Confirm: true}, s), http.StatusNoContent)
+	if f.abandoned != 1 {
+		t.Errorf("abandoned %d times, want once", f.abandoned)
+	}
+	if e := lastEntry(h); e.Action != string(AuditEntryActionRestoreAbandon) || e.Details["backup"] != restoreName || e.Result != string(Success) {
+		t.Errorf("audit entry %+v", e)
+	}
+}
+
+func TestAbandonFailedRestoreNeedsConfirmation(t *testing.T) {
+	h, s, f := failedRestore(t)
+	for _, body := range []any{RestoreAbandon{Confirm: false}, "{}"} {
+		rec := h.request(http.MethodPost, pathRestoreAbandon, body, s)
+		wantCode(t, rec, http.StatusBadRequest, codeInvalid)
+	}
+	if f.abandoned != 0 {
+		t.Error("an unconfirmed abandon went through")
+	}
+}
+
+func TestAbandonFailedRestoreRefusals(t *testing.T) {
+	for err, code := range map[error]string{
+		restore.ErrNotFailed:     "not_failed",
+		restore.ErrBusy:          "busy",
+		restore.ErrBackupRunning: "backup_running",
+		restore.ErrBundleLoading: "bundle_loading",
+	} {
+		h, s, f := failedRestore(t)
+		f.abandonErr = err
+		wantCode(t, h.request(http.MethodPost, pathRestoreAbandon, RestoreAbandon{Confirm: true}, s), http.StatusConflict, code)
+		if e := lastEntry(h); e.Details[detailRefused] != code {
+			t.Errorf("%s: audit entry %+v", code, e)
+		}
+	}
+}
+
+func TestAbandonFailedRestoreWhileARestoreOperationRuns(t *testing.T) {
+	h, s, f := failedRestore(t)
+	h.srv.restoreMu.Lock()
+	wantCode(t, h.request(http.MethodPost, pathRestoreAbandon, RestoreAbandon{Confirm: true}, s), http.StatusConflict, "busy")
+	h.srv.restoreMu.Unlock()
+	if f.abandoned != 0 {
+		t.Error("an abandon went through during an operation")
+	}
+}
+
 func TestGetRestore(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
@@ -719,6 +830,17 @@ func TestGetRestore(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "/data/restore") {
 		t.Errorf("the answer names the file's path: %s", rec.Body)
+	}
+	for reinstalled, want := range map[bool]RestoreProgressRollback{false: RollbackReinstalling, true: RollbackRestoring} {
+		setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+			st.Restore = &v1alpha1.RestoreStatus{Backup: restoreName, InPlace: true, Step: v1alpha1.RestoreStepStop,
+				Rollback: &v1alpha1.RestoreRollback{ILMVersion: "2.19.0", Reinstalled: reinstalled}}
+		})
+		var progress RestoreState
+		decode(t, h.request(http.MethodGet, pathRestore, nil, s), &progress)
+		if p := progress.Restore; p == nil || p.Rollback == nil || *p.Rollback != want {
+			t.Errorf("rollback progress %+v, want %s", p, want)
+		}
 	}
 }
 

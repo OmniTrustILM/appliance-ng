@@ -157,6 +157,22 @@ func TestPinRefusesDowngrade(t *testing.T) {
 	}
 }
 
+// TestPinOlderILM lets an older ILM version past the downgrade check, for a test build, and still refuses an older
+// operator.
+func TestPinOlderILM(t *testing.T) {
+	root := copyTree(t, "testdata/pin/before")
+	older := pinner{transport: failing{}, olderILM: true}
+
+	if err := older.pin(t.Context(), root, "1.1.0", "2.18.0"); err == nil || strings.Contains(err.Error(), "downgrade") {
+		t.Errorf("err = %v, want the older ILM past the downgrade check and the download to fail", err)
+	}
+	err := older.pin(t.Context(), root, "0.9.0", "2.18.0")
+	if err == nil || !strings.Contains(err.Error(), "operator from v1.0.0 to 0.9.0") {
+		t.Errorf("err = %v, want a refused downgrade of the operator", err)
+	}
+	assertUnchanged(t, root)
+}
+
 func assertUnchanged(t *testing.T, root string) {
 	t.Helper()
 	for _, file := range pinnedFiles {
@@ -287,6 +303,7 @@ func TestCommands(t *testing.T) {
 		{"images bad arch", images, []string{"--arch", "riscv64"}, 2},
 		{"images missing", images, []string{"-f", filepath.Join(root, "missing.yaml"), "--arch", "arm64"}, 1},
 		{"pin downgrade", pin, []string{"--root", root, "--operator", "v0.9.0", "--ilm", "2.20.0"}, 1},
+		{"pin older ILM", pin, []string{"--root", root, "--operator", "v0.9.0", "--ilm", "2.18.0", "--older-ilm"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.run(tc.args); got != tc.want {

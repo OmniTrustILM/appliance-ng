@@ -69,6 +69,10 @@ const (
 // AdminUser is the user name operator v1.1.0 registers the ILM administrator under.
 const AdminUser = "admin"
 
+// AdminCertificateRegisteredAnnotation holds, on AdminCertificateSecret, the fingerprint of the certificate that ILM's
+// AdminUser was last found or made to hold: ILM's own registration never replaces the certificate of an existing user.
+const AdminCertificateRegisteredAnnotation = "appliance.otilm.com/admin-certificate-registered"
+
 // The Deployment of the ILM operator.
 const (
 	OperatorNamespace  = "ilm-operator-system"

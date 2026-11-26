@@ -223,3 +223,40 @@ func TestRenderSetsTheRepositoryResources(t *testing.T) {
 		t.Errorf("the repository has no memory limit:\n%s", text)
 	}
 }
+
+func TestCBOMNetworkPolicy(t *testing.T) {
+	const want = `apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cbom-repository-ingress
+  namespace: ilm
+spec:
+  endpointSelector:
+    matchExpressions:
+    - key: app.kubernetes.io/name
+      operator: In
+      values:
+      - cbom-repository
+      - cbom-s3
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: ilm
+  - fromEntities:
+    - host
+`
+	got, err := yaml.Marshal(NetworkPolicy().Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Errorf("policy:\n%s\nwant:\n%s", got, want)
+	}
+	known := false
+	for _, o := range Workloads() {
+		known = known || (o.GetKind() == "CiliumNetworkPolicy" && o.GetName() == NetworkPolicy().GetName())
+	}
+	if !known {
+		t.Error("the policy is not among the workloads, so turning off would leave it")
+	}
+}

@@ -1055,8 +1055,9 @@ func TestRunRefusesDuringRestore(t *testing.T) {
 		t.Fatalf("run after a failed restore: %v, want ErrRestoreInProgress", err)
 	}
 
+	// Abandoning it keeps what it reached and lets backups resume.
 	a = getAppliance(t)
-	a.Status.Restore.Step, a.Status.Restore.Message = v1alpha1.RestoreStepDone, ""
+	a.Status.Restore.Step, a.Status.Restore.Message = v1alpha1.RestoreStepAbandoned, ""
 	if err := testClient.Status().Update(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}

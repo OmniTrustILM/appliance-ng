@@ -25,6 +25,8 @@ const (
 	LocalCopies = 3
 
 	partSuffix = ".part"
+	// pinSuffix ends the name of the file beside a backup that holds the kind of update the backup is pinned for.
+	pinSuffix  = ".pin"
 	timeLayout = "20060102T150405Z"
 	// maxNameBytes is the longest file name the file systems allow.
 	maxNameBytes = 255
@@ -78,6 +80,7 @@ func ListLocal(dir string) ([]v1alpha1.BackupRecord, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list the backups: %w", err)
 	}
+	pins := readPins(dir, entries)
 	var out []v1alpha1.BackupRecord
 	for _, e := range entries {
 		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), FileSuffix) {
@@ -95,6 +98,7 @@ func ListLocal(dir string) ([]v1alpha1.BackupRecord, error) {
 			Time:      metav1.NewTime(fileTime(e.Name(), info.ModTime().UTC().Truncate(time.Second))),
 			SizeBytes: info.Size(),
 			Database:  v1alpha1.BackupDatabaseIncluded,
+			Pinned:    pins[e.Name()],
 		})
 	}
 	slices.SortFunc(out, newestFirst)
@@ -116,19 +120,84 @@ func RemoveStale(dir string) error {
 	return errors.Join(errs...)
 }
 
-// pruneLocal deletes all but the backup written and the newest keep-1 others in dir. The backup written is kept
-// whatever its name's time, which a clock set back can make the oldest.
+// readPins maps the backups among entries to the update kind they are pinned for.
+func readPins(dir string, entries []os.DirEntry) map[string]string {
+	pins := map[string]string{}
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), pinSuffix)
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		if kind, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil {
+			pins[name] = string(kind)
+		}
+	}
+	return pins
+}
+
+// writePin pins the backup at path for the update kind.
+func writePin(path, kind string) error {
+	return os.WriteFile(path+pinSuffix, []byte(kind), fileMode)
+}
+
+// removePin releases the pin of the backup at path; a backup without one needs nothing.
+func removePin(path string) {
+	_ = os.Remove(path + pinSuffix)
+}
+
+// expectedSize is the size a new backup is expected to have, for the free-space check: the largest of the newest
+// backup and the pinned ones, which stay on the volume.
+func expectedSize(records []v1alpha1.BackupRecord) uint64 {
+	var size int64
+	for i, r := range records {
+		if i == 0 || r.Pinned != "" {
+			size = max(size, r.SizeBytes)
+		}
+	}
+	return uint64(size) //nolint:gosec // a file size is never negative
+}
+
+// pruneLocal deletes the backups in dir that are neither pinned nor among the newest keep, the backup written
+// counting as one of them. The backup written is kept whatever its name's time, which a clock set back can make the
+// oldest.
 func pruneLocal(dir string, keep int, written string) error {
 	records, err := ListLocal(dir)
 	if err != nil {
 		return err
 	}
-	records = slices.DeleteFunc(records, func(r v1alpha1.BackupRecord) bool { return r.Name == written })
+	records = slices.DeleteFunc(records, func(r v1alpha1.BackupRecord) bool { return r.Pinned != "" })
+	if i := slices.IndexFunc(records, func(r v1alpha1.BackupRecord) bool { return r.Name == written }); i >= 0 {
+		records = slices.Delete(records, i, i+1)
+		keep--
+	}
 	var errs []error
-	for _, rec := range records[min(keep-1, len(records)):] {
+	for _, rec := range records[min(keep, len(records)):] {
 		if err := os.Remove(filepath.Join(dir, rec.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// Unpin releases the pins of the kind but that of the backup keep: the backup of the update just finished stays for
+// the next update of that kind, whatever its name's time, and the backups pinned before it go with the local copies
+// beyond the newest.
+func (r *Runner) Unpin(kind, keep string) error {
+	records, err := ListLocal(r.deps.Dir)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, rec := range records {
+		if rec.Pinned != kind || rec.Name == keep {
+			continue
+		}
+		if err := os.Remove(filepath.Join(r.deps.Dir, rec.Name+pinSuffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	if err := pruneLocal(r.deps.Dir, LocalCopies, ""); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

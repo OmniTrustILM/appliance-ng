@@ -36,8 +36,8 @@ function recoveryKitNotice(status: Status, now: number) {
 }
 
 /**
- * The warnings that ask the administrator to act: a certificate near its expiry, the recovery kit, a data volume
- * running low, the backups and a pending restart. Expiry dates are judged against now, the time of the last status read.
+ * The warnings that ask the administrator to act: a renewed ILM administrator credential, a certificate near its expiry,
+ * the recovery kit, a data volume running low, the backups and a pending restart. Expiry dates are judged against now, the time of the last status read.
  */
 function Warnings({ status, now }: Readonly<{ status: Status; now: number }>) {
   const lowSpace = status.dataVolume?.lowSpace;
@@ -45,6 +45,12 @@ function Warnings({ status, now }: Readonly<{ status: Status; now: number }>) {
   const recoveryKit = recoveryKitNotice(status, now);
   return (
     <>
+      {status.adminCredentialRenewed && (
+        <Alert tone="warning">
+          The ILM administrator certificate was renewed. The credential downloaded before no longer signs in to the
+          ILM. <Link className={LINK} to="/wizard/done">Download the new credential</Link>
+        </Alert>
+      )}
       {recoveryKit && (
         <Alert tone="warning">
           {recoveryKit} <Link className={LINK} to="/recovery-kit">Open the recovery kit page</Link>

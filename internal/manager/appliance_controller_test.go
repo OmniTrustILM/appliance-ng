@@ -90,6 +90,7 @@ func run(m *testing.M) int {
 	env := &envtest.Environment{
 		CRDDirectoryPaths: []string{
 			filepath.Join("..", "..", "config", "crd"), crdDir, traefikCRDs, filepath.Join("..", "..", "addons", "cert-manager.yaml"),
+			filepath.Join("testdata", "ciliumnetworkpolicies.yaml"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}

@@ -25,7 +25,6 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
-	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 // usersSecretYAML returns the Secret appliance-users holding the named accounts, as a backup stores it.
@@ -51,10 +50,11 @@ func usersSecretYAML(t *testing.T, names ...string) string {
 }
 
 type fixture struct {
-	dir      string
-	key      *age.X25519Identity
-	file     string
-	manifest *release.Manifest
+	dir  string
+	key  *age.X25519Identity
+	file string
+	// available are the ILM versions the appliance can run.
+	available []string
 }
 
 func writeBackup(t *testing.T, key *age.X25519Identity, ilm string, accounts ...string) []byte {
@@ -109,7 +109,7 @@ func newFixture(t *testing.T, data func(key *age.X25519Identity) []byte) fixture
 	if err := os.WriteFile(file, data(key), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return fixture{dir: dir, key: key, file: file, manifest: &release.Manifest{Platform: release.PlatformDefaults{ILMVersion: "2.17"}}}
+	return fixture{dir: dir, key: key, file: file, available: []string{"2.17"}}
 }
 
 // rawArchive returns an encrypted tar of one member, named name with content body.
@@ -169,7 +169,7 @@ func TestInspectRejects(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t, func(k *age.X25519Identity) []byte { return tt.backup(t, k) })
 			before, _ := os.ReadFile(f.file)
-			_, err := Inspect(context.Background(), f.file, f.key, f.manifest, nil)
+			_, err := Inspect(context.Background(), f.file, f.key, f.available, nil)
 			var want ErrVersionUnavailable
 			if errors.As(tt.want, &want) {
 				var got ErrVersionUnavailable
@@ -195,7 +195,7 @@ func TestInspectRejects(t *testing.T) {
 func TestInspectSummary(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17", "zoe", "admin", "bob") })
 	before, _ := os.ReadFile(f.file)
-	s, err := Inspect(context.Background(), f.file, f.key, f.manifest, []string{"admin", "carol"})
+	s, err := Inspect(context.Background(), f.file, f.key, f.available, []string{"admin", "carol"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,9 +219,22 @@ func TestInspectSummary(t *testing.T) {
 	}
 }
 
+// TestInspectAcceptsLoadedVersion accepts a backup of an ILM version a loaded platform bundle offers besides the
+// cached one.
+func TestInspectAcceptsLoadedVersion(t *testing.T) {
+	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.18") })
+	s, err := Inspect(context.Background(), f.file, f.key, []string{"2.17", "2.18"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Manifest.ILM != "2.18" {
+		t.Errorf("Manifest = %+v", s.Manifest)
+	}
+}
+
 func TestInspectWithoutAccounts(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") })
-	s, err := Inspect(context.Background(), f.file, f.key, f.manifest, []string{"admin"})
+	s, err := Inspect(context.Background(), f.file, f.key, f.available, []string{"admin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +245,7 @@ func TestInspectWithoutAccounts(t *testing.T) {
 
 func TestInspectMissingFile(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") })
-	if _, err := Inspect(context.Background(), filepath.Join(f.dir, "none"), f.key, f.manifest, nil); err == nil {
+	if _, err := Inspect(context.Background(), filepath.Join(f.dir, "none"), f.key, f.available, nil); err == nil {
 		t.Fatal("want an error for a missing file")
 	}
 }
@@ -241,7 +254,7 @@ func TestInspectCanceled(t *testing.T) {
 	f := newFixture(t, func(k *age.X25519Identity) []byte { return writeBackup(t, k, "2.17") })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Inspect(ctx, f.file, f.key, f.manifest, nil); !errors.Is(err, context.Canceled) {
+	if _, err := Inspect(ctx, f.file, f.key, f.available, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

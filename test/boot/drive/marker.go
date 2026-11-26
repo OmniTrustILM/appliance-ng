@@ -38,11 +38,14 @@ const (
 	noServiceAccount = "not enabled to retrieve service account"
 )
 
-// ilmMarker creates the marker group, or checks it and the Keycloak client after a restore.
+// ilmMarker creates the marker group, waits until it is there, or checks it and the Keycloak client after a restore.
 func ilmMarker(ctx context.Context, o options) error {
 	cert, password, err := readCredential(o)
 	if err != nil {
 		return err
+	}
+	if o.direct {
+		return directMarker(ctx, o, cert)
 	}
 	c, err := managerClient(ctx, o)
 	if err != nil {
@@ -52,26 +55,73 @@ func ilmMarker(ctx context.Context, o options) error {
 	if err != nil {
 		return err
 	}
-	if o.create {
+	switch {
+	case o.create:
 		return waitUntil(ctx, registerTimeout, func() error { return createMarker(ctx, ui, o.uiURL) })
+	case o.present:
+		return waitUntil(ctx, registerTimeout, func() error { return markerPresent(ctx, ui, o.uiURL) })
 	}
 	return checkAfterRestore(ctx, ui, o, password)
+}
+
+// directMarker creates the marker group or waits until it is there, reaching ILM Core straight through a port-forward
+// with the kubeconfig of the kit in o.kitFile and signing in with cert.
+func directMarker(ctx context.Context, o options, cert tls.Certificate) error {
+	k, err := openKit(o)
+	if err != nil {
+		return err
+	}
+	ui := coreClient(cert)
+	return waitUntil(ctx, registerTimeout, func() error {
+		base, stop, err := forwarded{o.kubeAddr, o.apid}.forwardCore(ctx, k.Kubeconfig)
+		if err != nil {
+			return err
+		}
+		defer stop()
+		if o.create {
+			return createMarker(ctx, ui, base)
+		}
+		return markerPresent(ctx, ui, base)
+	})
+}
+
+// openKit opens the kit in o.kitFile with the passphrase in o.passphraseFile.
+func openKit(o options) (recovery.Kit, error) {
+	passphrase, err := readSecret(o.passphraseFile)
+	if err != nil {
+		return recovery.Kit{}, err
+	}
+	data, err := os.ReadFile(o.kitFile)
+	if err != nil {
+		return recovery.Kit{}, err
+	}
+	k, err := recovery.Open(data, passphrase)
+	if err != nil {
+		return recovery.Kit{}, fmt.Errorf("open the recovery kit: %w", err)
+	}
+	return k, nil
+}
+
+// markerPresent succeeds once ILM lists the marker group.
+func markerPresent(ctx context.Context, ui *http.Client, base string) error {
+	step("marker group")
+	groups, err := listGroups(ctx, ui, base)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(groups, markerGroup) {
+		return fmt.Errorf("ILM lists %d group(s), none of them %s", len(groups), markerGroup)
+	}
+	fmt.Printf("drive: the administrator certificate reads ILM group %s\n", markerGroup)
+	return nil
 }
 
 // checkAfterRestore reads the ILM client's secret with the kit's kubeconfig, checks the marker and Keycloak with it
 // and checks that no manager log holds it or the credential's password.
 func checkAfterRestore(ctx context.Context, ui *http.Client, o options, password string) error {
-	passphrase, err := readSecret(o.passphraseFile)
+	k, err := openKit(o)
 	if err != nil {
 		return err
-	}
-	data, err := os.ReadFile(o.kitFile)
-	if err != nil {
-		return err
-	}
-	k, err := recovery.Open(data, passphrase)
-	if err != nil {
-		return fmt.Errorf("open the recovery kit: %w", err)
 	}
 	cl := forwarded{o.kubeAddr, o.apid}
 	step("read the ILM client's secret")

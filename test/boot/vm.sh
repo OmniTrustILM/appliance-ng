@@ -15,7 +15,8 @@
 # virtio-rng device. Host forwards, bound to 127.0.0.1: 18443->8443 (console), 18444->8444 (status), 10443->443 (UI),
 # 15000->50000 (apid), 16443->6443 (the cluster's API server). HOST_ALIAS, when set, is an unused address of QEMU's
 # user network at which the guest reaches 127.0.0.1 ports 2222 (SFTP) and 9000 (S3) of the host, through guest
-# forwards that run nc; nothing else of the host is reachable.
+# forwards that run nc; nothing else of the host is reachable. PORT_OFFSET, when set, is added to every host port and
+# to the SFTP and S3 ports of both sides, so that the VM runs beside others.
 # CPUS, MEM and DISK override 4 / 12G / 50G (DISK applies when the disk is created). SMBIOS_OEM, when set, is passed
 # to the guest as an SMBIOS type 11 OEM string (no commas). Serial log: <dir>/serial.log.
 # EXTRA_DISK=<size> adds a second blank disk with serial ilm-data (created with the VM). It sits at a fixed PCI
@@ -111,11 +112,13 @@ start() {
   fi
   [[ -f "$dir/vars.fd" ]] || cp "$VARS" "$dir/vars.fd"
 
-  local fwd="hostfwd=tcp:127.0.0.1:18443-:8443,hostfwd=tcp:127.0.0.1:18444-:8444"
-  fwd+=",hostfwd=tcp:127.0.0.1:10443-:443,hostfwd=tcp:127.0.0.1:15000-:50000"
-  fwd+=",hostfwd=tcp:127.0.0.1:16443-:6443"
+  local o="${PORT_OFFSET:-0}"
+  local fwd="hostfwd=tcp:127.0.0.1:$((18443 + o))-:8443,hostfwd=tcp:127.0.0.1:$((18444 + o))-:8444"
+  fwd+=",hostfwd=tcp:127.0.0.1:$((10443 + o))-:443,hostfwd=tcp:127.0.0.1:$((15000 + o))-:50000"
+  fwd+=",hostfwd=tcp:127.0.0.1:$((16443 + o))-:6443"
   if [[ -n "${HOST_ALIAS:-}" ]]; then
-    fwd+=",guestfwd=tcp:$HOST_ALIAS:2222-cmd:nc 127.0.0.1 2222,guestfwd=tcp:$HOST_ALIAS:9000-cmd:nc 127.0.0.1 9000"
+    local sftp=$((2222 + o)) s3=$((9000 + o))
+    fwd+=",guestfwd=tcp:$HOST_ALIAS:$sftp-cmd:nc 127.0.0.1 $sftp,guestfwd=tcp:$HOST_ALIAS:$s3-cmd:nc 127.0.0.1 $s3"
   fi
   local smbios=()
   if [[ -n "${SMBIOS_OEM:-}" ]]; then smbios=(-smbios "type=11,value=$SMBIOS_OEM"); fi

@@ -88,7 +88,7 @@ func hasTag(name string) bool {
 func (m *Manifest) RegistryHosts() []string {
 	var hosts []string
 	for _, img := range m.Images {
-		hosts = append(hosts, registryHost(img.Ref))
+		hosts = append(hosts, RegistryHost(img.Ref))
 	}
 	slices.Sort(hosts)
 	return slices.Compact(hosts)
@@ -106,8 +106,8 @@ func (m *Manifest) ArchPins(arch string) map[string]string {
 	return pins
 }
 
-// registryHost is the registry ref is pulled from, in lowercase.
-func registryHost(ref string) string {
+// RegistryHost is the registry ref is pulled from, in lowercase.
+func RegistryHost(ref string) string {
 	host, _, _ := strings.Cut(Repository(imageName(ref)), "/")
 	return strings.ToLower(host)
 }

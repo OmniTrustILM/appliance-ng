@@ -26,6 +26,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/hostname"
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 	"github.com/OmniTrustILM/appliance-ng/internal/restore"
+	"github.com/OmniTrustILM/appliance-ng/internal/update"
 )
 
 const (
@@ -53,6 +54,8 @@ var (
 		"A restore in place takes a backup on this appliance's data volume; a fresh restore an uploaded or fetched one.")
 	answerUnconfirmed = refusedField(codeInvalid, fieldConfirm,
 		"Confirm that the backup replaces what the appliance holds now.")
+	answerAbandonUnconfirmed = refusedField(codeInvalid, fieldConfirm,
+		"Confirm that the appliance keeps whatever state the failed restore reached.")
 	answerBadILMHost = refusedField(codeInvalid, fieldILMHost,
 		"Enter a fully qualified host name, such as ilm.example.com, not an IP address.")
 	answerRenameInPlace = refusedField(codeInvalid, fieldILMHost,
@@ -87,13 +90,14 @@ var (
 		{restore.ErrFormatTooNew, refused(http.StatusConflict, "format_too_new",
 			"The backup was written in a newer format than this appliance reads.")},
 		{restore.ErrBusy, refused(http.StatusConflict, codeRestoreBusy, "A restore is in progress.")},
+		{restore.ErrNotFailed, refused(http.StatusConflict, "not_failed", "No restore has failed.")},
 		{restore.ErrNotWaiting, refused(http.StatusConflict, "not_waiting", "No restore waits to be resumed.")},
 		{restore.ErrSetup, refused(http.StatusConflict, codeSetup,
 			"The appliance's setup does not allow this restore: a fresh restore needs a fresh appliance, a restore in place one whose setup is complete.")},
 		{restore.ErrUpgradeInProgress, refused(http.StatusConflict, "upgrade_in_progress",
 			"The platform is being upgraded; restore once the upgrade has finished.")},
 		{restore.ErrBackupRunning, refused(http.StatusConflict, "backup_running", "A backup is running; restore once it has finished.")},
-		{restore.ErrBundleLoading, refused(http.StatusConflict, codeBundleLoading, "An update bundle is loading; restore once it has finished.")},
+		{restore.ErrBundleLoading, refused(http.StatusConflict, codeBundleLoading, "An update or a bundle load is running; restore once it has finished.")},
 	}
 )
 
@@ -207,19 +211,32 @@ func (s *Server) GetRestore(ctx context.Context, _ GetRestoreRequestObject) (Get
 	}
 	out := RestoreState{Setup: a.Status.Setup}
 	if st := a.Status.Restore; st != nil {
-		out.Restore = &RestoreProgress{
-			Backup: st.Backup, InPlace: st.InPlace, Step: RestoreProgressStep(st.Step), PausedStep: optional(st.PausedStep),
-			Warning: optional(st.Warning), IlmHostName: optional(st.ILMHostName),
-		}
-		if st.Message != "" {
-			message := RestoreProgressMessage(st.Message)
-			out.Restore.Message = &message
-		}
-		if !st.StartedAt.IsZero() {
-			out.Restore.StartedAt = timeOf(&st.StartedAt)
-		}
+		out.Restore = restoreProgress(st)
 	}
 	return GetRestore200JSONResponse(out), nil
+}
+
+// restoreProgress is the progress of the restore st for the console.
+func restoreProgress(st *v1alpha1.RestoreStatus) *RestoreProgress {
+	p := &RestoreProgress{
+		Backup: st.Backup, InPlace: st.InPlace, Step: RestoreProgressStep(st.Step), PausedStep: optional(st.PausedStep),
+		Warning: optional(st.Warning), IlmHostName: optional(st.ILMHostName),
+	}
+	if st.Message != "" {
+		message := RestoreProgressMessage(st.Message)
+		p.Message = &message
+	}
+	if !st.StartedAt.IsZero() {
+		p.StartedAt = timeOf(&st.StartedAt)
+	}
+	if r := st.Rollback; r != nil {
+		phase := RollbackReinstalling
+		if r.Reinstalled {
+			phase = RollbackRestoring
+		}
+		p.Rollback = &phase
+	}
+	return p
 }
 
 // PostRestoreInspect checks a backup with the uploaded kit and keeps its backup key for the session.
@@ -258,7 +275,7 @@ func (s *Server) inspect(ctx context.Context, name string, local bool, parts map
 	kit, err := s.openKit(ctx, parts[partKit], string(parts[partPassphrase]))
 	var summary restore.Summary
 	if err == nil {
-		summary, err = restore.Inspect(ctx, file, kit.BackupKey, s.deps.Release, users)
+		summary, err = restore.Inspect(ctx, file, kit.BackupKey, update.AvailableILM(s.deps.Release, loadedBundles(a)), users)
 	}
 	if answer, ok := restoreRefusal(err); ok {
 		return answer, nil
@@ -309,6 +326,13 @@ func (s *Server) restoreAppliance(ctx context.Context, local bool) (*v1alpha1.Ap
 		return nil, &answerFreshOnly, nil
 	}
 	return a, nil, nil
+}
+
+func loadedBundles(a *v1alpha1.Appliance) []v1alpha1.BundleInfo {
+	if a.Status.Updates == nil {
+		return nil
+	}
+	return a.Status.Updates.Loaded
 }
 
 // restoreFile is the path of the backup name: a local backup, or the uploaded or fetched one.
@@ -422,16 +446,20 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 	if answer.status != 0 {
 		return answer, nil
 	}
-	if in.local {
-		a, err := s.appliance(ctx)
-		if err != nil {
-			return restoreAnswer{}, err
-		}
-		if running := a.Status.Versions.ILM; running != in.summary.Manifest.ILM {
-			return versionUnavailable(running, in.summary.Manifest.ILM), nil
-		}
+	a, err := s.appliance(ctx)
+	if err != nil {
+		return restoreAnswer{}, err
+	}
+	if running := a.Status.Versions.ILM; in.local && running != in.summary.Manifest.ILM {
+		return versionUnavailable(running, in.summary.Manifest.ILM), nil
 	}
 	opts := restore.Options{InPlace: in.local, ILMHostName: host, User: requestFrom(ctx).user}
+	if !in.local {
+		if answer := s.ilmAvailable(a, in.summary.Manifest.ILM); answer.status != 0 {
+			return answer, nil
+		}
+		opts.PlatformBundle = update.PlatformBundleFor(s.deps.Release, loadedBundles(a), in.summary.Manifest.ILM)
+	}
 	s.credentialsMu.Lock()
 	defer s.credentialsMu.Unlock()
 	plan, answer, err := s.writeRestoreCredentials(ctx, deps)
@@ -456,6 +484,16 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 	s.forgetInspection()
 	s.deps.Log.Info("restore started from the console", "backup", in.name, "inPlace", in.local, "user", opts.User)
 	return restoreAnswer{status: http.StatusAccepted}, nil
+}
+
+// ilmAvailable refuses a fresh restore of a backup of ILM version ilm that neither the release nor a loaded platform
+// bundle runs any more, as when a later load pruned the bundle after the backup was checked.
+func (s *Server) ilmAvailable(a *v1alpha1.Appliance, ilm string) restoreAnswer {
+	available := update.AvailableILM(s.deps.Release, loadedBundles(a))
+	if !slices.Contains(available, ilm) {
+		return versionUnavailable(strings.Join(available, ", "), ilm)
+	}
+	return restoreAnswer{}
 }
 
 // restoreChoices reads the ILM host name, empty to keep the backup's, and the dependencies chosen anew of a start of
@@ -555,14 +593,45 @@ func (s *Server) uploaded(name string) (string, *restoreAnswer, error) {
 	return file, nil, nil
 }
 
-// PostRestoreAbandon gives up the restore a fresh appliance waits for and continues with part 2 of the setup. Once a
-// restore was started the appliance holds part of the backup's state, so it is refused; so is an abandon before the
-// hand-over of the setup answers completed, which would be undone.
-func (s *Server) PostRestoreAbandon(ctx context.Context, _ PostRestoreAbandonRequestObject) (PostRestoreAbandonResponseObject, error) {
+// PostRestoreAbandon abandons a failed restore when the request confirms it, and otherwise gives up the restore a
+// fresh appliance waits for.
+func (s *Server) PostRestoreAbandon(ctx context.Context, req PostRestoreAbandonRequestObject) (PostRestoreAbandonResponseObject, error) {
 	if !s.restoreMu.TryLock() {
 		return answered(ctx, map[string]string{}, answerRestoreBusy), nil
 	}
 	defer s.restoreMu.Unlock()
+	if req.Body != nil {
+		return s.abandonFailed(ctx, req.Body.Confirm)
+	}
+	return s.giveUpRestore(ctx)
+}
+
+// abandonFailed starts the appliance again from what a failed restore reached, once confirmed: the engine restarts
+// the ILM operator and releases the holds, and refuses unless the restore failed.
+func (s *Server) abandonFailed(ctx context.Context, confirmed bool) (PostRestoreAbandonResponseObject, error) {
+	details := map[string]string{}
+	if a, err := s.appliance(ctx); err == nil && a.Status.Restore != nil {
+		details[detailBackup] = a.Status.Restore.Backup
+	}
+	if !confirmed {
+		return answered(ctx, details, answerAbandonUnconfirmed), nil
+	}
+	err := s.deps.Restore.Abandon(ctx)
+	if answer, ok := restoreRefusal(err); ok {
+		return answered(ctx, details, answer), nil
+	}
+	if err != nil {
+		return nil, restoreFailed("abandon the restore", err)
+	}
+	recordDetails(ctx, details)
+	s.deps.Log.Info("failed restore abandoned from the console", "user", requestFrom(ctx).user)
+	return PostRestoreAbandon204Response{}, nil
+}
+
+// giveUpRestore gives up the restore a fresh appliance waits for and continues with part 2 of the setup. Once a
+// restore was started the appliance holds part of the backup's state, so it is refused; so is an abandon before the
+// hand-over of the setup answers completed, which would be undone.
+func (s *Server) giveUpRestore(ctx context.Context) (PostRestoreAbandonResponseObject, error) {
 	var refusal *restoreAnswer
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		refusal = nil

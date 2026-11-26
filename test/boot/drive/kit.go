@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
@@ -265,6 +266,20 @@ func waitRevoked(ctx context.Context, poll, timeout time.Duration, f func() erro
 // clientset returns a client for the API server of kubeconfig, reached at f.kubeAddr instead of the address the
 // kubeconfig names, and checked against the host name that address holds.
 func (f forwarded) clientset(kubeconfig []byte) (*kubernetes.Clientset, error) {
+	cfg, err := f.restConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, errors.New("not a usable kubeconfig")
+	}
+	return cs, nil
+}
+
+// restConfig is the client configuration of kubeconfig for the API server forwarded to f.kubeAddr, which still
+// verifies the server name of the kubeconfig. Its errors never quote the kubeconfig.
+func (f forwarded) restConfig(kubeconfig []byte) (*rest.Config, error) {
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
 		// The parser may quote the offending value.
@@ -277,11 +292,7 @@ func (f forwarded) clientset(kubeconfig []byte) (*kubernetes.Clientset, error) {
 	cfg.ServerName = u.Hostname()
 	cfg.Host = "https://" + f.kubeAddr
 	cfg.Timeout = 30 * time.Second
-	cs, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		return nil, errors.New("not a usable kubeconfig")
-	}
-	return cs, nil
+	return cfg, nil
 }
 
 func (f forwarded) listNodes(ctx context.Context, kubeconfig []byte) error {

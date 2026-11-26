@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
@@ -15,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
-	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/storage"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
@@ -31,12 +29,14 @@ const (
 	reasonWaitingForNodeAddress = "WaitingForNodeAddress"
 	reasonIssuing               = "Issuing"
 	reasonWaitingForILM         = "WaitingForILM"
+	reasonBundleMissing         = "PlatformBundleMissing"
 )
 
 // Messages of failed conditions. Condition messages reach the first-boot status and the console, so they are fixed
 // texts; the error itself goes to the manager's log only.
 const (
 	messageAddonsFailed      = "applying the add-ons failed, retrying; the manager log has the details"
+	messageBundleMissing     = "the files of the installed platform bundle are missing from the data volume, so its ILM operator cannot be applied"
 	messagePlatformFailed    = "applying the platform failed, retrying; the manager log has the details"
 	messageCertificateFailed = "requesting the built-in certificate failed, retrying; the manager log has the details"
 	messageACMEFailed        = "requesting the ACME certificate failed, retrying; the manager log has the details"
@@ -45,10 +45,6 @@ const (
 
 // platformAvailable is the condition operator v1.1.0 sets when the Platform serves.
 const platformAvailable = "Available"
-
-// operatorAddon is the release manifest's add-on of the ILM operator, whose version is the operator's: the operator
-// does not report its own version.
-const operatorAddon = "ilm-operator"
 
 func setCondition(a *v1alpha1.Appliance, kind string, status metav1.ConditionStatus, reason, message string) {
 	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
@@ -96,13 +92,10 @@ func keepKnown(field *string, value string) {
 	}
 }
 
-// setReleaseVersions sets the versions the manager knows itself: its own from the build and the operator's from the
-// release manifest.
+// setReleaseVersions sets the version the manager knows itself, its own from the build; the add-on pass sets the
+// operator's it applies.
 func (r *ApplianceReconciler) setReleaseVersions(a *v1alpha1.Appliance) {
 	keepKnown(&a.Status.Versions.Appliance, r.Version)
-	if i := slices.IndexFunc(r.Release.Addons, func(f release.AddonFile) bool { return f.Name == operatorAddon }); i >= 0 {
-		keepKnown(&a.Status.Versions.Operator, r.Release.Addons[i].Version)
-	}
 }
 
 // minVolumeStep is the smallest step the free space of the data volume is reported in.

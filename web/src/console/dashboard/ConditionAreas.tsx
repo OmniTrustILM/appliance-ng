@@ -6,7 +6,7 @@ const areas = [
   { name: 'Setup', types: ['HandoverComplete'] },
   { name: 'Node', types: ['NodeConfigured'] },
   { name: 'Add-ons', types: ['AddonsReady'] },
-  { name: 'Platform', types: ['PlatformReady', 'ConnectorsReady', 'ILMSettingsApplied', 'CBOMRepositoryApplied'] },
+  { name: 'Platform', types: ['PlatformReady', 'ConnectorsReady', 'ILMSettingsApplied', 'CBOMRepositoryApplied', 'AdminCertificateRegistered'] },
   { name: 'Certificate', types: ['CertificateReady'] },
   { name: 'Backups', types: ['BackupHealthy'] },
 ] as const;

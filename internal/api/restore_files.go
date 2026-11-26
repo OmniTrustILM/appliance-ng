@@ -17,7 +17,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup/target"
 	"github.com/OmniTrustILM/appliance-ng/internal/storage"
@@ -168,7 +167,7 @@ func (s *Server) waitsForBackup(ctx context.Context) (string, *restoreAnswer, er
 	switch {
 	case st.Active():
 		return "", &answerRestoreBusy, nil
-	case st != nil && st.Step != v1alpha1.RestoreStepDone:
+	case st.Unsettled():
 		return st.File, nil, nil
 	}
 	return "", nil, nil

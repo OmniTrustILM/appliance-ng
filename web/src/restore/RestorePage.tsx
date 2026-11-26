@@ -23,7 +23,7 @@ type ContentProps = Readonly<{ state: State; startOver: boolean; onStartOver: ()
 function Content({ state, startOver, onStartOver, onChanged }: ContentProps) {
   const fresh = state.setup === 'restore';
   const progress = state.restore;
-  if (progress && !(fresh && startOver) && (progress.step !== 'done' || !fresh)) {
+  if (progress && !(fresh && startOver) && (!['done', 'abandoned'].includes(progress.step) || !fresh)) {
     return <ProgressView progress={progress} fresh={fresh} onResumed={onChanged} onStartOver={onStartOver} />;
   }
   if (fresh) return <FreshRestore onStarted={onChanged} />;
