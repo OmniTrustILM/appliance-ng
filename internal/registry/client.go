@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -24,14 +25,19 @@ type Client struct {
 
 // New returns a client of the registry at endpoint, a host:port or an https URL, that trusts the TLS certificates
 // roots verify. It pushes as user with password; an empty password pulls anonymously.
+// A connection that stalls for IdleTimeout fails, as does a TLS handshake that takes longer than the default one.
 func New(endpoint string, roots *x509.CertPool, user, password string) *Client {
+	return newWithIdle(endpoint, roots, user, password, IdleTimeout)
+}
+
+func newWithIdle(endpoint string, roots *x509.CertPool, user, password string, idle time.Duration) *Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy = nil
+	t.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
 	c := &Client{
-		host: strings.TrimPrefix(endpoint, "https://"),
-		transport: &http.Transport{
-			ForceAttemptHTTP2: true,
-			TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
-		},
-		auth: authn.Anonymous,
+		host:      strings.TrimPrefix(endpoint, "https://"),
+		transport: Guard(t, idle),
+		auth:      authn.Anonymous,
 	}
 	if password != "" {
 		c.auth = &authn.Basic{Username: user, Password: password}

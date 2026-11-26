@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
@@ -18,6 +20,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/bundle"
 	"github.com/OmniTrustILM/appliance-ng/internal/bundle/bundletest"
+	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/update"
 )
@@ -294,6 +297,45 @@ func TestReservationLoadsInTheBackground(t *testing.T) {
 		t.Fatalf("Reserve after the load: %v", err)
 	}
 	r2.Cancel()
+}
+
+// stalledRegistry is a registry that never finishes a push.
+type stalledRegistry struct{}
+
+func (stalledRegistry) PushBundle(ctx context.Context, _ registry.Source, _ bundle.Metadata, _ func(done, total int64)) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (stalledRegistry) Prune(context.Context, string, []string) error { return nil }
+
+// TestLoadTimesOut ends a load into a registry that stalls with the reason timeout and releases the admission.
+func TestLoadTimesOut(t *testing.T) {
+	e := newEnv(t)
+	l := update.NewLoader(update.LoaderDeps{
+		Client:    e.client,
+		Registry:  func(context.Context) (update.Registry, error) { return stalledRegistry{}, nil },
+		Admission: e.lock, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Release: e.rel, Dir: e.dir, Uploads: e.uploads, Key: &e.key.PublicKey, Arch: testArch,
+		Space: e.space, LoadTimeout: 300 * time.Millisecond,
+	})
+	r, err := l.Reserve(t.Context(), release.BundlePlatform, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-r.Load(e.upload(e.build(e.platform("1.1.0", "2.20.0")))):
+	case <-time.After(5 * time.Second):
+		t.Fatal("the load did not end")
+	}
+	if st := l.Last(); st.State != update.StateRefused || st.Reason != update.Timeout {
+		t.Errorf("Last = %+v, want refused with timeout", st)
+	}
+	free, err := e.lock.Hold()
+	if err != nil {
+		t.Fatalf("the admission is still held: %v", err)
+	}
+	free()
 }
 
 // TestNotesRefusesOtherNames finds notes only by kind and an exact version.

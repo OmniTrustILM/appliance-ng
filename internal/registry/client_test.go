@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -486,6 +487,41 @@ func TestPruneStopsOnTransientErrors(t *testing.T) {
 	failing = false
 	if got, _ := c.Bundles(t.Context(), "system"); len(got) != 1 {
 		t.Errorf("Bundles = %v, want the bundle kept for a retry", got)
+	}
+}
+
+// TestClientGivesUpAStalledRegistry fails a request whose answer stops arriving instead of waiting for it.
+func TestClientGivesUpAStalledRegistry(t *testing.T) {
+	release := make(chan struct{})
+	addr, pool := newZot(t, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "/tags/") {
+				<-release
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	t.Cleanup(func() { close(release) })
+	c := newWithIdle(addr, pool, PushUser, "", 200*time.Millisecond)
+	start := time.Now()
+	if _, err := c.Bundles(context.Background(), "system"); err == nil {
+		t.Fatal("Bundles of a stalled registry: want an error")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("Bundles gave up after %v", elapsed)
+	}
+}
+
+// TestGuardRefusesRedirectsAwayFromHTTPS refuses to follow a redirect to http.
+func TestGuardRefusesRedirectsAwayFromHTTPS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.RedirectHandler("http://example.com/v2/", http.StatusFound))
+	t.Cleanup(srv.Close)
+	c := &http.Client{Transport: Guard(srv.Client().Transport.(*http.Transport).Clone(), IdleTimeout)}
+	resp, err := c.Get(srv.URL)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("a redirect to http was followed")
 	}
 }
 

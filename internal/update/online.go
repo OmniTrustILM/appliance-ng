@@ -8,10 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -27,6 +25,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 )
 
 // DefaultRepository holds the published bundles in <DefaultRepository>/system and <DefaultRepository>/platform.
@@ -288,7 +287,7 @@ func ApplianceOptions(c client.Reader, host string) func(ctx context.Context) ([
 		if !ok {
 			return nil, errors.New("the outbound client has no HTTP transport to guard")
 		}
-		opts := []remote.Option{remote.WithContext(ctx), remote.WithTransport(guard(t, idleTimeout))}
+		opts := []remote.Option{remote.WithContext(ctx), remote.WithTransport(registry.Guard(t, registry.IdleTimeout))}
 		auth, err := credentials(ctx, c, a, host)
 		if err != nil || auth == nil {
 			return opts, err
@@ -327,50 +326,6 @@ func credentials(ctx context.Context, c client.Reader, a *v1alpha1.Appliance, ho
 		}, nil
 	}
 	return nil, nil
-}
-
-// idleTimeout bounds each read and write of a connection to the repository and the wait for an answer's headers, so
-// that a stalled repository or proxy fails a check or a fetch instead of holding it.
-const idleTimeout = 2 * time.Minute
-
-// guard makes t give up a connection that stalls for idle and refuses requests without https, which also
-// refuses a redirect away from https.
-func guard(t *http.Transport, idle time.Duration) http.RoundTripper {
-	dial := t.DialContext
-	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := dial(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-		return &idleConn{Conn: c, idle: idle}, nil
-	}
-	t.ResponseHeaderTimeout = idle
-	return httpsOnly{t}
-}
-
-type httpsOnly struct{ next http.RoundTripper }
-
-func (h httpsOnly) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Scheme != "https" {
-		return nil, errors.New("refused a request without https")
-	}
-	return h.next.RoundTrip(req)
-}
-
-// idleConn fails a read or a write that makes no progress for idle.
-type idleConn struct {
-	net.Conn
-	idle time.Duration
-}
-
-func (c *idleConn) Read(p []byte) (int, error) {
-	_ = c.SetReadDeadline(time.Now().Add(c.idle))
-	return c.Conn.Read(p)
-}
-
-func (c *idleConn) Write(p []byte) (int, error) {
-	_ = c.SetWriteDeadline(time.Now().Add(c.idle))
-	return c.Conn.Write(p)
 }
 
 func systemSecret(ctx context.Context, c client.Reader, name string) (*corev1.Secret, error) {

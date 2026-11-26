@@ -66,8 +66,8 @@ type AuditWriter interface {
 	Write(e audit.Entry) error
 }
 
-// LoaderDeps is what a Loader needs. Key, Arch, Now, Space and FetchTimeout default to the embedded signing key, the
-// manager's arch, time.Now, storage.Check and FetchTimeout.
+// LoaderDeps is what a Loader needs. Key, Arch, Now, Space, LoadTimeout and FetchTimeout default to the embedded
+// signing key, the manager's arch, time.Now, storage.Check, LoadTimeout and FetchTimeout.
 type LoaderDeps struct {
 	// Client reads the Appliance and writes its status.
 	Client client.Client
@@ -88,6 +88,8 @@ type LoaderDeps struct {
 	Arch   string
 	Now    func() time.Time
 	Space  func(path string, expected uint64) error
+	// LoadTimeout bounds a Load; it defaults to LoadTimeout.
+	LoadTimeout time.Duration
 	// FetchTimeout bounds a Fetch; it defaults to FetchTimeout.
 	FetchTimeout time.Duration
 }
@@ -105,10 +107,16 @@ func (d *LoaderDeps) defaults() {
 	if d.Space == nil {
 		d.Space = storage.Check
 	}
+	if d.LoadTimeout == 0 {
+		d.LoadTimeout = LoadTimeout
+	}
 	if d.FetchTimeout == 0 {
 		d.FetchTimeout = FetchTimeout
 	}
 }
+
+// LoadTimeout bounds the load of an uploaded bundle, which pushes all its images into the registry.
+const LoadTimeout = 4 * time.Hour
 
 // FetchTimeout bounds the fetch of a bundle from the online repository, which copies all its images.
 const FetchTimeout = 4 * time.Hour
@@ -191,8 +199,8 @@ func (l *Loader) admit(ctx context.Context) error {
 	return nil
 }
 
-// Load loads the bundle at path in the background and releases the reservation once it ends; the channel is closed
-// once it is released.
+// Load loads the bundle at path in the background, within the loader's load timeout, and releases the reservation
+// once it ends; the channel is closed once it is released.
 func (r *Reservation) Load(path string) <-chan struct{} {
 	return r.run(func(ctx context.Context) { _, _ = r.l.Load(ctx, r.kind, path) })
 }
@@ -243,10 +251,12 @@ func userOf(ctx context.Context) string {
 
 // Load loads the bundle file at path, a tar of its OCI layout, into the slot kind and removes it, whether the bundle
 // is loaded or refused. Only a verified, compatible bundle has its images pushed and its files stored; the bundles of
-// kind are then pruned to the one loaded and the running or previous one. The caller holds a reservation. A refusal
-// is an *Error with a fixed reason.
+// kind are then pruned to the one loaded and the running or previous one. The load ends after the loader's load
+// timeout. The caller holds a reservation. A refusal is an *Error with a fixed reason.
 func (l *Loader) Load(ctx context.Context, kind, path string) (bundle.Metadata, error) {
 	defer func() { _ = os.RemoveAll(path) }()
+	ctx, cancel := context.WithTimeout(ctx, l.deps.LoadTimeout)
+	defer cancel()
 	l.started(kind, "")
 	md, err := l.load(ctx, kind, path)
 	l.finish(ctx, kind, sourceLocal, md, err)
