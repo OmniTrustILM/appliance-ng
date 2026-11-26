@@ -744,3 +744,33 @@ func TestAdminCertificateRegisteredApartFromTheSettings(t *testing.T) {
 		t.Errorf("certificate condition %+v, want registered", c)
 	}
 }
+
+func TestRestoredAdminCertificateRecordIsRevalidated(t *testing.T) {
+	idp, _ := fakeIssuer(t, discoveryDoc)
+	ilmAppliance(t, idp, nil)
+	edge := newFakeEdge(t)
+	r := &ILMReconciler{Client: testClient, APIReader: testClient, ILM: &fakeIdentity{edge: edge}}
+	restored, other := testCAPEM(t), testCAPEM(t)
+
+	// A restore brings back a certificate recorded as registered, while ILM's database holds another one.
+	writeAdminCertificate(t, restored)
+	s := &corev1.Secret{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: platform.AdminCertificateSecret}, s); err != nil {
+		t.Fatal(err)
+	}
+	s.Annotations = map[string]string{platform.AdminCertificateRegisteredAnnotation: ilmclient.CertificateFingerprint(restored)}
+	if err := testClient.Update(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	edge.adminFingerprint = ilmclient.CertificateFingerprint(other)
+
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(edge.requests, "PUT /api/v1/users/uuid-admin") {
+		t.Fatal("the recorded certificate was trusted without asking ILM")
+	}
+	if edge.adminFingerprint != ilmclient.CertificateFingerprint(restored) {
+		t.Error("ILM's administrator does not hold the restored certificate")
+	}
+}

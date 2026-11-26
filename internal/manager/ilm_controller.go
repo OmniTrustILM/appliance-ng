@@ -247,9 +247,8 @@ func (r *ILMReconciler) registerAdminCertificate(ctx context.Context, c *ilmclie
 		return false, nil
 	}
 	fingerprint := ilmclient.Fingerprint(der)
-	if s.Annotations[platform.AdminCertificateRegisteredAnnotation] == fingerprint {
-		return true, nil
-	}
+	// ILM is asked on every pass, which costs a lookup and a read while it holds the certificate: the record is no
+	// proof, as a backup takes the Secret before the database and a restore can pair it with another certificate.
 	changed, err := c.SetUserCertificate(ctx, platform.AdminUser, der)
 	if ilmclient.Reason(err) == ilmclient.ReasonNotFound {
 		log.FromContext(ctx).Info("ILM has no administrator to give the certificate to", "user", platform.AdminUser)
@@ -260,6 +259,9 @@ func (r *ILMReconciler) registerAdminCertificate(ctx context.Context, c *ilmclie
 	}
 	if changed {
 		log.FromContext(ctx).Info("ILM's administrator holds the renewed certificate", "user", platform.AdminUser, "fingerprint", fingerprint)
+	}
+	if s.Annotations[platform.AdminCertificateRegisteredAnnotation] == fingerprint {
+		return true, nil
 	}
 	patch := client.MergeFrom(s.DeepCopy())
 	if s.Annotations == nil {
