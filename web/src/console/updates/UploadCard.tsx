@@ -55,7 +55,7 @@ export function UploadCard({ disabled, onUploaded }: Readonly<{ disabled: boolea
           <option value="platform">Platform</option>
         </select>
       </div>
-      <FileDropField label="Bundle file" required file={file} onChange={(chosen) => chosen && setFile(chosen)} />
+      <FileDropField label="Bundle file" required disabled={uploading} file={file} onChange={(chosen) => chosen && setFile(chosen)} />
       {sent && (
         <div className="mb-[18px]">
           <progress aria-label="Upload progress" className="block h-1.5 w-full" value={sent.loaded} max={sent.total} />

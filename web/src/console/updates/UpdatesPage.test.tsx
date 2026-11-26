@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { hang, stubApi } from '../../setup/test-utils';
@@ -104,6 +104,22 @@ describe('UpdatesPage', () => {
     render(<UpdatesPage />);
     expect(await screen.findByText(text)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^fetch/i })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [undefined, /bundle's ilm operator version is outside the range the running appliance supports\.$/i],
+    ['1.2.0', /bundle's ilm operator version is outside the range the running appliance supports\. install appliance 1\.2\.0 first\./i],
+  ])('explains a platform bundle whose operator is out of range, needing %s', async (needs, text) => {
+    stubApi({ [UPDATES]: [200, updates({ available: [{ ...platform, blocked: 'operatorOutOfRange', needs }] })] });
+    render(<UpdatesPage />);
+    expect(await screen.findByText(text)).toBeInTheDocument();
+  });
+
+  it('explains a platform load refused for its operator', async () => {
+    const load = { state: 'refused', kind: 'platform', version: '2.1.0', reason: 'operatorOutOfRange', startedAt: '2026-11-24T10:00:00Z' };
+    stubApi({ [UPDATES]: [200, updates({ load })] });
+    render(<UpdatesPage />);
+    expect(await screen.findByText(/running appliance supports/i)).toBeInTheDocument();
   });
 
   it.each([
@@ -319,6 +335,20 @@ describe('UpdatesPage', () => {
     await act(async () => FakeXhr.last.answer(status, { code, message: 'x' }));
     expect(await screen.findByText(text)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Upload' })).toBeEnabled();
+  });
+
+  it('keeps the chosen file while it uploads', async () => {
+    stubApi({ [UPDATES]: [200, updates()] });
+    render(<UpdatesPage />);
+    await screen.findByText(/no newer bundle/i);
+    await chooseFile('first.tar');
+    await userEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    expect(screen.getByLabelText(/bundle file/i)).toBeDisabled();
+    fireEvent.drop(screen.getByTestId('drop-zone'), { dataTransfer: { files: [new File(['y'], 'second.tar')] } });
+    expect(screen.getByText('first.tar')).toBeInTheDocument();
+    await act(async () => FakeXhr.last.answer(409, { code: 'busy', message: 'x' }));
+    expect(screen.getByLabelText(/bundle file/i)).toBeEnabled();
+    expect(screen.getByText('first.tar')).toBeInTheDocument();
   });
 
   it('reports an upload that broke off', async () => {

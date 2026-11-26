@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { api, timeoutSignal } from '../../api/client';
 import type { components } from '../../api/schema';
 import { Badge } from '../../components/Badge';
@@ -41,7 +41,7 @@ function Notes({ bundle }: Readonly<{ bundle: Bundle }>) {
 
 /** One bundle: its version, kind, size and compatibility, with its release notes and, when it can be loaded, "Fetch". */
 export function BundleRow({ bundle, onFetch, fetchDisabled }: Readonly<{ bundle: Bundle; onFetch?: () => void; fetchDisabled?: boolean }>) {
-  const details: ReactNode[] = [formatBytes(bundle.sizeBytes), bundle.arch];
+  const details: string[] = [formatBytes(bundle.sizeBytes), bundle.arch];
   if (bundle.ilm) details.push(`ILM ${bundle.ilm}`);
   if (bundle.operator) details.push(`operator ${bundle.operator}`);
   if (bundle.loadedAt) details.push(`loaded ${new Date(bundle.loadedAt).toLocaleString()}`);
@@ -57,7 +57,7 @@ export function BundleRow({ bundle, onFetch, fetchDisabled }: Readonly<{ bundle:
       </p>
       <p className="m-0 text-content-muted">{details.join(' · ')}</p>
       {bundle.blocked && (
-        <p className="m-0 mt-1"><Badge tone="wait">Blocked</Badge> <span className="text-content-muted">{blockedText(bundle.blocked, bundle.needs)}</span></p>
+        <p className="m-0 mt-1"><Badge tone="wait">Blocked</Badge> <span className="text-content-muted">{blockedText(bundle.blocked, bundle.needs, bundle.kind)}</span></p>
       )}
       <div className="mt-1 flex flex-wrap items-start"><Notes bundle={bundle} /></div>
     </ItemRow>

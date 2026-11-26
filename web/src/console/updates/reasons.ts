@@ -12,9 +12,15 @@ const blocked: Record<NonNullable<Bundle['blocked']>, string> = {
   invalidMetadata: "This bundle's metadata is invalid.",
 };
 
-/** Why a bundle cannot be installed now, and which update must come first. */
-export function blockedText(reason: string, needs?: string) {
+/** A platform bundle's operator is checked against the range the running appliance supports. */
+const platformOperatorOutOfRange = "This bundle's ILM operator version is outside the range the running appliance supports.";
+
+/** Why a bundle of kind cannot be installed now, and which update must come first. */
+export function blockedText(reason: string, needs?: string, kind?: Bundle['kind']) {
   if (reason === 'needsAppliance' && needs) return `Install appliance ${needs} first.`;
+  if (reason === 'operatorOutOfRange' && kind === 'platform') {
+    return needs ? `${platformOperatorOutOfRange} Install appliance ${needs} first.` : platformOperatorOutOfRange;
+  }
   return (blocked as Record<string, string>)[reason] ?? 'This bundle cannot be installed now.';
 }
 
@@ -48,10 +54,10 @@ const loadReasons: Record<string, string> = {
   failed: 'The load failed.',
 };
 
-/** Why a load was refused or failed: a reason of the load, or one of a blocked bundle. */
-export function loadReasonText(reason?: string) {
+/** Why a load of kind was refused or failed: a reason of the load, or one of a blocked bundle. */
+export function loadReasonText(reason?: string, kind?: Bundle['kind']) {
   if (!reason) return '';
-  return loadReasons[reason] ?? (reason in blocked ? blockedText(reason) : '');
+  return loadReasons[reason] ?? (reason in blocked ? blockedText(reason, undefined, kind) : '');
 }
 
 const refusals: Record<string, string> = {

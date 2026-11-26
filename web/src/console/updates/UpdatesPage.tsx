@@ -27,7 +27,7 @@ function LoadStatus({ load }: Readonly<{ load: Load }>) {
   const bundle = load.version ? `${load.kind} ${load.version}` : `the ${load.kind} bundle`;
   if (load.state === 'running') return <Alert tone="info" busy>Loading {bundle}…</Alert>;
   if (load.state === 'loaded') return <Alert tone="success">{bundle.charAt(0).toUpperCase() + bundle.slice(1)} was loaded.</Alert>;
-  return <Alert tone="error">The bundle could not be loaded. {loadReasonText(load.reason)}</Alert>;
+  return <Alert tone="error">The bundle could not be loaded. {loadReasonText(load.reason, load.kind)}</Alert>;
 }
 
 function Section({ title, empty, bundles, children }: Readonly<{ title: string; empty: string; bundles: Bundle[]; children: (bundle: Bundle) => ReactNode }>) {
