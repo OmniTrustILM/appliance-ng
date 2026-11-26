@@ -561,7 +561,7 @@ func (b *slowBody) Read(p []byte) (int, error) {
 // TestGuardKeepsAProgressingUpload uploads a body that takes longer than the idle timeout but makes progress more
 // often: the wait for the answer does not time out while the body is written.
 func TestGuardKeepsAProgressingUpload(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 	}))
 	t.Cleanup(srv.Close)
