@@ -154,6 +154,17 @@ describe('DonePage', () => {
     expect(await screen.findByText(/already downloaded/i)).toBeInTheDocument();
   });
 
+  it('says the renewed credential is not registered in the ILM yet', async () => {
+    const message = 'The renewed administrator certificate is not registered in the ILM yet. The dashboard shows why.';
+    stubApi({
+      'GET /appliance/api/v1/appliance': [200, appliance],
+      'POST /appliance/api/v1/platform/admin-credential': [404, { code: 'not_registered', message }],
+    });
+    renderPage();
+    await ask('a long enough secret');
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  });
+
   it('explains other failures', async () => {
     stubApi({
       'GET /appliance/api/v1/appliance': [200, appliance],

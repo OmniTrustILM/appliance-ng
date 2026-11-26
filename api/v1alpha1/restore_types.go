@@ -7,7 +7,7 @@ import (
 )
 
 // Steps of a restore in RestoreStatus.Step, in their order. A restore in place skips platform, keycloak and
-// certificate.
+// certificate. A rollback runs stop, uninstall and reinstall, then the steps of a restore in place from stop on.
 const (
 	RestoreStepSecrets     = "secrets"
 	RestoreStepAppliance   = "appliance"
@@ -19,10 +19,14 @@ const (
 	RestoreStepStart       = "start"
 	RestoreStepKeycloak    = "keycloak"
 	RestoreStepCertificate = "certificate"
+	RestoreStepUninstall   = "uninstall"
+	RestoreStepReinstall   = "reinstall"
 	RestoreStepDone        = "done"
 	// RestoreStepWaitingForKit is a restore the manager restarted during: the backup key it held in memory is gone,
 	// and the restore resumes at PausedStep once the recovery kit is given again.
 	RestoreStepWaitingForKit = "waitingForKit"
+	// RestoreStepAbandoned is a failed restore the administrator gave up: the appliance keeps the state it reached.
+	RestoreStepAbandoned = "abandoned"
 )
 
 // Reasons of RestoreStatus.Message.
@@ -45,12 +49,16 @@ type RestoreStatus struct {
 	// ILMHostName is the ILM host name the restore sets; empty keeps the backup's.
 	// +optional
 	ILMHostName string `json:"ilmHostName,omitempty"`
-	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate;done;waitingForKit
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate;uninstall;reinstall;done;waitingForKit;abandoned
 	Step string `json:"step"`
 	// PausedStep is the step a restore waiting for the kit resumes at.
 	// +optional
-	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate;uninstall;reinstall
 	PausedStep string `json:"pausedStep,omitempty"`
+	// AbandonedStep is the step an abandoned restore had failed at.
+	// +optional
+	// +kubebuilder:validation:Enum=secrets;appliance;platform;stop;ilmSecrets;database;cbom;start;keycloak;certificate;uninstall;reinstall
+	AbandonedStep string `json:"abandonedStep,omitempty"`
 	// Message is the fixed reason a restore failed at Step; set only on failure.
 	// +optional
 	// +kubebuilder:validation:Enum=failed;timeout
@@ -68,11 +76,37 @@ type RestoreStatus struct {
 	// accounts.
 	// +optional
 	StartedBy string `json:"startedBy,omitempty"`
+	// PlatformBundle is the loaded platform bundle a fresh restore installs the platform from; empty for the
+	// release's own platform.
+	// +optional
+	PlatformBundle string `json:"platformBundle,omitempty"`
+	// Rollback is set on a restore in place that rolls a platform update back.
+	// +optional
+	Rollback *RestoreRollback `json:"rollback,omitempty"`
 }
 
-// Active tells whether a restore runs or waits for the kit: it neither completed nor failed.
+// RestoreRollback is a platform update rolled back: the platform is uninstalled, installed again at ILMVersion and
+// restored from the backup taken before the update.
+type RestoreRollback struct {
+	// ILMVersion is the ILM version the platform is installed at again.
+	ILMVersion string `json:"ilmVersion"`
+	// PlatformBundle is the platform bundle that runs again; empty for the release's own platform.
+	// +optional
+	PlatformBundle string `json:"platformBundle,omitempty"`
+	// Reinstalled is set once the platform runs at ILMVersion again: the steps from stop on restore the backup.
+	// +optional
+	Reinstalled bool `json:"reinstalled,omitempty"`
+}
+
+// Active tells whether a restore runs or waits for the kit: it neither completed, failed nor was abandoned.
 func (r *RestoreStatus) Active() bool {
-	return r != nil && r.Step != RestoreStepDone && r.Message == ""
+	return r.Unsettled() && r.Message == ""
+}
+
+// Unsettled tells whether a restore neither completed nor was abandoned: it runs, waits for the kit or failed, and
+// keeps the backups and the ILM settings held until it ends.
+func (r *RestoreStatus) Unsettled() bool {
+	return r != nil && r.Step != RestoreStepDone && r.Step != RestoreStepAbandoned
 }
 
 // CurrentStep is the step the restore is at: PausedStep while it waits for the kit, Step otherwise.
@@ -87,9 +121,12 @@ func (r *RestoreStatus) CurrentStep() string {
 	}
 }
 
-// HoldsOperator tells whether the ILM operator must stay at zero replicas: from stop until the restore starts it.
+// HoldsOperator tells whether the ILM operator must stay at zero replicas: from stop until the restore starts it, and
+// from stop until a rollback installs the platform again.
 func (r *RestoreStatus) HoldsOperator() bool {
-	return r.Active() && slices.Contains([]string{RestoreStepStop, RestoreStepILMSecrets, RestoreStepDatabase, RestoreStepCBOM}, r.CurrentStep())
+	return r.Active() && slices.Contains([]string{
+		RestoreStepStop, RestoreStepUninstall, RestoreStepILMSecrets, RestoreStepDatabase, RestoreStepCBOM,
+	}, r.CurrentStep())
 }
 
 // PausesPlatform tells whether the Platform must not be applied: from stop until the started operator reports it

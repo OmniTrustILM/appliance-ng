@@ -30,6 +30,13 @@ on:
         description: JSON array of the architectures to build.
         type: string
         default: '["amd64","arm64"]'
+      ilm-version:
+        description: >-
+          Build the images with this older ILM version instead of release.yaml's, for the platform update test. With
+          bundle-test-key the platform bundle of release.yaml is signed instead, without changing its ILM version, and
+          kept as the platform-update-<arch> artifact; the images artifact is images-<arch>-old-ilm.
+        type: string
+        default: ''
 
 defaults:
   run:
@@ -141,7 +148,16 @@ jobs:
           (cd "$key" && COSIGN_PASSWORD='' cosign generate-key-pair)
           echo "BUNDLE_TEST_KEY=$(base64 -w0 "$key/cosign.pub")" >>"$GITHUB_ENV"
 
+      # Signed before the images pin the older ILM version into release.yaml and the add-on files.
+      - name: Sign the platform update test's bundle
+        if: inputs.bundle-test-key && inputs.ilm-version != ''
+        run: |
+          SAME_ILM=1 COSIGN_PASSWORD='' ./test/boot/bundle.sh "$ARCH" "$RUNNER_TEMP/bundle-key/cosign.key" \
+            "out/$ARCH/platform-update.tar"
+
       - name: Build images
+        env:
+          ILM_VERSION: ${{ inputs.ilm-version }}
         run: make images ARCH="$ARCH" REGISTRY="$REGISTRY"
 
       # A published manager must trust only cosign.pub: no base64 PEM public key may be linked into it.
@@ -160,7 +176,7 @@ jobs:
 
       # Signs in the local registry service, without a transparency log, and deletes the private key.
       - name: Sign the boot test's platform bundle
-        if: inputs.bundle-test-key
+        if: inputs.bundle-test-key && inputs.ilm-version == ''
         run: |
           COSIGN_PASSWORD='' ./test/boot/bundle.sh "$ARCH" "$RUNNER_TEMP/bundle-key/cosign.key" \
             "out/$ARCH/platform-test.tar"
@@ -211,7 +227,7 @@ jobs:
         if: inputs.publish || inputs.keep-images
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: images-${{ matrix.arch }}
+          name: images-${{ matrix.arch }}${{ inputs.ilm-version != '' && '-old-ilm' || '' }}
           path: |
             out/${{ matrix.arch }}/*.iso
             out/${{ matrix.arch }}/*.qcow2
@@ -220,10 +236,19 @@ jobs:
           retention-days: 3
 
       - name: Upload the boot test's platform bundle
-        if: inputs.bundle-test-key
+        if: inputs.bundle-test-key && inputs.ilm-version == ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bundle-test-${{ matrix.arch }}
           path: out/${{ matrix.arch }}/platform-test.tar
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload the platform update test's bundle
+        if: inputs.bundle-test-key && inputs.ilm-version != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: platform-update-${{ matrix.arch }}
+          path: out/${{ matrix.arch }}/platform-update.tar
           if-no-files-found: error
           retention-days: 3

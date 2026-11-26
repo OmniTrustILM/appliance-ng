@@ -41,10 +41,11 @@ const (
 	storeSecretKeyBytes = 32
 )
 
-// reconcileCBOM applies the CBOM repository the platform describes and deletes its workloads that the spec no longer
-// renders. The store on the appliance runs while its storage is the appliance and the repository is on, or turned off
-// while the store's volume keeps the CBOMs, so that backups still hold them; its volume and keys are created once and
-// never owned by the Appliance. The copy of an external store's credentials is deleted once it is not used.
+// reconcileCBOM applies the CBOM repository the platform describes, with the network policy that admits only ILM and
+// the node to it, and deletes its workloads that the spec no longer renders. The store on the appliance runs while its
+// storage is the appliance and the repository is on, or turned off while the store's volume keeps the CBOMs, so that
+// backups still hold them; its volume and keys are created once and never owned by the Appliance. The copy of an
+// external store's credentials is deleted once it is not used.
 func (r *ApplianceReconciler) reconcileCBOM(ctx context.Context, a *v1alpha1.Appliance) error {
 	var spec *v1alpha1.CBOMSpec
 	if a.Spec.Platform != nil {
@@ -58,6 +59,9 @@ func (r *ApplianceReconciler) reconcileCBOM(ctx context.Context, a *v1alpha1.App
 	objs, err := r.renderCBOM(ctx, a, spec, in)
 	if err != nil {
 		return err
+	}
+	if len(objs) > 0 {
+		objs = append(objs, cbom.NetworkPolicy())
 	}
 	rendered := map[string]bool{}
 	for _, obj := range objs {

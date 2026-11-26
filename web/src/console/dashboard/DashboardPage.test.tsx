@@ -38,6 +38,14 @@ describe('DashboardPage', () => {
     expect(screen.getByRole('link', { name: /administrator credential/i })).toHaveAttribute('href', '/wizard/done');
   });
 
+  it('offers the renewed administrator credential and says the one downloaded before stops working', async () => {
+    stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, adminCredentialRenewed: true }] });
+    renderPage();
+    const notice = await screen.findByText(/administrator certificate was renewed/);
+    expect(notice).toHaveTextContent('The credential downloaded before no longer signs in to the ILM.');
+    expect(within(notice).getByRole('link', { name: 'Download the new credential' })).toHaveAttribute('href', '/wizard/done');
+  });
+
   it('shows the free space of the data volume', async () => {
     const GB = 1024 ** 3;
     stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, dataVolume: { sizeBytes: 100 * GB, freeBytes: 60 * GB, lowSpace: false } }] });
@@ -279,6 +287,7 @@ describe('DashboardPage', () => {
       { type: 'CertificateReady', status: 'True', reason: 'Ready' },
       { type: 'ILMSettingsApplied', status: 'True', reason: 'Applied' },
       { type: 'CBOMRepositoryApplied', status: 'True', reason: 'Applied' },
+      { type: 'AdminCertificateRegistered', status: 'False', reason: 'AuthFailed' },
     ];
     stubApi({ 'GET /appliance/api/v1/status': [200, { ...status, conditions }] });
     renderPage();
@@ -287,11 +296,12 @@ describe('DashboardPage', () => {
     expect(within(platform).getByText('PlatformReady')).toBeInTheDocument();
     expect(within(platform).getByText('ILMSettingsApplied')).toBeInTheDocument();
     expect(within(platform).getByText('CBOMRepositoryApplied')).toBeInTheDocument();
+    expect(within(platform).getByText('AdminCertificateRegistered')).toBeInTheDocument();
     expect(within(platform).queryByText('NodeConfigured')).not.toBeInTheDocument();
     const node = screen.getByRole('heading', { name: 'Node', level: 3 }).parentElement as HTMLElement;
     expect(within(node).getByText('NodeConfigured')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Certificate', level: 3 })).toBeInTheDocument();
-    expect(screen.getByText('5 of 6 ready')).toBeInTheDocument();
+    expect(screen.getByText('5 of 7 ready')).toBeInTheDocument();
   });
 
   describe('backups', () => {

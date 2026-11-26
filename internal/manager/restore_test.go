@@ -2,6 +2,10 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -10,12 +14,15 @@ import (
 	"testing/fstest"
 
 	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/bundle"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 // recordingCluster passes every add-on step and keeps the documents it applied.
@@ -230,5 +237,75 @@ func TestAddonPassHoldsOperatorStoppedDuringThePass(t *testing.T) {
 	}
 	if !slices.Equal(cluster.locked[:2], []bool{true, true}) {
 		t.Errorf("operator lock held at the applies: %v, want held", cluster.locked)
+	}
+}
+
+// TestAddonPassAppliesTheInstalledPlatformOperator applies the installed platform bundle's newer operator instead of
+// the embedded one and reports its version.
+func TestAddonPassAppliesTheInstalledPlatformOperator(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec()})
+	dir := t.TempDir()
+	storePlatformBundle(t, dir, bundle.Metadata{Kind: release.BundlePlatform, Version: "1.1.0", Arch: runtime.GOARCH, Operator: "v1.2.0"})
+	a := getAppliance(t)
+	a.Status.Versions.PlatformBundle = "1.1.0"
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &recordingCluster{}
+	r, _ := newReconciler(testClient, cluster)
+	r.Addons = fstest.MapFS{"ilm-operator.yaml": {Data: []byte(operatorDeployment)}}
+	r.Steps = []kube.Step{{Name: "ilm-operator", Files: []string{"ilm-operator.yaml"}}}
+	r.BundlesDir = dir
+	runReconcile(t, r)
+	if len(cluster.applied) == 0 || cluster.applied[0] != bundleOperator {
+		t.Errorf("applied %q, want the bundle's operator", cluster.applied)
+	}
+	if got := getAppliance(t).Status.Versions.Operator; got != "v1.2.0" {
+		t.Errorf("operator version %q, want v1.2.0", got)
+	}
+}
+
+// TestAddonPassReportsAMissingPlatformBundle tells, in the add-ons condition, that the files of the recorded platform
+// bundle are missing, which the pass cannot get past.
+func TestAddonPassReportsAMissingPlatformBundle(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec()})
+	a := getAppliance(t)
+	a.Status.Versions.PlatformBundle = "1.1.0"
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := newReconciler(testClient, &recordingCluster{})
+	r.Addons = fstest.MapFS{"ilm-operator.yaml": {Data: []byte(operatorDeployment)}}
+	r.Steps = []kube.Step{{Name: "ilm-operator", Files: []string{"ilm-operator.yaml"}}}
+	r.BundlesDir = t.TempDir()
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKey{Name: v1alpha1.ApplianceName}}); err == nil {
+		t.Fatal("the pass went on without the platform bundle's files")
+	}
+	c := meta.FindStatusCondition(getAppliance(t).Status.Conditions, v1alpha1.ConditionAddonsReady)
+	if c == nil || c.Status != metav1.ConditionFalse || c.Reason != "PlatformBundleMissing" || strings.Contains(c.Message, r.BundlesDir) {
+		t.Errorf("add-ons condition %+v, want PlatformBundleMissing without the path", c)
+	}
+}
+
+const bundleOperator = "kind: Deployment\nmetadata: {name: from-the-bundle}\n"
+
+// storePlatformBundle stores md and bundleOperator as a loaded platform bundle under dir.
+func storePlatformBundle(t *testing.T, dir string, md bundle.Metadata) {
+	t.Helper()
+	bundleDir := filepath.Join(dir, release.BundlePlatform, md.Version+"-"+md.Arch)
+	data, err := json.Marshal(md)
+	if err == nil {
+		err = os.MkdirAll(bundleDir, 0o700)
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(bundleDir, bundle.MetadataFile), data, 0o600)
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(bundleDir, bundle.OperatorFile), []byte(bundleOperator), 0o600)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 }

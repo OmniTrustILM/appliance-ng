@@ -207,7 +207,7 @@ func (i *Identity) renew(ctx context.Context, c *Client, id *identity, ca tls.Ce
 	})
 	if !ran {
 		// The stored certificate is still valid; a later pass renews it.
-		// err is the fixed refusal of Exclusive: a backup runs or an update bundle loads.
+		// err is the fixed refusal of Exclusive: a backup, a restore, an update or a bundle load runs.
 		log.FromContext(ctx).Info("the manager's ILM certificate is renewed later", "refused", err.Error(), "user", id.userUUID)
 		return c, nil
 	}
@@ -324,17 +324,17 @@ func lookupUser(ctx context.Context, c *Client, username string) (string, error)
 			return u.UUID, nil
 		}
 	}
-	return "", &Error{Op: "find the manager's user", Reason: ReasonNotFound}
+	return "", &Error{Op: "find user " + username, Reason: ReasonNotFound}
 }
 
-// fingerprint is the lower-case hex SHA-256 of a DER certificate, by which ILM finds a certificate's user.
-func fingerprint(der []byte) string {
+// Fingerprint is the lower-case hex SHA-256 of a DER certificate, by which ILM finds a certificate's user.
+func Fingerprint(der []byte) string {
 	sum := sha256.Sum256(der)
 	return hex.EncodeToString(sum[:])
 }
 
 func username(cert tls.Certificate) string {
-	return usernamePrefix + fingerprint(cert.Certificate[0])[:fingerprintChars]
+	return usernamePrefix + Fingerprint(cert.Certificate[0])[:fingerprintChars]
 }
 
 // load reads the identity Secret, or returns nil when there is none or it holds no usable certificate. A pending

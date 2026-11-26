@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 
 	"filippo.io/age"
 	corev1 "k8s.io/api/core/v1"
@@ -18,7 +19,6 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/cbom"
-	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 const usersMember = "secrets/appliance-system/" + auth.UsersSecret + ".yaml"
@@ -32,7 +32,7 @@ var (
 	ErrForeignKit = errors.New("the recovery kit does not belong to this backup")
 )
 
-// ErrVersionUnavailable means the backup holds another ILM version (Want) than the appliance has (Have).
+// ErrVersionUnavailable means the backup holds another ILM version (Want) than those the appliance has (Have).
 type ErrVersionUnavailable struct{ Have, Want string }
 
 func (e ErrVersionUnavailable) Error() string {
@@ -50,14 +50,15 @@ type Summary struct {
 }
 
 // Inspect verifies the whole backup file with id, the recovery kit's backup key, and reads what a restore would
-// change. It touches neither the cluster nor the file. users are the current console accounts.
-func Inspect(ctx context.Context, file string, id age.Identity, m *release.Manifest, users []string) (Summary, error) {
+// change. It touches neither the cluster nor the file. available are the ILM versions the appliance can run; users
+// are the current console accounts.
+func Inspect(ctx context.Context, file string, id age.Identity, available, users []string) (Summary, error) {
 	bm, err := verify(ctx, file, id)
 	if err != nil {
 		return Summary{}, err
 	}
-	if want := m.Platform.ILMVersion; bm.ILM != want {
-		return Summary{}, ErrVersionUnavailable{Have: want, Want: bm.ILM}
+	if !slices.Contains(available, bm.ILM) {
+		return Summary{}, ErrVersionUnavailable{Have: strings.Join(available, ", "), Want: bm.ILM}
 	}
 	accounts, spec, err := contents(ctx, file, id)
 	if err != nil {

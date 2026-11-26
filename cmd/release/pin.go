@@ -27,7 +27,6 @@ import (
 )
 
 const (
-	operatorAddon       = "ilm-operator"
 	platformAddon       = "platform"
 	operatorManifestURL = "https://github.com/OmniTrustILM/operator/releases/download/v%s/ilm-operator.yaml"
 
@@ -50,6 +49,7 @@ func pin(args []string) int {
 	root := fs.String("root", ".", "repository root holding release.yaml and addons/")
 	operator := fs.String("operator", "", "ILM operator release, such as 1.2.0")
 	ilm := fs.String("ilm", bom.DefaultVersion, "ILM platform version; the operator's default version by default")
+	olderILM := fs.Bool("older-ilm", false, "allow an ILM version older than platform.ilmVersion, for a test build")
 	_ = fs.Parse(args)
 	if *operator == "" {
 		usage()
@@ -58,7 +58,7 @@ func pin(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	op := strings.TrimPrefix(*operator, "v")
-	if err := (pinner{transport: remote.DefaultTransport}).pin(ctx, *root, op, *ilm); err != nil {
+	if err := (pinner{transport: remote.DefaultTransport, olderILM: *olderILM}).pin(ctx, *root, op, *ilm); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -69,24 +69,21 @@ func pin(args []string) int {
 // pinner pins an ILM operator release and an ILM platform version in release.yaml and the add-on files.
 type pinner struct {
 	transport http.RoundTripper
+	// olderILM lets the ILM version move backwards, for a test build; the operator never does.
+	olderILM bool
 }
 
 // pin rewrites, under root, the ilm-operator add-on (its file, entry and download line), the platform add-on and
 // platform.ilmVersion, and the digest of each platform image the operator's bill of materials and manifest name.
-// It refuses to move either version backwards and changes no file when a check, a download or a write fails.
+// It refuses to move either version backwards, the ILM version unless olderILM is set, and changes no file when a
+// check, a download or a write fails.
 func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 	m, err := release.Load(filepath.Join(root, releaseFile))
 	if err != nil {
 		return err
 	}
-	current, err := addon(m, operatorAddon)
+	current, err := p.checkVersions(m, operator, ilm)
 	if err != nil {
-		return err
-	}
-	if err := refuseDowngrade("operator", current.Version, operator); err != nil {
-		return err
-	}
-	if err := refuseDowngrade("ILM", m.Platform.ILMVersion, ilm); err != nil {
 		return err
 	}
 
@@ -118,7 +115,7 @@ func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 		specVersion.MatchString, func(line string) string { return specVersion.ReplaceAllString(line, `${1}"`+ilm+`"`) }); err != nil {
 		return err
 	}
-	if files[downloadsFile], err = editLine(files[downloadsFile], "the "+operatorAddon+" download",
+	if files[downloadsFile], err = editLine(files[downloadsFile], "the "+release.OperatorAddon+" download",
 		func(line string) bool { return strings.HasPrefix(line, current.File+" ") },
 		func(string) string { return current.File + " " + source }); err != nil {
 		return err
@@ -128,6 +125,24 @@ func (p pinner) pin(ctx context.Context, root, operator, ilm string) error {
 	}
 
 	return writeAll(root, files)
+}
+
+// checkVersions refuses to move the operator of m backwards, and its ILM version unless olderILM is set, and returns
+// the operator's add-on.
+func (p pinner) checkVersions(m *release.Manifest, operator, ilm string) (release.AddonFile, error) {
+	current, err := addon(m, release.OperatorAddon)
+	if err != nil {
+		return release.AddonFile{}, err
+	}
+	if err := refuseDowngrade("operator", current.Version, operator); err != nil {
+		return release.AddonFile{}, err
+	}
+	if !p.olderILM {
+		if err := refuseDowngrade("ILM", m.Platform.ILMVersion, ilm); err != nil {
+			return release.AddonFile{}, err
+		}
+	}
+	return current, nil
 }
 
 // writeAll writes every file to a temporary file next to it first and renames them into place only when all were
@@ -159,7 +174,7 @@ func writeAll(root string, files map[string][]byte) error {
 // editRelease rewrites release.yaml line by line, so that its comments, layout and order stay as they are.
 func (p pinner) editRelease(ctx context.Context, files map[string][]byte, ilm, operator, source string, refs []string) ([]byte, error) {
 	data := files[releaseFile]
-	data, err := editLine(data, "the "+operatorAddon+" add-on", addonLine(operatorAddon), func(line string) string {
+	data, err := editLine(data, "the "+release.OperatorAddon+" add-on", addonLine(release.OperatorAddon), func(line string) string {
 		line = setField(line, "version", operator)
 		line = setField(line, "source", source)
 		return setField(line, "sha256", sum(files["addons/ilm-operator.yaml"]))

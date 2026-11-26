@@ -10,13 +10,15 @@ import { Loading } from '../../components/Spinner';
 import { attempt, unreachable } from '../../setup/failure';
 import { useLoaded } from '../shared/useLoaded';
 import { BundleRow } from './BundleRow';
-import { checkErrorText, loadReasonText, refusalText } from './reasons';
+import { InstallConfirm, UpdateStatus, updating } from './PlatformUpdate';
+import { checkErrorText, loadReasonText, refusalText, rollbackUnavailableText, updateRefusalText } from './reasons';
+import { RollbackCard, RollbackUnavailable } from './Rollback';
 import { UploadCard } from './UploadCard';
 
 type Load = components['schemas']['BundleLoad'];
 type Bundle = components['schemas']['UpdateBundle'];
 
-/** How often the page reads the updates again while a bundle loads. */
+/** How often the page reads the updates again while a bundle loads or an update runs. */
 export const runningRefreshMs = 5000;
 /** How long the page waits for a check: longer than the appliance takes at most to check, record and answer. */
 export const checkTimeoutMs = 6 * 60_000;
@@ -47,7 +49,7 @@ function isLoaded(loaded: Bundle[], bundle: Bundle) {
   return loaded.some((l) => l.kind === bundle.kind && l.version === bundle.version && l.arch === bundle.arch);
 }
 
-/** The system and platform bundles available online and loaded, with "Check now", "Fetch" and an upload. */
+/** The system and platform bundles available online and loaded, with "Check now", "Fetch", "Install" and an upload. */
 export function UpdatesPage() {
   const background = useRef(false);
   // Marked as a background refresh, a read the page makes on its own does not keep the session from going idle.
@@ -63,7 +65,8 @@ export function UpdatesPage() {
   const [failure, setFailure] = useState<string>();
   // Reads left to find a load that was accepted but does not show as running yet.
   const [awaited, setAwaited] = useState(0);
-  const running = data?.load?.state === 'running';
+  const [installing, setInstalling] = useState<Bundle>();
+  const running = data?.load?.state === 'running' || updating(data?.update);
 
   const reload = useCallback(() => {
     background.current = false;
@@ -104,7 +107,18 @@ export function UpdatesPage() {
     started();
   }
 
+  async function install(bundle: Bundle) {
+    setInstalling(undefined);
+    setFailure(undefined);
+    const body = { version: bundle.version, confirm: true };
+    const result = await attempt(() => api.POST('/updates/platform', { body, signal: timeoutSignal() }));
+    if (!result) return setFailure(unreachable);
+    if (!result.response.ok) return setFailure(updateRefusalText(result.error?.code));
+    started();
+  }
+
   const busy = checking || running;
+  const unavailable = data?.update && !running ? rollbackUnavailableText(data.rollback?.reason) : undefined;
 
   return (
     <PageWidth>
@@ -115,6 +129,7 @@ export function UpdatesPage() {
         {!data && !error && <Loading />}
         {data && (
           <>
+            {data.update && <UpdateStatus update={data.update} />}
             {data.load && <LoadStatus load={data.load} />}
             {data.lastCheckError && <Alert tone="warning">The last check failed. {checkErrorText(data.lastCheckError)}</Alert>}
             {checking && <Alert tone="info" busy>Checking the online repository…</Alert>}
@@ -130,20 +145,32 @@ export function UpdatesPage() {
 
       {data && (
         <>
+          {data.rollback?.available && !running && (
+            <div className="mt-6"><RollbackCard backup={data.update?.backup} disabled={busy} onStarted={started} /></div>
+          )}
+          {!data.rollback?.available && unavailable && <RollbackUnavailable text={unavailable} />}
           <Section title="Available" empty="No newer bundle is available." bundles={data.available}>
             {(b) => (
               <BundleRow
                 key={`${b.kind}-${b.version}`}
                 bundle={b}
-                fetchDisabled={busy}
+                disabled={busy}
                 onFetch={isLoaded(data.loaded, b) ? undefined : () => void fetchBundle(b)}
               />
             )}
           </Section>
           <Section title="Loaded" empty="No bundle is loaded." bundles={data.loaded}>
-            {(b) => <BundleRow key={`${b.kind}-${b.version}`} bundle={b} />}
+            {(b) => (
+              <BundleRow
+                key={`${b.kind}-${b.version}`}
+                bundle={b}
+                disabled={busy}
+                onInstall={b.kind === 'platform' ? () => setInstalling(b) : undefined}
+              />
+            )}
           </Section>
           <div className="mt-6"><UploadCard disabled={busy} onUploaded={started} /></div>
+          {installing && <InstallConfirm bundle={installing} operator={data.operator} externalDatabase={data.externalDatabase} onConfirm={() => void install(installing)} onCancel={() => setInstalling(undefined)} />}
         </>
       )}
     </PageWidth>

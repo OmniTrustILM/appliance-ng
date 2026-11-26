@@ -34,10 +34,10 @@ var bundleFiles = map[string][]string{
 	release.BundlePlatform: {"addons/ilm-operator.yaml"},
 }
 
-const (
-	addonsDir    = "addons"
-	operatorFile = "ilm-operator.yaml"
-)
+const addonsDir = "addons"
+
+// OperatorFile is the manifest of the ILM operator a platform bundle carries.
+const OperatorFile = "ilm-operator.yaml"
 
 // Inputs are what a bundle carries besides the images of release.yaml.
 type Inputs struct {
@@ -104,7 +104,7 @@ func readFiles(m *release.Manifest, files fs.FS, paths []string, md *Metadata) (
 			return nil, err
 		}
 		base := path.Base(p)
-		if base == operatorFile {
+		if base == OperatorFile {
 			md.Operator = addon.Version
 		}
 		md.Files = append(md.Files, base)

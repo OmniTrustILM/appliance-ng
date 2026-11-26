@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -50,6 +51,7 @@ func cbomAppliance(t *testing.T, spec *v1alpha1.CBOMSpec) {
 		for _, name := range []string{"cbom-s3", "cbom-repository-service"} {
 			_ = testClient.Delete(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: cbom.Namespace, Name: name}})
 		}
+		_ = testClient.Delete(ctx, cbom.NetworkPolicy())
 		deleteStoreClaim(t)
 	})
 }
@@ -99,6 +101,9 @@ func TestCBOMRepositoryOnApplianceStorage(t *testing.T) {
 		if !cbomObjectExists(t, &corev1.Service{}, name) {
 			t.Errorf("service %s not applied", name)
 		}
+	}
+	if policy := cbomPolicy(t); policy == nil || !metav1.IsControlledBy(policy, a) || !managedBy(policy, fieldManager) {
+		t.Errorf("network policy %v is not the Appliance's, applied by %s", policy, fieldManager)
 	}
 	keys := secret(t, cbom.StoreSecret)
 	if len(keys.Data[cbom.AccessKeyKey]) < 16 || len(keys.Data[cbom.SecretKeyKey]) < 32 || len(keys.OwnerReferences) != 0 {
@@ -232,6 +237,9 @@ func TestCBOMRepositoryWithTheManagerRBAC(t *testing.T) {
 		if err := r.reconcileCBOM(ctx, getAppliance(t)); err != nil {
 			t.Fatalf("%+v as the manager: %v", spec, err)
 		}
+		if cbomPolicy(t) == nil {
+			t.Fatalf("%+v as the manager: the network policy is not applied", spec)
+		}
 	}
 	if cbomObjectExists(t, &appsv1.Deployment{}, "cbom-repository-deployment") || copyExists(t, cbom.ExternalSecret) {
 		t.Error("the repository or the external copy is left after turning it off")
@@ -244,6 +252,19 @@ func TestCBOMRepositoryWithTheManagerRBAC(t *testing.T) {
 	if cbomObjectExists(t, &appsv1.Deployment{}, "cbom-s3") || cbomObjectExists(t, &corev1.Service{}, "cbom-s3") {
 		t.Error("the store runs without its volume")
 	}
+	if cbomPolicy(t) != nil {
+		t.Error("the network policy is left with nothing to admit to")
+	}
+}
+
+// cbomPolicy returns the network policy of the repository and its store, nil when there is none.
+func cbomPolicy(t *testing.T) *unstructured.Unstructured {
+	t.Helper()
+	policy := cbom.NetworkPolicy()
+	if !cbomObjectExists(t, policy, policy.GetName()) {
+		return nil
+	}
+	return policy
 }
 
 func TestCBOMRepositoryNeedsItsChart(t *testing.T) {

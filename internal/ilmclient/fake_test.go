@@ -130,6 +130,9 @@ type fakeILM struct {
 
 type fakeUser struct {
 	uuid, username, fingerprint string
+	// email and customAttributes are details an update has to send again: ILM takes the update's as the user's.
+	email            *string
+	customAttributes []map[string]any
 }
 
 func newFakeILM(t *testing.T, adminCA *testCA) *fakeILM {
@@ -179,7 +182,7 @@ func (f *fakeILM) serveCore(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.registrations++
-	fp := fingerprint(der)
+	fp := Fingerprint(der)
 	for _, u := range f.users {
 		if u.fingerprint == fp {
 			w.WriteHeader(http.StatusUnprocessableEntity)
@@ -200,7 +203,7 @@ func (f *fakeILM) serveCore(w http.ResponseWriter, r *http.Request) {
 
 // caller returns the user of the request's client certificate, or nil.
 func (f *fakeILM) caller(r *http.Request) *fakeUser {
-	fp := fingerprint(r.TLS.PeerCertificates[0].Raw)
+	fp := Fingerprint(r.TLS.PeerCertificates[0].Raw)
 	for _, u := range f.users {
 		if u.fingerprint == fp {
 			return u
@@ -237,6 +240,8 @@ func (f *fakeILM) serveEdge(w http.ResponseWriter, r *http.Request) {
 			list = append(list, map[string]any{"uuid": u.uuid, "username": u.username})
 		}
 		_ = json.NewEncoder(w).Encode(list)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/users/"):
+		f.getUser(w, strings.TrimPrefix(r.URL.Path, "/api/v1/users/"))
 	case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/users/"):
 		f.updateUser(w, r, strings.TrimPrefix(r.URL.Path, "/api/v1/users/"))
 	case strings.HasPrefix(r.URL.Path, providers):
@@ -256,7 +261,11 @@ func (f *fakeILM) updateUser(w http.ResponseWriter, r *http.Request, uuid string
 		_, _ = io.WriteString(w, `{"message":"Internal server error."}`)
 		return
 	}
-	var body struct{ Description, CertificateData string }
+	var body struct {
+		Description, CertificateData string
+		Email                        *string
+		CustomAttributes             []map[string]any
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -266,8 +275,20 @@ func (f *fakeILM) updateUser(w http.ResponseWriter, r *http.Request, uuid string
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	u.fingerprint = fingerprint(der)
+	u.fingerprint, u.email, u.customAttributes = Fingerprint(der), body.Email, body.CustomAttributes
 	_ = json.NewEncoder(w).Encode(map[string]any{"uuid": u.uuid})
+}
+
+func (f *fakeILM) getUser(w http.ResponseWriter, uuid string) {
+	u, ok := f.users[uuid]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"uuid": u.uuid, "username": u.username, "email": u.email, "certificate": map[string]any{"fingerprint": u.fingerprint},
+		"customAttributes": u.customAttributes,
+	})
 }
 
 func (f *fakeILM) serveProvider(w http.ResponseWriter, r *http.Request, name string) {

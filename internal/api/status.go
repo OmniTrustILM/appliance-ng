@@ -65,6 +65,9 @@ func (s *Server) GetStatus(ctx context.Context, _ GetStatusRequestObject) (GetSt
 	if certificate != nil {
 		out.Certificate = &StatusCertificate{NotAfter: certificate.NotAfter}
 	}
+	if renewed := s.adminCredentialRenewed(ctx); renewed {
+		out.AdminCredentialRenewed = &renewed
+	}
 	return GetStatus200JSONResponse(out), nil
 }
 

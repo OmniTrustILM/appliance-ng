@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,6 +36,12 @@ type fakeEdge struct {
 	requests []string
 	// refused, when set, answers every request with 401, as ILM does for a certificate no user holds.
 	refused bool
+	// adminFingerprint is the fingerprint of the certificate ILM's administrator signs in with.
+	adminFingerprint string
+	// noAdmin leaves the administrator out of the users; usersFail answers the user calls with 500.
+	noAdmin, usersFail bool
+	// secretAttribute gives the administrator a custom attribute whose content ILM does not return.
+	secretAttribute bool
 }
 
 func newFakeEdge(t *testing.T) *fakeEdge {
@@ -50,6 +58,10 @@ func newFakeEdge(t *testing.T) *fakeEdge {
 		}
 		if r.URL.Path == "/api/v1/settings/platform" {
 			e.platformSettings(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/users") {
+			e.users(w, r)
 			return
 		}
 		name := r.URL.Path[len(prefix):]
@@ -79,6 +91,31 @@ func (e *fakeEdge) platformSettings(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&sections)
 	for k, v := range sections {
 		e.settings[k] = v
+	}
+}
+
+// users serves the list of users, which holds the administrator, and the administrator's details and update.
+func (e *fakeEdge) users(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case e.usersFail:
+		w.WriteHeader(http.StatusInternalServerError)
+	case r.URL.Path == "/api/v1/users" && e.noAdmin:
+		_ = json.NewEncoder(w).Encode([]map[string]any{})
+	case r.URL.Path == "/api/v1/users":
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"uuid": "uuid-admin", "username": platform.AdminUser}})
+	case r.URL.Path != "/api/v1/users/uuid-admin":
+		w.WriteHeader(http.StatusNotFound)
+	case r.Method == http.MethodGet:
+		user := map[string]any{"uuid": "uuid-admin", "certificate": map[string]any{"fingerprint": e.adminFingerprint}}
+		if e.secretAttribute {
+			user["customAttributes"] = []map[string]any{{"name": "token", "contentType": "secret", "content": []any{map[string]any{}}}}
+		}
+		_ = json.NewEncoder(w).Encode(user)
+	case r.Method == http.MethodPut:
+		var body struct{ CertificateData string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		der, _ := base64.StdEncoding.DecodeString(body.CertificateData)
+		e.adminFingerprint = ilmclient.Fingerprint(der)
 	}
 }
 
@@ -391,6 +428,39 @@ func TestILMReconcilerWaits(t *testing.T) {
 	}
 }
 
+func TestILMSettingsHeldUntilAbandon(t *testing.T) {
+	ctx := context.Background()
+	idp, issuer := fakeIssuer(t, discoveryDoc)
+	ilmAppliance(t, idp, &v1alpha1.ExternalIdentity{Issuer: issuer, ClientID: "ilm", CredentialsRef: "idp-credentials"})
+	identity := &fakeIdentity{edge: newFakeEdge(t)}
+	r := &ILMReconciler{Client: testClient, APIReader: testClient, ILM: identity}
+	setRestore := func(st v1alpha1.RestoreStatus) {
+		a := getAppliance(t)
+		a.Status.Restore = &st
+		if err := testClient.Status().Update(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A failed restore left ILM's database half restored: nothing is written to it until the restore is resumed or
+	// abandoned.
+	setRestore(v1alpha1.RestoreStatus{Backup: "b.ilmbackup", Step: v1alpha1.RestoreStepDatabase, Message: v1alpha1.RestoreFailed})
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionILMSettingsApplied); c.Reason != reasonRestoring || identity.calls != 0 {
+		t.Fatalf("after the failure: condition %+v, %d calls", c, identity.calls)
+	}
+
+	setRestore(v1alpha1.RestoreStatus{Backup: "b.ilmbackup", Step: v1alpha1.RestoreStepAbandoned})
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionILMSettingsApplied); c.Reason == reasonRestoring || identity.calls == 0 {
+		t.Fatalf("after the abandon: condition %+v, %d calls", c, identity.calls)
+	}
+}
+
 func TestILMConditionReason(t *testing.T) {
 	for reason, want := range map[string]string{
 		ilmclient.ReasonAuthFailed: "AuthFailed", ilmclient.ReasonInvalidIssuer: "InvalidIssuer", ilmclient.ReasonFailed: "Failed", "": "Failed",
@@ -411,15 +481,22 @@ func TestILMRelevantChanges(t *testing.T) {
 	paused.Status.Restore = &v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepStop}
 	restoring := base.DeepCopy()
 	restoring.Status.Restore = &v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepSecrets}
+	failed := base.DeepCopy()
+	failed.Status.Restore = &v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepDatabase, Message: v1alpha1.RestoreFailed}
+	abandoned := failed.DeepCopy()
+	abandoned.Status.Restore = &v1alpha1.RestoreStatus{Step: v1alpha1.RestoreStepAbandoned}
 	other := base.DeepCopy()
 	other.Status.NodeAddress = "192.0.2.10"
 	for name, tc := range map[string]struct {
 		after *v1alpha1.Appliance
 		want  bool
-	}{"ready": {ready, true}, "spec": {newer, true}, "restore": {paused, true}, "early restore": {restoring, true}, "other status": {other, false}} {
+	}{"ready": {ready, true}, "spec": {newer, true}, "restore": {paused, true}, "early restore": {restoring, true}, "failed restore": {failed, true}, "other status": {other, false}} {
 		if got := ilmRelevant.Update(event.UpdateEvent{ObjectOld: base, ObjectNew: tc.after}); got != tc.want {
 			t.Errorf("%s: %v, want %v", name, got, tc.want)
 		}
+	}
+	if !ilmRelevant.Update(event.UpdateEvent{ObjectOld: failed, ObjectNew: abandoned}) {
+		t.Error("the abandon of a failed restore is not relevant")
 	}
 }
 
@@ -523,5 +600,177 @@ func TestCBOMRepositoryURLWrittenAndCleared(t *testing.T) {
 	}
 	if got := utils(); got["cbomRepositoryUrl"] != "https://cbom.example.com" {
 		t.Fatalf("utils = %v, want the administrator's URL kept", got)
+	}
+}
+
+// writeAdminCertificate writes certPEM into the administrator's certificate Secret, as cert-manager does on a renewal,
+// keeping its annotations.
+func writeAdminCertificate(t *testing.T, certPEM []byte) {
+	t.Helper()
+	ctx := context.Background()
+	s := &corev1.Secret{}
+	err := testClient.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.AdminCertificateSecret}, s)
+	if apierrors.IsNotFound(err) {
+		s = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: platform.Namespace, Name: platform.AdminCertificateSecret}}
+		s.Data = map[string][]byte{corev1.TLSCertKey: certPEM}
+		err = testClient.Create(ctx, s)
+	} else if err == nil {
+		s.Data = map[string][]byte{corev1.TLSCertKey: certPEM}
+		err = testClient.Update(ctx, s)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func registeredAdminCertificate(t *testing.T) string {
+	t.Helper()
+	s := &corev1.Secret{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: platform.AdminCertificateSecret}, s); err != nil {
+		t.Fatal(err)
+	}
+	return s.Annotations[platform.AdminCertificateRegisteredAnnotation]
+}
+
+func TestRenewedAdminCertificateRegistered(t *testing.T) {
+	idp, _ := fakeIssuer(t, discoveryDoc)
+	ilmAppliance(t, idp, nil)
+	edge := newFakeEdge(t)
+	r := &ILMReconciler{Client: testClient, APIReader: testClient, ILM: &fakeIdentity{edge: edge}}
+	first, renewed := testCAPEM(t), testCAPEM(t)
+	edge.adminFingerprint = ilmclient.CertificateFingerprint(first)
+
+	// The certificate ILM registered at its first start is recorded without changing ILM.
+	writeAdminCertificate(t, first)
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if got := registeredAdminCertificate(t); got != ilmclient.CertificateFingerprint(first) {
+		t.Fatalf("registered %q, want the first certificate's fingerprint", got)
+	}
+	if slices.Contains(edge.requests, "PUT /api/v1/users/uuid-admin") {
+		t.Fatal("ILM's administrator was updated with the certificate it holds")
+	}
+
+	// A renewal is registered on ILM's administrator, then recorded.
+	writeAdminCertificate(t, renewed)
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if edge.adminFingerprint != ilmclient.CertificateFingerprint(renewed) {
+		t.Error("ILM's administrator does not hold the renewed certificate")
+	}
+	if got := registeredAdminCertificate(t); got != ilmclient.CertificateFingerprint(renewed) {
+		t.Errorf("registered %q, want the renewed certificate's fingerprint", got)
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionAdminCertificateRegistered); c.Status != metav1.ConditionTrue {
+		t.Errorf("condition %+v", c)
+	}
+
+	// ILM refusing the manager, as ILM 2.19.0 does through the edge, leaves the record and is retried with back-off.
+	edge.refused = true
+	writeAdminCertificate(t, testCAPEM(t))
+	if _, err := reconcileILM(r); err == nil {
+		t.Fatal("no error to back off with")
+	}
+	if got := registeredAdminCertificate(t); got != ilmclient.CertificateFingerprint(renewed) {
+		t.Errorf("registered %q after a refusal, want the last registered certificate's", got)
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionAdminCertificateRegistered); c.Status != metav1.ConditionFalse || c.Reason != "AuthFailed" || c.Message != messageAdminCertificateFailed {
+		t.Errorf("condition %+v", c)
+	}
+}
+
+func TestAdminCertificateRegisteredApartFromTheSettings(t *testing.T) {
+	idp, issuer := fakeIssuer(t, discoveryDoc)
+	ilmAppliance(t, idp, nil)
+	edge := newFakeEdge(t)
+	r := &ILMReconciler{Client: testClient, APIReader: testClient, ILM: &fakeIdentity{edge: edge}}
+	writeAdminCertificate(t, testCAPEM(t))
+
+	// A failing registration leaves the settings applied: the features they gate go on.
+	edge.usersFail = true
+	if _, err := reconcileILM(r); err == nil {
+		t.Fatal("no error to back off with")
+	}
+	a := getAppliance(t)
+	if c := condition(t, a, v1alpha1.ConditionILMSettingsApplied); c.Status != metav1.ConditionTrue {
+		t.Errorf("settings condition %+v, want applied", c)
+	}
+	if c := condition(t, a, v1alpha1.ConditionAdminCertificateRegistered); c.Status != metav1.ConditionFalse || c.Reason != "Failed" {
+		t.Errorf("certificate condition %+v", c)
+	}
+
+	// A custom attribute ILM returns without its content would be blanked by the update: nothing is updated.
+	edge.usersFail, edge.secretAttribute = false, true
+	if _, err := reconcileILM(r); err == nil {
+		t.Fatal("no error to back off with")
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionAdminCertificateRegistered); c.Status != metav1.ConditionFalse || c.Reason != "UnsupportedAttribute" {
+		t.Errorf("certificate condition %+v", c)
+	}
+	if edge.adminFingerprint != "" || registeredAdminCertificate(t) != "" {
+		t.Error("the administrator was updated over a secret attribute")
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionILMSettingsApplied); c.Status != metav1.ConditionTrue {
+		t.Errorf("settings condition %+v, want applied", c)
+	}
+
+	// Without an administrator in ILM there is nothing to register.
+	edge.secretAttribute, edge.noAdmin = false, true
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if got := registeredAdminCertificate(t); got != "" {
+		t.Errorf("registered %q without an administrator", got)
+	}
+	for _, c := range getAppliance(t).Status.Conditions {
+		if c.Type == v1alpha1.ConditionAdminCertificateRegistered {
+			t.Errorf("condition %+v without an administrator", c)
+		}
+	}
+
+	// Failing settings do not hold the registration back.
+	edge.noAdmin = false
+	a = getAppliance(t)
+	a.Spec.Platform.Identity = &v1alpha1.ExternalIdentity{Issuer: issuer + "/missing", ClientID: "ilm", CredentialsRef: "idp-credentials"}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconcileILM(r); err == nil {
+		t.Fatal("the settings applied with a missing issuer")
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionAdminCertificateRegistered); c.Status != metav1.ConditionTrue {
+		t.Errorf("certificate condition %+v, want registered", c)
+	}
+}
+
+func TestRestoredAdminCertificateRecordIsRevalidated(t *testing.T) {
+	idp, _ := fakeIssuer(t, discoveryDoc)
+	ilmAppliance(t, idp, nil)
+	edge := newFakeEdge(t)
+	r := &ILMReconciler{Client: testClient, APIReader: testClient, ILM: &fakeIdentity{edge: edge}}
+	restored, other := testCAPEM(t), testCAPEM(t)
+
+	// A restore brings back a certificate recorded as registered, while ILM's database holds another one.
+	writeAdminCertificate(t, restored)
+	s := &corev1.Secret{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: platform.AdminCertificateSecret}, s); err != nil {
+		t.Fatal(err)
+	}
+	s.Annotations = map[string]string{platform.AdminCertificateRegisteredAnnotation: ilmclient.CertificateFingerprint(restored)}
+	if err := testClient.Update(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	edge.adminFingerprint = ilmclient.CertificateFingerprint(other)
+
+	if _, err := reconcileILM(r); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(edge.requests, "PUT /api/v1/users/uuid-admin") {
+		t.Fatal("the recorded certificate was trusted without asking ILM")
+	}
+	if edge.adminFingerprint != ilmclient.CertificateFingerprint(restored) {
+		t.Error("ILM's administrator does not hold the restored certificate")
 	}
 }

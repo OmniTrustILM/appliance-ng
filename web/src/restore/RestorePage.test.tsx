@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../setup/test-utils';
 import { WizardFlow } from '../wizard/WizardFlow';
+import { bundleRefreshMs } from './PlatformBundle';
 import { RestorePage, progressRefreshMs } from './RestorePage';
 
 const STATE = 'GET /appliance/api/v1/restore';
@@ -348,6 +349,72 @@ describe('RestorePage', () => {
     expect(screen.getByLabelText('Upload a backup file')).toBeChecked();
   });
 
+  describe('abandoning a failed restore', () => {
+    const failed = { setup: 'complete', restore: { backup: backupName, inPlace: true, step: 'database', message: 'failed' } };
+
+    it('offers it only on a failed restore', async () => {
+      stubApi({ [STATE]: [200, { setup: 'complete', restore: { backup: backupName, inPlace: true, step: 'waitingForKit', pausedStep: 'database' } }] });
+      renderPage();
+      expect(await screen.findByRole('button', { name: 'Resume the restore' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Abandon the restore' })).not.toBeInTheDocument();
+    });
+
+    it('confirms with what the appliance keeps, then abandons and shows the state it left', async () => {
+      let state: object = failed;
+      const { sent } = stubApi({
+        [STATE]: () => [200, state],
+        [ABANDON]: () => {
+          state = { setup: 'complete', restore: { backup: backupName, inPlace: true, step: 'abandoned' } };
+          return [204];
+        },
+      });
+      renderPage();
+      await userEvent.click(await screen.findByRole('button', { name: 'Abandon the restore' }));
+      expect(sent[ABANDON]).toBeUndefined();
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText(/keeps whatever state the restore reached/i)).toBeInTheDocument();
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Abandon the restore' }));
+      expect(await screen.findByText(/the restore was abandoned/i)).toBeInTheDocument();
+      expect(sent[ABANDON]).toEqual([{ confirm: true }]);
+      expect(screen.queryByRole('button', { name: 'Resume the restore' })).not.toBeInTheDocument();
+    });
+
+    it('lets a fresh appliance choose a backup again once the restore is abandoned', async () => {
+      stubApi({ [STATE]: [200, { setup: 'restore', restore: { backup: backupName, inPlace: false, step: 'abandoned' } }] });
+      renderPage();
+      expect(await screen.findByLabelText('Upload a backup file')).toBeChecked();
+    });
+
+    it('sends nothing when cancelled and shows the message of the appliance when it refuses', async () => {
+      const message = 'The appliance is handling a restore or another backup for it; try again once that has finished.';
+      const { sent } = stubApi({ [STATE]: [200, failed], [ABANDON]: [409, { code: 'busy', message }] });
+      renderPage();
+      await userEvent.click(await screen.findByRole('button', { name: 'Abandon the restore' }));
+      await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+      expect(sent[ABANDON]).toBeUndefined();
+      await userEvent.click(screen.getByRole('button', { name: 'Abandon the restore' }));
+      await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Abandon the restore' }));
+      expect(await screen.findByText(message)).toBeInTheDocument();
+    });
+  });
+
+  it.each([
+    ['uninstall', 'reinstalling', 'Uninstall the platform', / ILM was started again/i],
+    ['stop', 'restoring', 'Stop ILM again', / ILM was started again/i],
+    ['database', 'restoring', 'Load the database', / ILM was started again/i],
+  ])('follows a rollback at %s while %s', async (step, rollback, current, hint) => {
+    stubApi({ [STATE]: [200, { setup: 'complete', restore: { backup: backupName, inPlace: true, step, rollback, message: 'failed' } }] });
+    renderPage();
+    expect(await screen.findByText(new RegExp(`stopped at "${current}"`, 'i'))).toBeInTheDocument();
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    const steps = screen.getAllByRole('listitem').map((item) => item.textContent);
+    expect(steps).toEqual([
+      'Stop ILM', 'Uninstall the platform', 'Install ILM again at the previous version', 'Stop ILM again', "Write ILM's secrets",
+      'Load the database', 'Write the stored CBOMs', 'Start ILM',
+    ]);
+    expect(screen.getByText(current).closest('li')).toHaveAttribute('aria-current', 'step');
+  });
+
   it('does not say that ILM was started again for a failure before ILM was stopped', async () => {
     stubApi({ [STATE]: [200, { setup: 'complete', restore: { backup: backupName, inPlace: true, step: 'appliance', message: 'failed' } }] });
     renderPage();
@@ -461,5 +528,103 @@ describe('RestorePage', () => {
       expect(await screen.findByText(message)).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Restore a backup' })).toBeInTheDocument();
     });
+  });
+});
+
+const UPDATES = 'GET /appliance/api/v1/updates';
+
+class FakeXhr {
+  static last: FakeXhr;
+  upload: { onprogress?: (e: { lengthComputable: boolean; loaded: number; total: number }) => void } = {};
+  method = '';
+  url = '';
+  status = 0;
+  responseText = '';
+  onload?: () => void;
+  onerror?: () => void;
+  constructor() {
+    FakeXhr.last = this;
+  }
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader() {}
+  send() {}
+  answer(status: number, body?: object) {
+    this.status = status;
+    this.responseText = body ? JSON.stringify(body) : '';
+    this.onload?.();
+  }
+}
+
+describe('RestorePage platform bundle', () => {
+  const unavailable = { code: 'version_unavailable', message: 'The backup holds ILM 2.19.0, but this appliance has ILM 2.20.0.' };
+  const load = (state: string, reason?: string) => ({ state, kind: 'platform', startedAt: '2026-11-26T10:00:00Z', reason });
+
+  async function loadBundle() {
+    const region = await screen.findByRole('region', { name: 'Load the platform bundle of the backup' });
+    await userEvent.upload(within(region).getByLabelText(/platform bundle file/i), new File(['bundle'], 'platform.tar'));
+    await userEvent.click(within(region).getByRole('button', { name: 'Load the bundle' }));
+    return region;
+  }
+
+  it('loads the platform bundle of the backup\'s ILM version, then checks the backup again', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let checks = 0;
+    let reads = 0;
+    const { sent } = stubApi({
+      [STATE]: [200, waiting], [UPLOAD]: [204],
+      [INSPECT]: () => (++checks === 1 ? [409, unavailable] : [200, summary]),
+      [UPDATES]: () => [200, { available: [], loaded: [], load: load(++reads < 2 ? 'running' : 'loaded') }],
+    });
+    renderPage();
+    await uploadAndCheck();
+    expect(await screen.findByText(/holds ILM 2\.19\.0/)).toBeInTheDocument();
+    const region = await loadBundle();
+    expect(FakeXhr.last.method).toBe('PUT');
+    expect(FakeXhr.last.url).toBe('/appliance/api/v1/updates/upload?kind=platform');
+    await act(async () => FakeXhr.last.answer(202));
+    expect(await within(region).findByText(/checking and loading the bundle/i)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(bundleRefreshMs); });
+    expect(await within(region).findByText(/the platform bundle was loaded\. check the backup again/i)).toBeInTheDocument();
+    await giveKit();
+    expect(await screen.findByText('old-node')).toBeInTheDocument();
+    expect(sent[INSPECT]).toHaveLength(2);
+  });
+
+  it.each([
+    [() => FakeXhr.last.answer(409, { code: 'busy' }), /another operation is running/i],
+    [() => FakeXhr.last.onerror?.(), /cannot be reached/i],
+  ])('shows why the bundle could not be uploaded', async (answer, text) => {
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [409, unavailable] });
+    renderPage();
+    await uploadAndCheck();
+    const region = await loadBundle();
+    await act(async () => answer());
+    expect(await within(region).findByText(text)).toBeInTheDocument();
+  });
+
+  it('shows why the bundle was not loaded', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    stubApi({
+      [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [409, unavailable],
+      [UPDATES]: [200, { available: [], loaded: [], load: load('refused', 'badSignature') }],
+    });
+    renderPage();
+    await uploadAndCheck();
+    const region = await loadBundle();
+    await act(async () => FakeXhr.last.answer(202));
+    expect(await within(region).findByText(/the bundle could not be loaded\. the bundle's signature does not verify/i)).toBeInTheDocument();
+  });
+
+  it('offers no bundle for another refusal', async () => {
+    stubApi({ [STATE]: [200, waiting], [UPLOAD]: [204], [INSPECT]: [409, { code: 'tampered', message: 'The backup was changed.' }] });
+    renderPage();
+    await uploadAndCheck();
+    expect(await screen.findByText('The backup was changed.')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Load the platform bundle of the backup' })).not.toBeInTheDocument();
   });
 });

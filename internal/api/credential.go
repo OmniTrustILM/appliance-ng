@@ -17,6 +17,7 @@ import (
 	"software.sslmate.com/src/go-pkcs12"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
+	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
@@ -40,7 +41,10 @@ var credentialEncoders = map[string]*pkcs12.Encoder{
 	"modern":                   pkcs12.Modern,
 }
 
-var errDownloaded = errors.New("the administrator credential was downloaded already")
+var (
+	errDownloaded    = errors.New("the administrator credential was downloaded already")
+	errNotRegistered = errors.New("ILM's administrator does not hold the renewed certificate yet")
+)
 
 // PostPlatformAdminCredential hands out the ILM administrator's certificate and key as a PKCS#12 file encrypted
 // with the request's password, once per certificate the platform issues. It fails closed: without its audit entry
@@ -90,6 +94,10 @@ func (s *Server) PostPlatformAdminCredential(ctx context.Context, req PostPlatfo
 		return PostPlatformAdminCredential404JSONResponse{NotFoundJSONResponse: NotFoundJSONResponse{
 			Code: "not_issued", Message: "The platform has not issued the administrator certificate yet.",
 		}}, nil
+	case errors.Is(err, errNotRegistered):
+		return PostPlatformAdminCredential404JSONResponse{NotFoundJSONResponse: NotFoundJSONResponse{
+			Code: "not_registered", Message: "The renewed administrator certificate is not registered in the ILM yet. The dashboard shows why.",
+		}}, nil
 	case errors.Is(err, errDownloaded):
 		return PostPlatformAdminCredential410JSONResponse{GoneJSONResponse: GoneJSONResponse{
 			Code: "downloaded", Message: "The administrator certificate was downloaded already; it is handed out once.",
@@ -98,7 +106,8 @@ func (s *Server) PostPlatformAdminCredential(ctx context.Context, req PostPlatfo
 	return nil, fmt.Errorf("hand out the administrator credential: %w", err)
 }
 
-// adminCredentialSecret reads AdminCredentialSecret, failing with errDownloaded once its certificate was handed out.
+// adminCredentialSecret reads AdminCredentialSecret, failing with errDownloaded once its certificate was handed out and
+// with errNotRegistered while ILM's administrator holds another certificate than the renewed one.
 func (s *Server) adminCredentialSecret(ctx context.Context) (*corev1.Secret, error) {
 	secret := &corev1.Secret{}
 	if err := s.deps.Reader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
@@ -107,7 +116,39 @@ func (s *Server) adminCredentialSecret(ctx context.Context) (*corev1.Secret, err
 	if secret.Annotations[DownloadedAnnotation] == certificateSum(secret) {
 		return nil, errDownloaded
 	}
+	// Without a record of registration or download the certificate is the one ILM registered at its first start; one
+	// downloaded before replaced it, so it waits for ILM's administrator to hold it.
+	recorded := secret.Annotations[platform.AdminCertificateRegisteredAnnotation] != "" || secret.Annotations[DownloadedAnnotation] != ""
+	if recorded && !registeredNow(secret) {
+		return nil, errNotRegistered
+	}
 	return secret, nil
+}
+
+// registeredNow tells whether ILM's administrator is recorded to hold the certificate in the TLS Secret.
+func registeredNow(secret *corev1.Secret) bool {
+	return secret.Annotations[platform.AdminCertificateRegisteredAnnotation] == ilmclient.CertificateFingerprint(secret.Data[corev1.TLSCertKey])
+}
+
+// renewedCredential tells whether a renewed certificate, which ILM's administrator holds, waits in the TLS Secret to
+// be downloaded once more.
+func renewedCredential(secret *corev1.Secret) bool {
+	downloaded := secret.Annotations[DownloadedAnnotation]
+	return downloaded != "" && downloaded != certificateSum(secret) && registeredNow(secret)
+}
+
+// adminCredentialRenewed reads whether a renewed administrator credential waits to be downloaded; a Secret that cannot
+// be read offers none.
+func (s *Server) adminCredentialRenewed(ctx context.Context) bool {
+	secret := &corev1.Secret{}
+	err := s.deps.Reader.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			s.deps.Log.Warn("administrator credential not read for the status", "error", err)
+		}
+		return false
+	}
+	return renewedCredential(secret)
 }
 
 // certificateSum returns the hex SHA-256 of the certificate in the TLS Secret.

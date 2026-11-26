@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"filippo.io/age"
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
@@ -23,12 +24,14 @@ import (
 const (
 	updatesPath       = auth.APIBase + "/updates"
 	updatesUploadPath = updatesPath + "/upload"
+	// updatesRollbackPath takes the recovery kit.
+	updatesRollbackPath = updatesPath + "/rollback"
 	// maxBundleUpload caps an uploaded bundle.
 	maxBundleUpload = 64 << 30
 
 	codeUpdatesUnavailable = "updates_unavailable"
 	codeUpdateBusy         = "busy"
-	// codeBundleLoading refuses another operation while an update bundle loads.
+	// codeBundleLoading refuses another operation while an update or a bundle load runs.
 	codeBundleLoading = "bundle_loading"
 	detailKind        = "kind"
 	detailVersion     = "version"
@@ -45,7 +48,58 @@ var (
 	answerUpdateBusy = refused(http.StatusConflict, codeUpdateBusy,
 		"A backup, a restore, an update or another bundle load is running; try again once it has finished.")
 	answerNoNotes = refused(http.StatusNotFound, codeNotFound, "There are no release notes for that bundle.")
+
+	answerUpdateUnconfirmed = refusedField(codeInvalid, "confirm",
+		"Confirm the update: the way back is a reinstall and a restore of the backup taken first, which loses the data changed since.")
+	answerUpdateBlocked = refused(http.StatusConflict, "blocked", "The bundle cannot be installed on what runs.")
+
+	answerRollbackUnconfirmed = refusedField(codeInvalid, fieldConfirm,
+		"Confirm the rollback: ILM is installed again at the previous version and the backup taken before the update is restored, which loses the data changed since.")
 )
+
+// rollbackRefusals answer the refusals of a rollback that are not those of an update.
+var rollbackRefusals = map[string]restoreAnswer{
+	update.NoPreUpdateBackup: refused(http.StatusConflict, "no_pre_update_backup",
+		"There is no platform update to roll back, or the backup taken before it is gone."),
+	update.NoPreviousBundle: refused(http.StatusConflict, "no_previous_bundle",
+		"The platform bundle that ran before the update is no longer on the appliance, and an older bundle cannot be loaded; restore the backup taken before the update onto a fresh appliance instead."),
+	update.OperatorChanged: refused(http.StatusConflict, "operator_changed",
+		"The update installed a newer ILM operator, which is never downgraded; restore the backup onto a fresh appliance instead."),
+	update.NotNeeded: refused(http.StatusConflict, "not_needed",
+		"The update failed before it asked for the new ILM version, so ILM still runs the previous version; a rollback would only lose the data changed since the backup."),
+	update.ExternalDatabase: refused(http.StatusConflict, "external_database",
+		"The platform uses an external database, which a rollback cannot restore; restore the backup onto a fresh appliance instead."),
+	update.WrongKit: refused(http.StatusConflict, "foreign_kit",
+		"The kit does not open the backup taken before the update: the backup was encrypted to another backup key."),
+	update.BackupBroken: refused(http.StatusConflict, "backup_broken",
+		"The backup taken before the update cannot be restored: it is damaged, too new, or holds another ILM version."),
+	update.UpgradeInProgress: updateRefusals[update.PlatformUpgrading],
+}
+
+// updateRefusals answer the refusals of an update that are not about the bundle itself.
+var updateRefusals = map[string]restoreAnswer{
+	update.UpdateRunning:  refused(http.StatusConflict, "update_running", "Another update is running."),
+	update.BackupRunning:  refused(http.StatusConflict, "backup_running", "A backup is running; update once it has finished."),
+	update.RestoreRunning: refused(http.StatusConflict, "restore_running", "A restore is running; update once it has ended."),
+	update.BundleLoading:  refused(http.StatusConflict, codeBundleLoading, "A bundle is loading; update once it has finished."),
+	update.Busy:           answerUpdateBusy,
+	update.PlatformUpgrading: refused(http.StatusConflict, "upgrade_in_progress",
+		"The ILM operator is upgrading the platform; update once it has finished."),
+	update.NotInstalled: refused(http.StatusConflict, "not_installed", "The platform is not installed yet."),
+	update.LastUpdateFailed: refused(http.StatusConflict, "last_update_failed",
+		"The last platform update failed; roll it back before installing another."),
+	update.OperatorOlderThanRunning: refused(http.StatusConflict, "operator_older_than_running",
+		"The bundle's ILM operator is older than the one that runs, which is never downgraded."),
+	update.NotFound: refused(http.StatusNotFound, codeNotFound, "The bundle is neither loaded nor found online."),
+	update.NoSpace: refused(http.StatusConflict, "no_space",
+		"The data volume has too little free space for the update: it needs twice the bundle's size."),
+}
+
+// blockedReasons are the reasons a bundle cannot be installed on what runs.
+var blockedReasons = map[string]struct{}{
+	update.OlderThanRunning: {}, update.OperatorOutOfRange: {}, update.NeedsAppliance: {}, update.WrongArch: {},
+	update.SameVersion: {}, update.InvalidMetadata: {},
+}
 
 // Updater loads bundles, one at a time, into the appliance's registry and data volume.
 type Updater interface {
@@ -57,6 +111,22 @@ type Updater interface {
 	Notes(kind, version string) ([]byte, error)
 }
 
+// PlatformUpdater installs a platform bundle in the background and writes the audit entry of the start.
+type PlatformUpdater interface {
+	// StartPlatform starts the update to version to by user; it refuses with an *update.Error.
+	StartPlatform(ctx context.Context, to, user string) error
+	PlatformRollback
+}
+
+// PlatformRollback rolls the last platform update back in the background and writes the audit entry of the start.
+type PlatformRollback interface {
+	// Rollback rolls the last platform update back with id, the recovery kit's backup key, by user; it refuses with
+	// an *update.Error.
+	Rollback(ctx context.Context, id age.Identity, user string) error
+	// RollbackRefused is the fixed reason the last platform update cannot be rolled back now; empty when it can.
+	RollbackRefused(ctx context.Context) string
+}
+
 // UpdateFinder checks the online repository for newer bundles and records them in the status.
 type UpdateFinder interface {
 	Check(ctx context.Context) error
@@ -66,7 +136,13 @@ func (a restoreAnswer) VisitGetUpdatesResponse(w http.ResponseWriter) error     
 func (a restoreAnswer) VisitPostUpdatesCheckResponse(w http.ResponseWriter) error { return a.visit(w) }
 func (a restoreAnswer) VisitPutUpdatesUploadResponse(w http.ResponseWriter) error { return a.visit(w) }
 func (a restoreAnswer) VisitPostUpdatesFetchResponse(w http.ResponseWriter) error { return a.visit(w) }
-func (a restoreAnswer) VisitGetUpdateNotesResponse(w http.ResponseWriter) error   { return a.visit(w) }
+func (a restoreAnswer) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+	return a.visit(w)
+}
+func (a restoreAnswer) VisitGetUpdateNotesResponse(w http.ResponseWriter) error { return a.visit(w) }
+func (a restoreAnswer) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+	return a.visit(w)
+}
 
 func (s *Server) updatesAvailable() bool {
 	return s.deps.Updates != nil && s.deps.Finder != nil
@@ -81,7 +157,14 @@ func (s *Server) GetUpdates(ctx context.Context, _ GetUpdatesRequestObject) (Get
 	if err != nil {
 		return nil, err
 	}
+	if s.deps.Platform != nil {
+		u.Rollback = rollbackOffer(s.deps.Platform.RollbackRefused(ctx))
+	}
 	return restoreAnswer{status: http.StatusOK, body: u}, nil
+}
+
+func rollbackOffer(reason string) *RollbackOffer {
+	return &RollbackOffer{Available: reason == "", Reason: optional(reason)}
 }
 
 // PostUpdatesCheck checks the online repository now; a failed check is answered with its fixed reason.
@@ -144,7 +227,7 @@ func (s *Server) PostUpdatesFetch(ctx context.Context, req PostUpdatesFetchReque
 		return answered(ctx, map[string]string{}, answerBadKind), nil
 	}
 	details := map[string]string{detailKind: string(req.Body.Kind)}
-	if _, err := semver.StrictNewVersion(req.Body.Version); err != nil {
+	if !validVersion(req.Body.Version) {
 		return answered(ctx, details, answerBadVersion), nil
 	}
 	details[detailVersion] = req.Body.Version
@@ -213,7 +296,10 @@ func (s *Server) updates(ctx context.Context) (Updates, error) {
 	if err != nil {
 		return Updates{}, err
 	}
-	out := Updates{Available: []UpdateBundle{}, Loaded: []UpdateBundle{}}
+	out := Updates{
+		Available: []UpdateBundle{}, Loaded: []UpdateBundle{}, Operator: optional(a.Status.Versions.Operator),
+		ExternalDatabase: a.Spec.Platform != nil && a.Spec.Platform.Database != nil,
+	}
 	if u := a.Status.Updates; u != nil {
 		if u.LastCheck != nil {
 			out.LastCheck = &u.LastCheck.Time
@@ -223,6 +309,16 @@ func (s *Server) updates(ctx context.Context) (Updates, error) {
 			out.LastCheckError = &e
 		}
 		out.Available, out.Loaded = updateBundles(u.Available), updateBundles(u.Loaded)
+	}
+	if u := a.Status.Update; u != nil {
+		out.Update = &UpdateProgress{
+			Kind: UpdateProgressKind(u.Kind), From: u.From, To: u.To, Step: optional(u.Step), Message: optional(u.Message),
+			Backup: optional(u.Backup), StartedAt: u.StartedAt.Time, PointOfNoReturn: u.PointOfNoReturn,
+		}
+		// A rollback is done by a restore, whose step and failure are those of the rollback.
+		if r := a.Status.Restore; u.Kind == update.KindRollback && r != nil && r.Rollback != nil {
+			out.Update.Step, out.Update.Message = optional(r.Step), optional(r.Message)
+		}
 	}
 	if last := s.deps.Updates.Last(); last.State != "" {
 		out.Load = &BundleLoad{
@@ -252,4 +348,95 @@ func updateBundles(infos []v1alpha1.BundleInfo) []UpdateBundle {
 		out = append(out, u)
 	}
 	return out
+}
+
+// PostUpdatesPlatform starts the update to a platform bundle in the background, once confirmed. The job writes the
+// audit entry of a started update; a refused one is recorded here.
+func (s *Server) PostUpdatesPlatform(ctx context.Context, req PostUpdatesPlatformRequestObject) (PostUpdatesPlatformResponseObject, error) {
+	if !s.updatesAvailable() || s.deps.Platform == nil {
+		return answerUpdatesUnavailable, nil
+	}
+	details := map[string]string{}
+	if req.Body != nil {
+		details[detailVersion] = req.Body.Version
+	}
+	switch {
+	case req.Body == nil || !req.Body.Confirm:
+		return answered(ctx, details, answerUpdateUnconfirmed), nil
+	case !validVersion(req.Body.Version):
+		return answered(ctx, details, answerBadVersion), nil
+	}
+	err := s.deps.Platform.StartPlatform(ctx, req.Body.Version, requestFrom(ctx).user)
+	if err == nil {
+		requestFrom(ctx).unaudited = true
+		return restoreAnswer{status: http.StatusAccepted}, nil
+	}
+	if answer, ok := updateRefusal(err); ok {
+		return answered(ctx, details, answer), nil
+	}
+	return nil, fmt.Errorf("start the platform update: %w", err)
+}
+
+// PostUpdatesRollback rolls the last platform update back with the uploaded recovery kit in the background, once
+// confirmed. The job writes the audit entry of a started rollback; a refused one is recorded here, never with the kit
+// or the passphrase.
+func (s *Server) PostUpdatesRollback(ctx context.Context, req PostUpdatesRollbackRequestObject) (PostUpdatesRollbackResponseObject, error) {
+	if !s.updatesAvailable() || s.deps.Platform == nil {
+		return answerUpdatesUnavailable, nil
+	}
+	details := map[string]string{}
+	parts, ref := readUpload(req.Body, partKit)
+	switch {
+	case ref != nil:
+		return answered(ctx, details, fromRefusal(ref)), nil
+	case string(parts[fieldConfirm]) != "true":
+		return answered(ctx, details, answerRollbackUnconfirmed), nil
+	}
+	kit, err := s.openKit(ctx, parts[partKit], string(parts[partPassphrase]))
+	if answer, ok := restoreRefusal(err); ok {
+		return answered(ctx, details, answer), nil
+	}
+	if err != nil {
+		return nil, restoreFailed("open the recovery kit", err)
+	}
+	err = s.deps.Platform.Rollback(ctx, kit.BackupKey, requestFrom(ctx).user)
+	if err == nil {
+		requestFrom(ctx).unaudited = true
+		return restoreAnswer{status: http.StatusAccepted}, nil
+	}
+	if answer, ok := rollbackRefusal(err); ok {
+		return answered(ctx, details, answer), nil
+	}
+	return nil, restoreFailed("start the rollback", err)
+}
+
+// rollbackRefusal is the answer to a refusal of a rollback; false for a failure.
+func rollbackRefusal(err error) (restoreAnswer, bool) {
+	var e *update.Error
+	if errors.As(err, &e) {
+		if answer, ok := rollbackRefusals[e.Reason]; ok {
+			return answer, true
+		}
+	}
+	return updateRefusal(err)
+}
+
+// updateRefusal is the answer to a refusal of an update; false for a failure.
+func updateRefusal(err error) (restoreAnswer, bool) {
+	var e *update.Error
+	if !errors.As(err, &e) {
+		return restoreAnswer{}, false
+	}
+	if answer, ok := updateRefusals[e.Reason]; ok {
+		return answer, true
+	}
+	if _, ok := blockedReasons[e.Reason]; ok {
+		return answerUpdateBlocked, true
+	}
+	return restoreAnswer{}, false
+}
+
+func validVersion(v string) bool {
+	_, err := semver.StrictNewVersion(v)
+	return err == nil
 }

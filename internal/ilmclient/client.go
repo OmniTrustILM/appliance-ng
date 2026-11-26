@@ -34,6 +34,8 @@ const (
 	ReasonInvalid       = "invalid"
 	ReasonInvalidIssuer = "invalidIssuer"
 	ReasonFailed        = "failed"
+	// ReasonUnsupportedAttribute refuses an update that would blank a custom attribute whose content ILM never returns.
+	ReasonUnsupportedAttribute = "unsupportedAttribute"
 )
 
 // Error is a failed call: what was called, the HTTP status when there was an answer, and the fixed reason.

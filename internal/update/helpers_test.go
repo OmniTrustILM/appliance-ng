@@ -97,6 +97,7 @@ func TestMain(m *testing.M) {
 	sourceAddr = src.Listener.Addr().String()
 	remote.DefaultTransport = sourceTransport(nil)
 	code := m.Run()
+	stopCluster()
 	src.Close()
 	os.Exit(code)
 }
@@ -133,7 +134,11 @@ func newEnv(t *testing.T) *env {
 		zotHost: zotHost, zotPool: pool, zot: registry.New(zotHost, pool, registry.PushUser, ""),
 		dir: filepath.Join(root, "bundles"), uploads: filepath.Join(root, "updates"),
 		audit: &fakeAudit{}, logs: &bytes.Buffer{}, lock: &fakeLock{},
-		rel: &release.Manifest{Version: "1.0.0", Compatibility: release.Compatibility{Operator: ">=1.0.0 <2.0.0", MinAppliance: "1.0.0"}},
+		rel: &release.Manifest{
+			Version: "1.0.0", Compatibility: release.Compatibility{Operator: ">=1.0.0 <2.0.0", MinAppliance: "1.0.0"},
+			// The release mirrors the registry the bundle images come from.
+			Images: []release.Image{{Ref: sourceHost + "/release/tool:1.0"}},
+		},
 	}
 	if err := os.MkdirAll(e.uploads, 0o700); err != nil {
 		t.Fatal(err)
@@ -187,6 +192,7 @@ func (e *env) loaderWith(online update.Online) *update.Loader {
 		Client:    e.client,
 		Registry:  func(context.Context) (update.Registry, error) { return e.zot, nil },
 		Admission: e.lock,
+		Backups:   e.lock,
 		Audit:     e.audit,
 		Log:       slog.New(slog.NewTextHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Release:   e.rel,
@@ -456,10 +462,24 @@ func (f *fakeAudit) last() audit.Entry {
 	return f.entries[len(f.entries)-1]
 }
 
-// fakeLock is the shared admission of backup.Runner.
+// fakeLock is the shared admission of backup.Runner, and its local backups.
 type fakeLock struct {
 	mu   sync.Mutex
 	held bool
+	// backups are the local backups.
+	backups []v1alpha1.BackupRecord
+}
+
+func (l *fakeLock) Local() ([]v1alpha1.BackupRecord, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.backups), nil
+}
+
+func (l *fakeLock) setBackups(records ...v1alpha1.BackupRecord) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.backups = records
 }
 
 func (l *fakeLock) Hold() (func(), error) {

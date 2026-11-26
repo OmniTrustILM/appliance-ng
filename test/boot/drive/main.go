@@ -20,14 +20,20 @@
 //	drive restore --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
 //	            --backup <file> --kit <file> --passphrase-file <file> --ilm-host <fqdn> --out <file>
 //	            [--kube-addr <host:port>] [--apid <host:port>] [--ca-file <pem>] [--server-name <ip>]
-//	drive ilm-marker --create|--check --url <console> --host-name <fqdn> --credential <p12>
+//	drive ilm-marker --create|--check|--present --url <console> --host-name <fqdn> --credential <p12>
 //	            --credential-password-file <file> --ui-url <url> --ui-addr <host:port>
-//	            [--kit <file> --passphrase-file <file> --kube-addr <host:port> --client-secret-out <file>]
+//	            [--kit <file> --passphrase-file <file> --kube-addr <host:port> --client-secret-out <file>] [--direct]
 //	drive cbom --create|--check --url <console> --user <user> --password <password> --seed-file <file>
 //	            --host-name <fqdn> --credential <p12> --credential-password-file <file> --ui-url <url>
 //	            --ui-addr <host:port>
 //	drive bundle-load --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
 //	            --file <bundle tar> --image <ref> --kit <file> --passphrase-file <file> [--kube-addr <host:port>]
+//	drive credential --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --credential <p12> --credential-password-file <file>
+//	drive update --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --file <bundle tar>
+//	drive rollback --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --kit <file> --passphrase-file <file> --ilm-version <x.y.z>
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
@@ -64,7 +70,10 @@
 // the console's built-in CA must accept. --create creates the ILM group restore-marker. --check waits until the group
 // is there, reads the ILM client's secret with the kubeconfig of the kit in --kit, checks that the Keycloak token
 // endpoint of the ILM accepts it and refuses another one, and that no manager log holds it or the credential's
-// password; with --client-secret-out it keeps the secret there, mode 0600, for the boot test's leak check.
+// password; with --client-secret-out it keeps the secret there, mode 0600, for the boot test's leak check. --present
+// waits until the group is there. With --direct it reaches ILM Core straight through a port-forward with the
+// kubeconfig of the kit in --kit instead of through the ILM edge, sending the credential's certificate as URL-encoded
+// PEM in the client certificate header, as ILM 2.19.0 takes it: its Core refuses the header the edge sends.
 // cbom signs in and reaches the ILM like ilm-marker. --create turns the CBOM repository on with its store on the
 // appliance, waits until the CBOMRepositoryApplied and ILMSettingsApplied conditions are True and uploads a CBOM
 // through ILM. --check waits for both conditions and checks that ILM lists that CBOM and reads its content from the
@@ -72,6 +81,12 @@
 // bundle-load loads the platform bundle in --file, runs a pod from --image, the bundle's curl image by digest as a load
 // creates no tag, with the kubeconfig of the kit in --kit, and checks that a damaged copy of the file is refused. It
 // prints sizes, states and reasons only.
+// credential signs in and keeps the ILM administrator's credential in --credential, mode 0600, encrypted with the
+// password in --credential-password-file, without checking ILM.
+// update signs in, loads the platform bundle in --file, installs it and waits until the update is done and the
+// appliance runs the bundle's ILM version. rollback signs in, rolls the last platform update back with the kit in
+// --kit, resuming it with the kit when it waits for it, and waits until it is done and the appliance runs ILM
+// --ilm-version. Both print versions, steps and reasons only.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 and restore trust that certificate too while
@@ -180,6 +195,9 @@ func main() {
 	fs.StringVar(&o.image, "image", "", "curl image by digest, which only the appliance's registry serves after the load (bundle-load)")
 	fs.BoolVar(&o.create, "create", false, "create the marker group (ilm-marker)")
 	fs.BoolVar(&o.check, "check", false, "check the marker group and Keycloak after a restore (ilm-marker)")
+	fs.BoolVar(&o.present, "present", false, "wait until the marker group is there (ilm-marker)")
+	fs.BoolVar(&o.direct, "direct", false, "reach ILM Core through a port-forward with the kit's kubeconfig (ilm-marker)")
+	fs.StringVar(&o.ilmVersion, "ilm-version", "", "ILM version the platform runs once rolled back (rollback)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {
@@ -192,7 +210,8 @@ func main() {
 	run, ok := map[string]func(context.Context, options) error{
 		cmdPart1: part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
 		cmdBackup: backupNow, "serve-targets": serveTargets, cmdRestore: restoreBackup, "ilm-marker": ilmMarker,
-		cmdCBOM: cbomCommand, cmdBundleLoad: bundleLoad,
+		cmdCBOM: cbomCommand, cmdBundleLoad: bundleLoad, cmdCredential: credentialCommand, cmdUpdate: platformUpdate,
+		cmdRollback: rollbackUpdate,
 	}[cmd]
 	if !ok {
 		usage()
@@ -207,6 +226,10 @@ func main() {
 		timeout = certificateTimeout + restoreTimeout
 	case cmdBundleLoad:
 		timeout = 2*bundleLoadTimeout + podTimeout
+	case cmdUpdate:
+		timeout = bundleLoadTimeout + updateTimeout + waitTimeout
+	case cmdRollback:
+		timeout = updateTimeout + waitTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -218,8 +241,9 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore|bundle-load --url <console> [flags]")
-	fmt.Fprintln(os.Stderr, "       drive ilm-marker|cbom --create|--check --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore|bundle-load|credential|update|rollback --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "       drive ilm-marker --create|--check|--present --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "       drive cbom --create|--check --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive api METHOD PATH --url <console> [--body <json>] [flags]")
 	os.Exit(2)
@@ -234,8 +258,8 @@ type options struct {
 	sftpPasswordFile, s3SecretFile, sftpFingerprint             string
 	guestHost, mode, backupFile, ilmHost                        string
 	credential, credentialPasswordFile, clientSecretOut         string
-	bundleFile, image                                           string
-	create, check                                               bool
+	bundleFile, image, ilmVersion                               string
+	create, check, present, direct                              bool
 }
 
 func (o options) validate(cmd string) error {
@@ -277,10 +301,24 @@ func (o options) validateCommand(cmd string) error {
 		return errors.New("--kit, --passphrase-file, --dir, --guest-host, --sftp-fingerprint, --sftp-password-file and --s3-secret-file are required")
 	case cmd == cmdRestore && (o.backupFile == "" || o.kitFile == "" || o.passphraseFile == "" || o.ilmHost == "" || o.out == ""):
 		return errors.New("--backup, --kit, --passphrase-file, --ilm-host and --out are required")
+	}
+	return o.validateOperation(cmd)
+}
+
+// validateOperation checks the flags of the commands that drive a CBOM, a bundle, a credential, an update or a
+// rollback.
+func (o options) validateOperation(cmd string) error {
+	switch {
 	case cmd == cmdCBOM && (o.credential == "" || o.uiURL == "" || o.uiAddr == ""):
 		return errors.New("--credential, --credential-password-file, --ui-url and --ui-addr are required")
 	case cmd == cmdBundleLoad && (o.bundleFile == "" || o.image == "" || o.kitFile == "" || o.passphraseFile == ""):
 		return errors.New("--file, --image, --kit and --passphrase-file are required")
+	case cmd == cmdCredential && o.credential == "":
+		return errNoCredential
+	case cmd == cmdUpdate && o.bundleFile == "":
+		return errors.New("--file is required")
+	case cmd == cmdRollback && (o.kitFile == "" || o.passphraseFile == "" || o.ilmVersion == ""):
+		return errors.New("--kit, --passphrase-file and --ilm-version are required")
 	case cmd == cmdCBOM && o.create == o.check:
 		return errors.New("one of --create and --check is required")
 	}
@@ -292,12 +330,21 @@ func (o options) validateMarker() error {
 	switch {
 	case o.hostName == "" || o.credential == "" || o.credentialPasswordFile == "" || o.uiURL == "" || o.uiAddr == "":
 		return errors.New("--host-name, --credential, --credential-password-file, --ui-url and --ui-addr are required")
-	case o.create == o.check:
-		return errors.New("one of --create and --check is required")
-	case o.check && (o.kitFile == "" || o.passphraseFile == ""):
-		return errors.New("--check needs --kit and --passphrase-file")
+	case btoi(o.create)+btoi(o.check)+btoi(o.present) != 1:
+		return errors.New("one of --create, --check and --present is required")
+	case (o.check || o.direct) && (o.kitFile == "" || o.passphraseFile == ""):
+		return errors.New("--check and --direct need --kit and --passphrase-file")
+	case o.direct && o.check:
+		return errors.New("--direct goes with --create or --present")
 	}
 	return nil
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func step(name string) { fmt.Printf("drive: %s\n", name) }

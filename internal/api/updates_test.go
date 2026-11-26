@@ -8,17 +8,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
@@ -74,6 +77,7 @@ func (h *harness) withUpdates() *updatesFixture {
 			return nil, errors.New("401 Unauthorized for appliance-manager:" + zotPassword)
 		},
 		Admission: f.runner,
+		Backups:   f.runner,
 		Audit:     h.audit,
 		Log:       h.srv.deps.Log,
 		Release:   testRelease,
@@ -185,7 +189,7 @@ func TestUpdatesUnavailable(t *testing.T) {
 	wantCode(t, h.request(http.MethodGet, pathUpdates, nil, s), http.StatusServiceUnavailable, codeUpdatesUnavailable)
 	wantCode(t, h.request(http.MethodPost, pathUpdatesCheck, nil, s), http.StatusServiceUnavailable, codeUpdatesUnavailable)
 	wantCode(t, h.uploadBundle("platform", strings.NewReader("x"), 1, s), http.StatusServiceUnavailable, codeUpdatesUnavailable)
-	wantCode(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: Platform, Version: "1.0.0"}, s),
+	wantCode(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: BundleKindPlatform, Version: "1.0.0"}, s),
 		http.StatusServiceUnavailable, codeUpdatesUnavailable)
 	wantCode(t, h.request(http.MethodGet, pathUpdates+"/notes/platform/1.0.0", nil, s), http.StatusServiceUnavailable, codeUpdatesUnavailable)
 }
@@ -244,7 +248,7 @@ func TestUploadRefusedDuringUpdate(t *testing.T) {
 	<-held
 	body := &countingBody{r: bytes.NewReader(f.signedBundle(t))}
 	wantCode(t, h.uploadBundle("platform", body, int64(body.r.Len()), s), http.StatusConflict, codeUpdateBusy)
-	wantCode(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: Platform, Version: "9.0.0"}, s), http.StatusConflict, codeUpdateBusy)
+	wantCode(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: BundleKindPlatform, Version: "9.0.0"}, s), http.StatusConflict, codeUpdateBusy)
 	close(free)
 	if body.n != 0 {
 		t.Errorf("%d bytes of a refused upload were read", body.n)
@@ -304,7 +308,7 @@ func TestUploadLoadsInTheBackground(t *testing.T) {
 		t.Fatalf("load %+v", st)
 	}
 	u := updatesOf(t, h, s)
-	if u.Load == nil || u.Load.State != BundleLoadStateRefused || u.Load.Reason == nil || *u.Load.Reason != update.InvalidBundle || u.Load.Kind != Platform {
+	if u.Load == nil || u.Load.State != BundleLoadStateRefused || u.Load.Reason == nil || *u.Load.Reason != update.InvalidBundle || u.Load.Kind != BundleKindPlatform {
 		t.Errorf("load %+v", u.Load)
 	}
 	if entries, _ := os.ReadDir(f.uploads); len(entries) != 0 {
@@ -356,8 +360,8 @@ func TestFetchAnswers(t *testing.T) {
 	createAppliance(t, v1alpha1.SetupComplete)
 	f := h.withUpdates()
 	s := h.signIn()
-	wantCode(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: Platform, Version: "../1"}, s), http.StatusBadRequest, codeInvalid)
-	wantStatus(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: Platform, Version: "9.0.0"}, s), http.StatusAccepted)
+	wantCode(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: BundleKindPlatform, Version: "../1"}, s), http.StatusBadRequest, codeInvalid)
+	wantStatus(t, h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: BundleKindPlatform, Version: "9.0.0"}, s), http.StatusAccepted)
 	if st := f.waitLoad(t); st.State != update.StateFailed || st.Version != "9.0.0" {
 		t.Errorf("load %+v", st)
 	}
@@ -398,11 +402,171 @@ func updateAnswers(t *testing.T, h *harness, s *session, answers *bytes.Buffer) 
 	if st := f.waitLoad(t); st.State != update.StateFailed {
 		t.Fatalf("load %+v, want the push to fail", st)
 	}
-	rec = h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: Platform, Version: "9.0.0"}, s)
+	rec = h.request(http.MethodPost, pathUpdatesFetch, UpdateFetch{Kind: BundleKindPlatform, Version: "9.0.0"}, s)
 	wantStatus(t, rec, http.StatusAccepted)
 	answers.Write(rec.Body.Bytes())
 	f.waitLoad(t)
 	rec = h.request(http.MethodPost, pathUpdatesCheck, nil, s)
 	wantStatus(t, rec, http.StatusOK)
 	answers.Write(rec.Body.Bytes())
+}
+
+const pathUpdatesPlatform = pathUpdates + "/platform"
+
+// fakePlatform records the updates started and refuses them with err.
+type fakePlatform struct {
+	err     error
+	started []string
+	// rollbackErr refuses a rollback; rollbackRefused is why one cannot start now.
+	rollbackErr     error
+	rollbackRefused string
+	rolledBack      []rolledBack
+}
+
+func (f *fakePlatform) StartPlatform(_ context.Context, to, user string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.started = append(f.started, to+" by "+user)
+	return nil
+}
+
+func (h *harness) withPlatform() *fakePlatform {
+	h.withUpdates()
+	p := &fakePlatform{}
+	h.srv.deps.Platform = p
+	return p
+}
+
+// TestPlatformUpdateNeedsConfirm refuses an update that is not confirmed or names no version X.Y.Z, and starts none.
+func TestPlatformUpdateNeedsConfirm(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	p := h.withPlatform()
+	s := h.signIn()
+	wantCode(t, h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "9.0.0"}, s), http.StatusBadRequest, codeInvalid)
+	wantCode(t, h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "../9", Confirm: true}, s), http.StatusBadRequest, codeInvalid)
+	if len(p.started) != 0 {
+		t.Errorf("started %v", p.started)
+	}
+	if e := h.entry(update.AuditUpdateStart); e.Details[detailRefused] != codeInvalid || e.Details[detailVersion] != "../9" {
+		t.Errorf("audit entry %+v", e)
+	}
+}
+
+// TestPlatformUpdateStarts starts the update by the signed-in user with 202 and leaves its audit entry to the job.
+func TestPlatformUpdateStarts(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	p := h.withPlatform()
+	s := h.signIn()
+	wantStatus(t, h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "9.0.0", Confirm: true}, s), http.StatusAccepted)
+	if len(p.started) != 1 || p.started[0] != "9.0.0 by "+testUser {
+		t.Errorf("started %v", p.started)
+	}
+	for _, e := range h.entries() {
+		if e.Action == update.AuditUpdateStart {
+			t.Errorf("the API wrote the start's audit entry %+v", e)
+		}
+	}
+}
+
+// TestPlatformUpdateRefusals answers each refusal of the job with its code, records it, and answers a failure
+// without its text.
+func TestPlatformUpdateRefusals(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	p := h.withPlatform()
+	s := h.signIn()
+	for _, c := range []struct {
+		reason string
+		status int
+		code   string
+	}{
+		{update.UpdateRunning, http.StatusConflict, "update_running"},
+		{update.BackupRunning, http.StatusConflict, "backup_running"},
+		{update.RestoreRunning, http.StatusConflict, "restore_running"},
+		{update.BundleLoading, http.StatusConflict, codeBundleLoading},
+		{update.Busy, http.StatusConflict, codeUpdateBusy},
+		{update.PlatformUpgrading, http.StatusConflict, "upgrade_in_progress"},
+		{update.NotInstalled, http.StatusConflict, "not_installed"},
+		{update.LastUpdateFailed, http.StatusConflict, "last_update_failed"},
+		{update.OperatorOlderThanRunning, http.StatusConflict, "operator_older_than_running"},
+		{update.NotFound, http.StatusNotFound, codeNotFound},
+		{update.NoSpace, http.StatusConflict, "no_space"},
+		{update.SameVersion, http.StatusConflict, "blocked"},
+		{update.NeedsAppliance, http.StatusConflict, "blocked"},
+		{update.InvalidMetadata, http.StatusConflict, "blocked"},
+	} {
+		p.err = &update.Error{Reason: c.reason}
+		rec := h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "9.0.0", Confirm: true}, s)
+		wantCode(t, rec, c.status, c.code)
+		if e := h.entry(update.AuditUpdateStart); e.Details[detailRefused] != c.code || e.Details[detailVersion] != "9.0.0" || e.User != testUser {
+			t.Errorf("%s: audit entry %+v", c.reason, e)
+		}
+	}
+	p.err = fmt.Errorf("record the update: %w", errors.New("etcd says "+zotPassword))
+	rec := h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "9.0.0", Confirm: true}, s)
+	wantCode(t, rec, http.StatusInternalServerError, "internal")
+	if strings.Contains(rec.Body.String(), zotPassword) {
+		t.Errorf("the answer repeats the error: %s", rec.Body)
+	}
+	if len(p.started) != 0 {
+		t.Errorf("started %v", p.started)
+	}
+}
+
+// TestPlatformUpdateUnavailable answers 503 without the update jobs.
+func TestPlatformUpdateUnavailable(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	h.withUpdates()
+	s := h.signIn()
+	wantCode(t, h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "9.0.0", Confirm: true}, s),
+		http.StatusServiceUnavailable, codeUpdatesUnavailable)
+}
+
+// TestUpdatesShowTheUpdate answers the updates with the progress of the latest update.
+func TestUpdatesShowTheUpdate(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	h.withPlatform()
+	s := h.signIn()
+	started := metav1.NewTime(time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC))
+	setStatus(t, func(st *v1alpha1.ApplianceStatus) {
+		st.Update = &v1alpha1.UpdateStatus{
+			Kind: "platform", From: "2.19.0", To: "2.20.0", Step: update.StepOperator, Backup: "b-1", StartedAt: started,
+			PointOfNoReturn: true,
+		}
+	})
+	u := updatesOf(t, h, s)
+	want := UpdateProgress{
+		Kind: UpdateProgressKindPlatform, From: "2.19.0", To: "2.20.0", Step: optional(update.StepOperator), Backup: optional("b-1"),
+		StartedAt: started.Time, PointOfNoReturn: true,
+	}
+	if u.Update != nil && u.Update.StartedAt.Equal(want.StartedAt) {
+		want.StartedAt = u.Update.StartedAt
+	}
+	if u.Update == nil || !reflect.DeepEqual(*u.Update, want) {
+		t.Errorf("update %+v, want %+v", u.Update, want)
+	}
+}
+
+// TestUpdatesTellAnExternalDatabase answers whether the platform uses an external database, from which a platform
+// update cannot be rolled back.
+func TestUpdatesTellAnExternalDatabase(t *testing.T) {
+	h := newHarness(t)
+	a := createAppliance(t, v1alpha1.SetupComplete)
+	h.withPlatform()
+	s := h.signIn()
+	if u := updatesOf(t, h, s); u.ExternalDatabase {
+		t.Error("an external database reported without one")
+	}
+	a.Spec.Platform = &v1alpha1.PlatformSpec{Database: &v1alpha1.ExternalDatabase{Host: "db.example.com", Port: 5432, Name: "ilm", CredentialsRef: DatabaseSecretName}}
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if u := updatesOf(t, h, s); !u.ExternalDatabase {
+		t.Error("the external database is not reported")
+	}
 }

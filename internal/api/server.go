@@ -74,6 +74,8 @@ type BackupRunner interface {
 type Restorer interface {
 	Start(ctx context.Context, file string, id age.Identity, opts restore.Options) error
 	Resume(ctx context.Context, id age.Identity) error
+	// Abandon gives up a failed restore: the ILM operator starts again and the holds of the restore are released.
+	Abandon(ctx context.Context) error
 }
 
 // Deps is what the Server needs. Now defaults to time.Now; without Talos, reboot and shutdown are unavailable;
@@ -115,6 +117,8 @@ type Deps struct {
 	Finder  UpdateFinder
 	// UpdatesDir keeps an uploaded bundle until it is loaded.
 	UpdatesDir string
+	// Platform installs platform bundles; without it, and without Updates and Finder, an update cannot be started.
+	Platform PlatformUpdater
 }
 
 // Server serves the manager's API under auth.APIBase.
@@ -259,6 +263,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPut, updatesUploadPath), withStreamDeadlines(change(AuditEntryActionUpdateUpload)))
 	mux.Handle(route(http.MethodPost, updatesPath+"/check"), withWriteDeadline(update.CheckTimeout+update.RecordTimeout+answerMargin, change(AuditEntryActionUpdateCheck)))
 	mux.Handle(route(http.MethodPost, updatesPath+"/fetch"), change(AuditEntryActionUpdateFetch))
+	mux.Handle(route(http.MethodPost, updatesPath+"/platform"), change(AuditEntryActionPlatformUpdateStart))
+	mux.Handle(route(http.MethodPost, updatesRollbackPath), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionPlatformRollbackStart)))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)
 }
@@ -321,8 +327,8 @@ func withRequest(next http.Handler) http.Handler {
 }
 
 // bodyLimit is the largest request body accepted for path: certificate uploads carry chains, trust uploads CA
-// bundles, re-issuing the recovery kit uploads the kit, backup targets carry private keys and CA bundles, and a
-// restore takes the kit, a target and the backup itself.
+// bundles, re-issuing the recovery kit uploads the kit, backup targets carry private keys and CA bundles, a
+// restore takes the kit, a target and the backup itself, and a rollback the kit.
 func bodyLimit(path string) int64 {
 	switch path {
 	case restoreUploadPath:
@@ -330,7 +336,7 @@ func bodyLimit(path string) int64 {
 	case updatesUploadPath:
 		return maxBundleUpload
 	}
-	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue", backupTargetsPath, restorePath} {
+	for _, prefix := range []string{certificatePath, trustPath, recoveryKitPath + "/reissue", backupTargetsPath, restorePath, updatesRollbackPath} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return maxUploadBody
 		}

@@ -112,53 +112,56 @@ func (e ApplianceSettingsTlsSource) Valid() bool {
 
 // Defines values for AuditEntryAction.
 const (
-	AuditEntryActionAdminCredential    AuditEntryAction = "admin-credential"
-	AuditEntryActionAdminPasswordReset AuditEntryAction = "admin-password-reset"
-	AuditEntryActionAdminPasswordShown AuditEntryAction = "admin-password-shown"
-	AuditEntryActionBackup             AuditEntryAction = "backup"
-	AuditEntryActionBackupDownload     AuditEntryAction = "backup-download"
-	AuditEntryActionBackupHostKeyScan  AuditEntryAction = "backup-host-key-scan"
-	AuditEntryActionBackupTargetRemove AuditEntryAction = "backup-target-remove"
-	AuditEntryActionBackupTargetSet    AuditEntryAction = "backup-target-set"
-	AuditEntryActionBackupTargetTest   AuditEntryAction = "backup-target-test"
-	AuditEntryActionBundleLoaded       AuditEntryAction = "bundle-loaded"
-	AuditEntryActionCertificateAcme    AuditEntryAction = "certificate-acme"
-	AuditEntryActionCertificateBuiltin AuditEntryAction = "certificate-builtin"
-	AuditEntryActionCertificateCsr     AuditEntryAction = "certificate-csr"
-	AuditEntryActionCertificateSigned  AuditEntryAction = "certificate-signed"
-	AuditEntryActionCertificateUpload  AuditEntryAction = "certificate-upload"
-	AuditEntryActionDependencyTest     AuditEntryAction = "dependency-test"
-	AuditEntryActionKubeconfigIssue    AuditEntryAction = "kubeconfig-issue"
-	AuditEntryActionKubeconfigRevoke   AuditEntryAction = "kubeconfig-revoke"
-	AuditEntryActionMailRemove         AuditEntryAction = "mail-remove"
-	AuditEntryActionMailSettings       AuditEntryAction = "mail-settings"
-	AuditEntryActionMailTest           AuditEntryAction = "mail-test"
-	AuditEntryActionNodeSettings       AuditEntryAction = "node-settings"
-	AuditEntryActionPlatformSettings   AuditEntryAction = "platform-settings"
-	AuditEntryActionReboot             AuditEntryAction = "reboot"
-	AuditEntryActionRecoveryKitConfirm AuditEntryAction = "recovery-kit-confirm"
-	AuditEntryActionRecoveryKitIssue   AuditEntryAction = "recovery-kit-issue"
-	AuditEntryActionRecoveryKitReissue AuditEntryAction = "recovery-kit-reissue"
-	AuditEntryActionRecoveryKitReplace AuditEntryAction = "recovery-kit-replace"
-	AuditEntryActionRegistryRemove     AuditEntryAction = "registry-remove"
-	AuditEntryActionRegistrySet        AuditEntryAction = "registry-set"
-	AuditEntryActionRestore            AuditEntryAction = "restore"
-	AuditEntryActionRestoreAbandon     AuditEntryAction = "restore-abandon"
-	AuditEntryActionRestoreFetch       AuditEntryAction = "restore-fetch"
-	AuditEntryActionRestoreInspect     AuditEntryAction = "restore-inspect"
-	AuditEntryActionRestoreResume      AuditEntryAction = "restore-resume"
-	AuditEntryActionRestoreStart       AuditEntryAction = "restore-start"
-	AuditEntryActionRestoreUpload      AuditEntryAction = "restore-upload"
-	AuditEntryActionShutdown           AuditEntryAction = "shutdown"
-	AuditEntryActionSignIn             AuditEntryAction = "sign-in"
-	AuditEntryActionSignOut            AuditEntryAction = "sign-out"
-	AuditEntryActionTalosconfigIssue   AuditEntryAction = "talosconfig-issue"
-	AuditEntryActionTrustAdd           AuditEntryAction = "trust-add"
-	AuditEntryActionTrustRemove        AuditEntryAction = "trust-remove"
-	AuditEntryActionUpdateCheck        AuditEntryAction = "update-check"
-	AuditEntryActionUpdateFetch        AuditEntryAction = "update-fetch"
-	AuditEntryActionUpdateUpload       AuditEntryAction = "update-upload"
-	AuditEntryActionWizardPlatform     AuditEntryAction = "wizard-platform"
+	AuditEntryActionAdminCredential       AuditEntryAction = "admin-credential"
+	AuditEntryActionAdminPasswordReset    AuditEntryAction = "admin-password-reset"
+	AuditEntryActionAdminPasswordShown    AuditEntryAction = "admin-password-shown"
+	AuditEntryActionBackup                AuditEntryAction = "backup"
+	AuditEntryActionBackupDownload        AuditEntryAction = "backup-download"
+	AuditEntryActionBackupHostKeyScan     AuditEntryAction = "backup-host-key-scan"
+	AuditEntryActionBackupTargetRemove    AuditEntryAction = "backup-target-remove"
+	AuditEntryActionBackupTargetSet       AuditEntryAction = "backup-target-set"
+	AuditEntryActionBackupTargetTest      AuditEntryAction = "backup-target-test"
+	AuditEntryActionBundleLoaded          AuditEntryAction = "bundle-loaded"
+	AuditEntryActionCertificateAcme       AuditEntryAction = "certificate-acme"
+	AuditEntryActionCertificateBuiltin    AuditEntryAction = "certificate-builtin"
+	AuditEntryActionCertificateCsr        AuditEntryAction = "certificate-csr"
+	AuditEntryActionCertificateSigned     AuditEntryAction = "certificate-signed"
+	AuditEntryActionCertificateUpload     AuditEntryAction = "certificate-upload"
+	AuditEntryActionDependencyTest        AuditEntryAction = "dependency-test"
+	AuditEntryActionKubeconfigIssue       AuditEntryAction = "kubeconfig-issue"
+	AuditEntryActionKubeconfigRevoke      AuditEntryAction = "kubeconfig-revoke"
+	AuditEntryActionMailRemove            AuditEntryAction = "mail-remove"
+	AuditEntryActionMailSettings          AuditEntryAction = "mail-settings"
+	AuditEntryActionMailTest              AuditEntryAction = "mail-test"
+	AuditEntryActionNodeSettings          AuditEntryAction = "node-settings"
+	AuditEntryActionPlatformRollbackStart AuditEntryAction = "platform-rollback-start"
+	AuditEntryActionPlatformSettings      AuditEntryAction = "platform-settings"
+	AuditEntryActionPlatformUpdate        AuditEntryAction = "platform-update"
+	AuditEntryActionPlatformUpdateStart   AuditEntryAction = "platform-update-start"
+	AuditEntryActionReboot                AuditEntryAction = "reboot"
+	AuditEntryActionRecoveryKitConfirm    AuditEntryAction = "recovery-kit-confirm"
+	AuditEntryActionRecoveryKitIssue      AuditEntryAction = "recovery-kit-issue"
+	AuditEntryActionRecoveryKitReissue    AuditEntryAction = "recovery-kit-reissue"
+	AuditEntryActionRecoveryKitReplace    AuditEntryAction = "recovery-kit-replace"
+	AuditEntryActionRegistryRemove        AuditEntryAction = "registry-remove"
+	AuditEntryActionRegistrySet           AuditEntryAction = "registry-set"
+	AuditEntryActionRestore               AuditEntryAction = "restore"
+	AuditEntryActionRestoreAbandon        AuditEntryAction = "restore-abandon"
+	AuditEntryActionRestoreFetch          AuditEntryAction = "restore-fetch"
+	AuditEntryActionRestoreInspect        AuditEntryAction = "restore-inspect"
+	AuditEntryActionRestoreResume         AuditEntryAction = "restore-resume"
+	AuditEntryActionRestoreStart          AuditEntryAction = "restore-start"
+	AuditEntryActionRestoreUpload         AuditEntryAction = "restore-upload"
+	AuditEntryActionShutdown              AuditEntryAction = "shutdown"
+	AuditEntryActionSignIn                AuditEntryAction = "sign-in"
+	AuditEntryActionSignOut               AuditEntryAction = "sign-out"
+	AuditEntryActionTalosconfigIssue      AuditEntryAction = "talosconfig-issue"
+	AuditEntryActionTrustAdd              AuditEntryAction = "trust-add"
+	AuditEntryActionTrustRemove           AuditEntryAction = "trust-remove"
+	AuditEntryActionUpdateCheck           AuditEntryAction = "update-check"
+	AuditEntryActionUpdateFetch           AuditEntryAction = "update-fetch"
+	AuditEntryActionUpdateUpload          AuditEntryAction = "update-upload"
+	AuditEntryActionWizardPlatform        AuditEntryAction = "wizard-platform"
 )
 
 // Valid indicates whether the value is a known member of the AuditEntryAction enum.
@@ -208,7 +211,13 @@ func (e AuditEntryAction) Valid() bool {
 		return true
 	case AuditEntryActionNodeSettings:
 		return true
+	case AuditEntryActionPlatformRollbackStart:
+		return true
 	case AuditEntryActionPlatformSettings:
+		return true
+	case AuditEntryActionPlatformUpdate:
+		return true
+	case AuditEntryActionPlatformUpdateStart:
 		return true
 	case AuditEntryActionReboot:
 		return true
@@ -379,16 +388,16 @@ func (e BackupTargetUpdateType) Valid() bool {
 
 // Defines values for BundleKind.
 const (
-	Platform BundleKind = "platform"
-	System   BundleKind = "system"
+	BundleKindPlatform BundleKind = "platform"
+	BundleKindSystem   BundleKind = "system"
 )
 
 // Valid indicates whether the value is a known member of the BundleKind enum.
 func (e BundleKind) Valid() bool {
 	switch e {
-	case Platform:
+	case BundleKindPlatform:
 		return true
-	case System:
+	case BundleKindSystem:
 		return true
 	default:
 		return false
@@ -713,8 +722,27 @@ func (e RestoreProgressMessage) Valid() bool {
 	}
 }
 
+// Defines values for RestoreProgressRollback.
+const (
+	RollbackReinstalling RestoreProgressRollback = "reinstalling"
+	RollbackRestoring    RestoreProgressRollback = "restoring"
+)
+
+// Valid indicates whether the value is a known member of the RestoreProgressRollback enum.
+func (e RestoreProgressRollback) Valid() bool {
+	switch e {
+	case RollbackReinstalling:
+		return true
+	case RollbackRestoring:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RestoreProgressStep.
 const (
+	StepAbandoned     RestoreProgressStep = "abandoned"
 	StepAppliance     RestoreProgressStep = "appliance"
 	StepCBOM          RestoreProgressStep = "cbom"
 	StepCertificate   RestoreProgressStep = "certificate"
@@ -723,15 +751,19 @@ const (
 	StepILMSecrets    RestoreProgressStep = "ilmSecrets"
 	StepKeycloak      RestoreProgressStep = "keycloak"
 	StepPlatform      RestoreProgressStep = "platform"
+	StepReinstall     RestoreProgressStep = "reinstall"
 	StepSecrets       RestoreProgressStep = "secrets"
 	StepStart         RestoreProgressStep = "start"
 	StepStop          RestoreProgressStep = "stop"
+	StepUninstall     RestoreProgressStep = "uninstall"
 	StepWaitingForKit RestoreProgressStep = "waitingForKit"
 )
 
 // Valid indicates whether the value is a known member of the RestoreProgressStep enum.
 func (e RestoreProgressStep) Valid() bool {
 	switch e {
+	case StepAbandoned:
+		return true
 	case StepAppliance:
 		return true
 	case StepCBOM:
@@ -748,11 +780,15 @@ func (e RestoreProgressStep) Valid() bool {
 		return true
 	case StepPlatform:
 		return true
+	case StepReinstall:
+		return true
 	case StepSecrets:
 		return true
 	case StepStart:
 		return true
 	case StepStop:
+		return true
+	case StepUninstall:
 		return true
 	case StepWaitingForKit:
 		return true
@@ -845,6 +881,27 @@ func (e UpdateBundleBlocked) Valid() bool {
 	case SameVersion:
 		return true
 	case WrongArch:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateProgressKind.
+const (
+	UpdateProgressKindPlatform UpdateProgressKind = "platform"
+	UpdateProgressKindRollback UpdateProgressKind = "rollback"
+	UpdateProgressKindSystem   UpdateProgressKind = "system"
+)
+
+// Valid indicates whether the value is a known member of the UpdateProgressKind enum.
+func (e UpdateProgressKind) Valid() bool {
+	switch e {
+	case UpdateProgressKindPlatform:
+		return true
+	case UpdateProgressKindRollback:
+		return true
+	case UpdateProgressKindSystem:
 		return true
 	default:
 		return false
@@ -1272,7 +1329,7 @@ type BundleKind string
 type BundleLoad struct {
 	Kind BundleKind `json:"kind"`
 
-	// Reason Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`, `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `noSpace`, `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`.
+	// Reason Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`, `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `unmirroredRegistry`, `noSpace`, `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`.
 	Reason    *string         `json:"reason,omitempty"`
 	StartedAt time.Time       `json:"startedAt"`
 	State     BundleLoadState `json:"state"`
@@ -1733,6 +1790,15 @@ type PlatformUpdate struct {
 	Utils *bool `json:"utils,omitempty"`
 }
 
+// PlatformUpdateStart defines model for PlatformUpdateStart.
+type PlatformUpdateStart struct {
+	// Confirm Must be true; the way back from the update is a reinstall and a restore of the backup taken first.
+	Confirm bool `json:"confirm"`
+
+	// Version The version of the platform bundle, X.Y.Z.
+	Version string `json:"version"`
+}
+
 // Proxy defines model for Proxy.
 type Proxy struct {
 	// Http The HTTP proxy URL.
@@ -1828,6 +1894,12 @@ type RegistryList struct {
 	Items []RegistryCredentials `json:"items"`
 }
 
+// RestoreAbandon defines model for RestoreAbandon.
+type RestoreAbandon struct {
+	// Confirm Must be true; the appliance keeps whatever state the failed restore reached.
+	Confirm bool `json:"confirm"`
+}
+
 // RestoreFetch defines model for RestoreFetch.
 type RestoreFetch struct {
 	// Name The backup's file name in the target's listing, ending in `.ilmbackup`; it is stored as an upload is.
@@ -1876,10 +1948,17 @@ type RestoreProgress struct {
 	Message *RestoreProgressMessage `json:"message,omitempty"`
 
 	// PausedStep The step a restore waiting for its kit resumes at.
-	PausedStep *string    `json:"pausedStep,omitempty"`
-	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	PausedStep *string `json:"pausedStep,omitempty"`
 
-	// Step The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+	// Rollback Set on a restore that rolls a platform update back: `reinstalling` until the platform runs the previous
+	// ILM version again, from `stop` through `reinstall`, then `restoring` while the backup is restored into it,
+	// from a second `stop` on.
+	Rollback  *RestoreProgressRollback `json:"rollback,omitempty"`
+	StartedAt *time.Time               `json:"startedAt,omitempty"`
+
+	// Step The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart and
+	// `abandoned` once a failed restore was given up. A rollback of a platform update first stops ILM,
+	// uninstalls the platform and installs it again (`uninstall`, `reinstall`), then restores the backup.
 	Step RestoreProgressStep `json:"step"`
 
 	// Warning What a completed restore left for the administrator.
@@ -1889,7 +1968,14 @@ type RestoreProgress struct {
 // RestoreProgressMessage The fixed reason a restore failed at its step; absent unless it failed.
 type RestoreProgressMessage string
 
-// RestoreProgressStep The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+// RestoreProgressRollback Set on a restore that rolls a platform update back: `reinstalling` until the platform runs the previous
+// ILM version again, from `stop` through `reinstall`, then `restoring` while the backup is restored into it,
+// from a second `stop` on.
+type RestoreProgressRollback string
+
+// RestoreProgressStep The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart and
+// `abandoned` once a failed restore was given up. A rollback of a platform update first stops ILM,
+// uninstalls the platform and installs it again (`uninstall`, `reinstall`), then restores the backup.
 type RestoreProgressStep string
 
 // RestoreResume defines model for RestoreResume.
@@ -1967,6 +2053,22 @@ type RestoreTargetRequest struct {
 	Target BackupTargetUpdate `json:"target"`
 }
 
+// RollbackOffer Whether the last platform update can be rolled back now; absent where updates cannot be installed.
+type RollbackOffer struct {
+	Available bool `json:"available"`
+
+	// Reason Why it cannot, a fixed reason: `noPreUpdateBackup`, `noPreviousBundle`, `operatorChanged`, `notNeeded`, `externalDatabase`, `upgradeInProgress`, `updateRunning`, `restoreRunning` or `failed`; absent when it can.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// RollbackStart defines model for RollbackStart.
+type RollbackStart struct {
+	// Confirm Must be true; the data changed since the backup taken before the update is lost.
+	Confirm    bool               `json:"confirm"`
+	Kit        openapi_types.File `json:"kit"`
+	Passphrase *string            `json:"passphrase,omitempty"`
+}
+
 // S3Settings defines model for S3Settings.
 type S3Settings struct {
 	Bucket string `json:"bucket"`
@@ -2028,8 +2130,11 @@ type SignedCertificateUpload struct {
 // Status defines model for Status.
 type Status struct {
 	// AddonStep The add-on being installed while AddonsReady is not true yet.
-	AddonStep *string       `json:"addonStep,omitempty"`
-	Backup    *StatusBackup `json:"backup,omitempty"`
+	AddonStep *string `json:"addonStep,omitempty"`
+
+	// AdminCredentialRenewed The ILM administrator's certificate was renewed and ILM's administrator holds the new one, which has not been downloaded yet; the credential downloaded before no longer signs in.
+	AdminCredentialRenewed *bool         `json:"adminCredentialRenewed,omitempty"`
+	Backup                 *StatusBackup `json:"backup,omitempty"`
 
 	// Certificate The certificate the console and ILM serve; absent while none is issued or installed.
 	Certificate *StatusCertificate `json:"certificate,omitempty"`
@@ -2142,10 +2247,39 @@ type UpdateFetch struct {
 	Version string `json:"version"`
 }
 
+// UpdateProgress The latest update, while it runs and once it ended.
+type UpdateProgress struct {
+	// Backup The backup taken before the update.
+	Backup *string `json:"backup,omitempty"`
+
+	// From The version before the update.
+	From string             `json:"from"`
+	Kind UpdateProgressKind `json:"kind"`
+
+	// Message Why the update failed at its step, a fixed reason; absent while it runs and once it completed. A failed rollback has the restore's `message`.
+	Message *string `json:"message,omitempty"`
+
+	// PointOfNoReturn Set once the update has asked for the new ILM version; from then on only a rollback undoes it.
+	PointOfNoReturn bool      `json:"pointOfNoReturn"`
+	StartedAt       time.Time `json:"startedAt"`
+
+	// Step The step the update is at: `backup`, `images`, `operator`, `version`, `wait`, and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore.
+	Step *string `json:"step,omitempty"`
+
+	// To The version being installed.
+	To string `json:"to"`
+}
+
+// UpdateProgressKind defines model for UpdateProgress.Kind.
+type UpdateProgressKind string
+
 // Updates defines model for Updates.
 type Updates struct {
 	// Available The bundles online that are newer than what runs.
 	Available []UpdateBundle `json:"available"`
+
+	// ExternalDatabase Whether the platform uses an external database. A platform update then cannot be rolled back; the way back is a restore onto a fresh appliance.
+	ExternalDatabase bool `json:"externalDatabase"`
 
 	// LastCheck When the online repository was last checked.
 	LastCheck *time.Time `json:"lastCheck,omitempty"`
@@ -2156,6 +2290,15 @@ type Updates struct {
 
 	// Loaded The bundles in the appliance's registry and on its data volume.
 	Loaded []UpdateBundle `json:"loaded"`
+
+	// Operator The ILM operator version that runs. A platform bundle with a newer one cannot be rolled back; the way back from it is a restore onto a fresh appliance.
+	Operator *string `json:"operator,omitempty"`
+
+	// Rollback Whether the last platform update can be rolled back now; absent where updates cannot be installed.
+	Rollback *RollbackOffer `json:"rollback,omitempty"`
+
+	// Update The latest update, while it runs and once it ended.
+	Update *UpdateProgress `json:"update,omitempty"`
 }
 
 // UpdatesLastCheckError Why the last check failed; absent when it succeeded.
@@ -2318,6 +2461,9 @@ type PostRecoveryKitReplaceJSONRequestBody = RecoveryKitReplace
 // PutRegistryJSONRequestBody defines body for PutRegistry for application/json ContentType.
 type PutRegistryJSONRequestBody = RegistryCredentialsUpdate
 
+// PostRestoreAbandonJSONRequestBody defines body for PostRestoreAbandon for application/json ContentType.
+type PostRestoreAbandonJSONRequestBody = RestoreAbandon
+
 // PostRestoreFetchJSONRequestBody defines body for PostRestoreFetch for application/json ContentType.
 type PostRestoreFetchJSONRequestBody = RestoreFetch
 
@@ -2350,6 +2496,12 @@ type PostTrustPreviewJSONRequestBody = TrustUpload
 
 // PostUpdatesFetchJSONRequestBody defines body for PostUpdatesFetch for application/json ContentType.
 type PostUpdatesFetchJSONRequestBody = UpdateFetch
+
+// PostUpdatesPlatformJSONRequestBody defines body for PostUpdatesPlatform for application/json ContentType.
+type PostUpdatesPlatformJSONRequestBody = PlatformUpdateStart
+
+// PostUpdatesRollbackMultipartRequestBody defines body for PostUpdatesRollback for multipart/form-data ContentType.
+type PostUpdatesRollbackMultipartRequestBody = RollbackStart
 
 // PutWizardPlatformJSONRequestBody defines body for PutWizardPlatform for application/json ContentType.
 type PutWizardPlatformJSONRequestBody = PlatformSettings
@@ -2579,7 +2731,7 @@ type ServerInterface interface {
 	// GetRestore The state of the restore
 	// (GET /restore)
 	GetRestore(w http.ResponseWriter, r *http.Request, params GetRestoreParams)
-	// PostRestoreAbandon Set up a new appliance instead of restoring
+	// PostRestoreAbandon Give up a restore
 	// (POST /restore/abandon)
 	PostRestoreAbandon(w http.ResponseWriter, r *http.Request)
 	// PostRestoreFetch Fetch a backup to restore from a target entered for the restore
@@ -2642,6 +2794,12 @@ type ServerInterface interface {
 	// GetUpdateNotes The release notes of a bundle available or loaded
 	// (GET /updates/notes/{kind}/{version})
 	GetUpdateNotes(w http.ResponseWriter, r *http.Request, kind BundleKind, version string)
+	// PostUpdatesPlatform Install a platform bundle
+	// (POST /updates/platform)
+	PostUpdatesPlatform(w http.ResponseWriter, r *http.Request)
+	// PostUpdatesRollback Roll the last platform update back
+	// (POST /updates/rollback)
+	PostUpdatesRollback(w http.ResponseWriter, r *http.Request)
 	// PutUpdatesUpload Upload a bundle file and load it
 	// (PUT /updates/upload)
 	PutUpdatesUpload(w http.ResponseWriter, r *http.Request, params PutUpdatesUploadParams)
@@ -3883,6 +4041,34 @@ func (siw *ServerInterfaceWrapper) GetUpdateNotes(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// PostUpdatesPlatform operation middleware
+func (siw *ServerInterfaceWrapper) PostUpdatesPlatform(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUpdatesPlatform(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUpdatesRollback operation middleware
+func (siw *ServerInterfaceWrapper) PostUpdatesRollback(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUpdatesRollback(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PutUpdatesUpload operation middleware
 func (siw *ServerInterfaceWrapper) PutUpdatesUpload(w http.ResponseWriter, r *http.Request) {
 
@@ -4117,6 +4303,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/check", wrapper.PostUpdatesCheck)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/updates/upload", wrapper.PutUpdatesUpload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/fetch", wrapper.PostUpdatesFetch)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/platform", wrapper.PostUpdatesPlatform)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/rollback", wrapper.PostUpdatesRollback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/updates/notes/{kind}/{version}", wrapper.GetUpdateNotes)
 
 	return m
@@ -7226,6 +7414,7 @@ func (response GetRestore409JSONResponse) VisitGetRestoreResponse(w http.Respons
 }
 
 type PostRestoreAbandonRequestObject struct {
+	Body *PostRestoreAbandonJSONRequestBody
 }
 
 type PostRestoreAbandonResponseObject interface {
@@ -7238,6 +7427,20 @@ type PostRestoreAbandon204Response struct {
 func (response PostRestoreAbandon204Response) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
+}
+
+type PostRestoreAbandon400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostRestoreAbandon400JSONResponse) VisitPostRestoreAbandonResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type PostRestoreAbandon401JSONResponse struct{ UnauthorizedJSONResponse }
@@ -8678,6 +8881,192 @@ func (response GetUpdateNotes503JSONResponse) VisitGetUpdateNotesResponse(w http
 	return err
 }
 
+type PostUpdatesPlatformRequestObject struct {
+	Body *PostUpdatesPlatformJSONRequestBody
+}
+
+type PostUpdatesPlatformResponseObject interface {
+	VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error
+}
+
+type PostUpdatesPlatform202Response struct {
+}
+
+func (response PostUpdatesPlatform202Response) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostUpdatesPlatform400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostUpdatesPlatform400JSONResponse) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesPlatform401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostUpdatesPlatform401JSONResponse) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesPlatform403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostUpdatesPlatform403JSONResponse) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesPlatform404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PostUpdatesPlatform404JSONResponse) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesPlatform409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostUpdatesPlatform409JSONResponse) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesPlatform503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response PostUpdatesPlatform503JSONResponse) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesRollbackRequestObject struct {
+	Body *multipart.Reader
+}
+
+type PostUpdatesRollbackResponseObject interface {
+	VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error
+}
+
+type PostUpdatesRollback202Response struct {
+}
+
+func (response PostUpdatesRollback202Response) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostUpdatesRollback400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostUpdatesRollback400JSONResponse) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesRollback401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostUpdatesRollback401JSONResponse) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesRollback403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostUpdatesRollback403JSONResponse) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesRollback409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostUpdatesRollback409JSONResponse) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesRollback503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response PostUpdatesRollback503JSONResponse) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutUpdatesUploadRequestObject struct {
 	Params PutUpdatesUploadParams
 	Body   io.Reader
@@ -8974,7 +9363,7 @@ type StrictServerInterface interface {
 	// GetRestore The state of the restore
 	// (GET /restore)
 	GetRestore(ctx context.Context, request GetRestoreRequestObject) (GetRestoreResponseObject, error)
-	// PostRestoreAbandon Set up a new appliance instead of restoring
+	// PostRestoreAbandon Give up a restore
 	// (POST /restore/abandon)
 	PostRestoreAbandon(ctx context.Context, request PostRestoreAbandonRequestObject) (PostRestoreAbandonResponseObject, error)
 	// PostRestoreFetch Fetch a backup to restore from a target entered for the restore
@@ -9037,6 +9426,12 @@ type StrictServerInterface interface {
 	// GetUpdateNotes The release notes of a bundle available or loaded
 	// (GET /updates/notes/{kind}/{version})
 	GetUpdateNotes(ctx context.Context, request GetUpdateNotesRequestObject) (GetUpdateNotesResponseObject, error)
+	// PostUpdatesPlatform Install a platform bundle
+	// (POST /updates/platform)
+	PostUpdatesPlatform(ctx context.Context, request PostUpdatesPlatformRequestObject) (PostUpdatesPlatformResponseObject, error)
+	// PostUpdatesRollback Roll the last platform update back
+	// (POST /updates/rollback)
+	PostUpdatesRollback(ctx context.Context, request PostUpdatesRollbackRequestObject) (PostUpdatesRollbackResponseObject, error)
 	// PutUpdatesUpload Upload a bundle file and load it
 	// (PUT /updates/upload)
 	PutUpdatesUpload(ctx context.Context, request PutUpdatesUploadRequestObject) (PutUpdatesUploadResponseObject, error)
@@ -10318,6 +10713,16 @@ func (sh *strictHandler) GetRestore(w http.ResponseWriter, r *http.Request, para
 func (sh *strictHandler) PostRestoreAbandon(w http.ResponseWriter, r *http.Request) {
 	var request PostRestoreAbandonRequestObject
 
+	var body PostRestoreAbandonJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.PostRestoreAbandon(ctx, request.(PostRestoreAbandonRequestObject))
 	}
@@ -10901,6 +11306,68 @@ func (sh *strictHandler) GetUpdateNotes(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetUpdateNotesResponseObject); ok {
 		if err := validResponse.VisitGetUpdateNotesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostUpdatesPlatform operation middleware
+func (sh *strictHandler) PostUpdatesPlatform(w http.ResponseWriter, r *http.Request) {
+	var request PostUpdatesPlatformRequestObject
+
+	var body PostUpdatesPlatformJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostUpdatesPlatform(ctx, request.(PostUpdatesPlatformRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostUpdatesPlatform")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostUpdatesPlatformResponseObject); ok {
+		if err := validResponse.VisitPostUpdatesPlatformResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostUpdatesRollback operation middleware
+func (sh *strictHandler) PostUpdatesRollback(w http.ResponseWriter, r *http.Request) {
+	var request PostUpdatesRollbackRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostUpdatesRollback(ctx, request.(PostUpdatesRollbackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostUpdatesRollback")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostUpdatesRollbackResponseObject); ok {
+		if err := validResponse.VisitPostUpdatesRollbackResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

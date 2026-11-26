@@ -43,7 +43,7 @@ var (
 	backupRunningConflict = ConflictJSONResponse{Code: "backup_running",
 		Message: "A backup is running. Set a new password once it has finished."}
 	bundleLoadingConflict = ConflictJSONResponse{Code: codeBundleLoading,
-		Message: "An update bundle is loading. Set a new password once it has finished."}
+		Message: "An update or a bundle load is running. Set a new password once it has finished."}
 	resetRunningConflict = ConflictJSONResponse{Code: "reset_running",
 		Message: "A new password is being set. Try again in a moment."}
 )

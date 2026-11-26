@@ -75,19 +75,11 @@ func (c *Client) PushBundle(ctx context.Context, b Source, md bundle.Metadata, p
 func (c *Client) targets(images []bundle.Image) ([]name.Digest, error) {
 	refs := make([]name.Digest, 0, len(images))
 	for _, im := range images {
-		path, _, err := splitRef(im.Ref.Ref)
+		ref, _, err := c.imageRefs(im.Ref)
 		if err != nil {
 			return nil, err
 		}
-		repo, err := c.repository(path)
-		if err != nil {
-			return nil, err
-		}
-		digest, err := v1.NewHash(im.Ref.Digest)
-		if err != nil {
-			return nil, fmt.Errorf("image %s: %w", im.Ref.Ref, err)
-		}
-		refs = append(refs, repo.Digest(digest.String()))
+		refs = append(refs, ref)
 	}
 	return refs, nil
 }
@@ -124,4 +116,55 @@ func splitRef(ref string) (repo, tag string, err error) {
 		return "", "", fmt.Errorf("the image reference %q has no repository", ref)
 	}
 	return repo, tag, nil
+}
+
+// TagImages tags each image the registry holds by its digest under its upstream name with the tag of its reference,
+// so that a workload pulling that tag through the registry mirror gets the image. It tags nothing unless the registry
+// holds every image, and fails with the registry's not-found error then. Tagging again changes nothing.
+func (c *Client) TagImages(ctx context.Context, images []bundle.ImageRef) error {
+	tags := make([]name.Tag, 0, len(images))
+	descs := make([]*remote.Descriptor, 0, len(images))
+	for _, im := range images {
+		ref, tag, err := c.imageRefs(im)
+		if err != nil {
+			return err
+		}
+		desc, err := remote.Get(ref, c.options(ctx)...)
+		if err != nil {
+			return fmt.Errorf("image %s: %w", im.Ref, err)
+		}
+		tags, descs = append(tags, tag), append(descs, desc)
+	}
+	for i, tag := range tags {
+		if tag.TagStr() == "" {
+			continue
+		}
+		if err := remote.Tag(tag, descs[i], c.options(ctx)...); err != nil {
+			return fmt.Errorf("tag image %s: %w", images[i].Ref, err)
+		}
+		slog.InfoContext(ctx, "tagged bundle image", "ref", images[i].Ref, "digest", images[i].Digest)
+	}
+	return nil
+}
+
+// imageRefs returns the reference by digest of im in the registry and its upstream tag, empty when its reference
+// names none.
+func (c *Client) imageRefs(im bundle.ImageRef) (name.Digest, name.Tag, error) {
+	path, tag, err := splitRef(im.Ref)
+	if err != nil {
+		return name.Digest{}, name.Tag{}, err
+	}
+	repo, err := c.repository(path)
+	if err != nil {
+		return name.Digest{}, name.Tag{}, err
+	}
+	digest, err := v1.NewHash(im.Digest)
+	if err != nil {
+		return name.Digest{}, name.Tag{}, fmt.Errorf("image %s: %w", im.Ref, err)
+	}
+	var t name.Tag
+	if tag != "" {
+		t = repo.Tag(tag)
+	}
+	return repo.Digest(digest.String()), t, nil
 }

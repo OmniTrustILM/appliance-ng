@@ -64,7 +64,7 @@ func targetTestWriteTimeout() time.Duration {
 
 var (
 	refusedBackupRunning = ConflictJSONResponse{Code: "backup_running", Message: "A backup is running; try again once it has finished."}
-	refusedBundleLoading = ConflictJSONResponse{Code: codeBundleLoading, Message: "An update bundle is loading; try again once it has finished."}
+	refusedBundleLoading = ConflictJSONResponse{Code: codeBundleLoading, Message: "An update or a bundle load is running; try again once it has finished."}
 	refusedBackupNoKit   = ConflictJSONResponse{Code: "no_recovery_kit",
 		Message: "Issue the recovery kit and confirm that it is stored safely first: backups are encrypted to its key."}
 	refusedBackupUpgrade = ConflictJSONResponse{Code: "upgrade_in_progress", Message: "The platform is being upgraded; back up once the upgrade has finished."}

@@ -37,7 +37,7 @@ func TestRunInTheSameSecondTakesTheNextSecond(t *testing.T) {
 		t.Errorf("the first backup changed: %v", err)
 	}
 	// Should the name still be taken when the file is written, nothing is overwritten.
-	if _, _, err := f.runner.writeLocal(context.Background(), getAppliance(t), f.key.Recipient(), first.Time.Time); !errors.Is(err, errNameTaken) {
+	if _, _, err := f.runner.writeLocal(context.Background(), getAppliance(t), f.key.Recipient(), first.Time.Time, ""); !errors.Is(err, errNameTaken) {
 		t.Errorf("writing over the first backup: %v", err)
 	}
 	if want := FileName(testHost, time.Date(2026, 11, 20, 2, 0, 1, 0, time.UTC), testVersion); second.Name != want || first.Name == second.Name {

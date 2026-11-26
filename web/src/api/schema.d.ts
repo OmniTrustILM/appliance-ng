@@ -475,7 +475,8 @@ export interface paths {
          * Download the ILM administrator's certificate and key, once
          * @description Returns the certificate and private key the platform generated for the ILM administrator as a PKCS#12 file
          *     encrypted with the password of the request. Each certificate is handed out once; later requests are answered
-         *     with 410 until the platform renews the certificate.
+         *     with 410 until the platform renews the certificate. A renewed certificate is answered with 404 `not_registered`
+         *     until ILM's administrator holds it.
          */
         post: operations["postPlatformAdminCredential"];
         delete?: never;
@@ -496,7 +497,7 @@ export interface paths {
          * Set a new password for the ILM administrator
          * @description Generates a new password, sets it in the managed Keycloak and returns it; it is not shown again. Answered with
          *     409 `not_ready` while the platform is not ready, with 409 `backup_running` while a backup runs,
-         *     `bundle_loading` while an update bundle loads, with 409 `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
+         *     `bundle_loading` while an update or a bundle load runs, with 409 `reset_running` while another new password is being set, and with 409 `external_identity` when ILM signs users
          *     in with an external identity provider. When Keycloak refuses or does not answer, the request is answered with
          *     502 and the stored password stays as it was.
          */
@@ -1255,7 +1256,8 @@ export interface paths {
          *     reports its progress. Needs `confirm` set to true and the `inspection` of that check's summary. A restore in
          *     place takes a local backup of the running ILM version; a fresh restore an uploaded or fetched one. The whole
          *     backup is verified again before anything changes. Refusals with 409: `not_inspected`, `superseded` for a
-         *     check that another one replaced since, `not_local`, `version_unavailable`, `busy`, `setup`,
+         *     check that another one replaced since, `not_local`, `version_unavailable`, `operator_downgrade` for a fresh
+         *     restore that would replace the running ILM operator with the release's older one, `busy`, `setup`,
          *     `upgrade_in_progress`, `backup_running`, `bundle_loading`, and `tampered` or `truncated` for a backup changed
          *     since its check.
          */
@@ -1298,12 +1300,19 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Set up a new appliance instead of restoring
-         * @description Gives up the restore a fresh appliance waits for and moves its setup to `part2`, the wizard's second part.
-         *     Refused with 409 `not_restoring` unless setup is `restore`, and with 409 `restore_started` once a restore
-         *     was started on this appliance, which then has to be installed again to set up a new appliance, and with 409
-         *     `handover_pending` while the appliance is still taking over the setup answers, and with 409 `busy` while
-         *     another restore operation runs.
+         * Give up a restore
+         * @description Without a body, gives up the restore a fresh appliance waits for and moves its setup to `part2`, the
+         *     wizard's second part. Refused with 409 `not_restoring` unless setup is `restore`, and with 409
+         *     `restore_started` once a restore was started on this appliance, which then has to be installed again to set
+         *     up a new appliance, and with 409 `handover_pending` while the appliance is still taking over the setup
+         *     answers, and with 409 `busy` while another restore operation runs.
+         *
+         *     With `{confirm: true}`, abandons a restore that failed: the ILM operator is started again, the holds the
+         *     restore keeps on the add-ons, the ILM settings and the backups are released, and the restore's step becomes
+         *     `abandoned`. The appliance keeps whatever state the restore reached, and the backup file stays. Refused with
+         *     400 when `confirm` is not true, and with 409 `not_failed` unless the restore failed, with 409 `busy` while a
+         *     restore step runs, with 409 `backup_running` while a backup runs, and with 409 `bundle_loading` while an
+         *     update or a bundle load runs, or an update a restart cut off has not ended.
          */
         post: operations["postRestoreAbandon"];
         delete?: never;
@@ -1398,6 +1407,69 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/updates/platform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a platform bundle
+         * @description Installs the platform bundle `version` for the appliance's architecture in the background, loaded or found
+         *     online: a backup to every target first, then the bundle's images, its ILM operator and the new ILM version.
+         *     `update` in GET /updates shows its progress. The way back is a reinstall and a restore of that backup, which
+         *     loses the data changed since. Needs `confirm` set to true; otherwise it is answered with 400. Refused with 409:
+         *     `update_running`, `backup_running`, `restore_running`, `bundle_loading`, `busy` while another operation is
+         *     being admitted, `upgrade_in_progress` while the ILM operator upgrades the platform, `not_installed` before the
+         *     platform is installed, `last_update_failed` while the last platform update failed past its point of no return
+         *     and can be rolled back, `blocked` when the bundle cannot be installed on what runs,
+         *     `operator_older_than_running` when the bundle's ILM operator is older than the one that runs, and `no_space`
+         *     when the data volume has less than twice the bundle's size free; with 404 `not_found` when the bundle is
+         *     neither loaded nor found online.
+         */
+        post: operations["postUpdatesPlatform"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/updates/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll the last platform update back
+         * @description Rolls the last platform update back, whether it completed or failed past its point of no return: the platform
+         *     is uninstalled, installed again at the ILM version that ran before and the backup taken before the update is
+         *     restored in place with the recovery kit's backup key. The data changed since that backup is lost. Only an
+         *     update that kept the ILM operator can be rolled back; after one that installed a newer operator, the way back
+         *     is a restore onto a fresh appliance. `update` in GET /updates shows its progress, with the steps of the
+         *     restore that does it; a restore that waits for its kit or failed is resumed with POST /restore/resume. Needs
+         *     `confirm` set to true; otherwise it is answered with 400. A wrong passphrase or an invalid kit is answered
+         *     as for POST /restore/inspect. Refused with 409: `no_pre_update_backup` when the last update is not a platform
+         *     update or the backup taken before it is gone, `no_previous_bundle` when the platform that ran before is not
+         *     at hand, `operator_changed` when the update installed a newer ILM operator, `not_needed` when the update
+         *     failed before it asked for the new ILM version, `external_database` when the platform uses an external database,
+         *     `foreign_kit` when the kit does not open the backup, `backup_broken` when the backup cannot be restored,
+         *     `upgrade_in_progress`, `update_running`, `backup_running`, `restore_running`, `bundle_loading`, `busy` and
+         *     `not_installed` as for POST /updates/platform. The request body is limited to 1 MiB.
+         */
+        post: operations["postUpdatesRollback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/updates/notes/{kind}/{version}": {
         parameters: {
             query?: never;
@@ -1445,6 +1517,51 @@ export interface components {
             /** @description The bundles in the appliance's registry and on its data volume. */
             loaded: components["schemas"]["UpdateBundle"][];
             load?: components["schemas"]["BundleLoad"];
+            update?: components["schemas"]["UpdateProgress"];
+            rollback?: components["schemas"]["RollbackOffer"];
+            /** @description The ILM operator version that runs. A platform bundle with a newer one cannot be rolled back; the way back from it is a restore onto a fresh appliance. */
+            operator?: string;
+            /** @description Whether the platform uses an external database. A platform update then cannot be rolled back; the way back is a restore onto a fresh appliance. */
+            externalDatabase: boolean;
+        };
+        /** @description Whether the last platform update can be rolled back now; absent where updates cannot be installed. */
+        RollbackOffer: {
+            available: boolean;
+            /** @description Why it cannot, a fixed reason: `noPreUpdateBackup`, `noPreviousBundle`, `operatorChanged`, `notNeeded`, `externalDatabase`, `upgradeInProgress`, `updateRunning`, `restoreRunning` or `failed`; absent when it can. */
+            reason?: string;
+        };
+        RollbackStart: {
+            /** Format: binary */
+            kit: string;
+            /** Format: password */
+            passphrase: string;
+            /** @description Must be true; the data changed since the backup taken before the update is lost. */
+            confirm: boolean;
+        };
+        PlatformUpdateStart: {
+            /** @description The version of the platform bundle, X.Y.Z. */
+            version: string;
+            /** @description Must be true; the way back from the update is a reinstall and a restore of the backup taken first. */
+            confirm: boolean;
+        };
+        /** @description The latest update, while it runs and once it ended. */
+        UpdateProgress: {
+            /** @enum {string} */
+            kind: "platform" | "system" | "rollback";
+            /** @description The version before the update. */
+            from: string;
+            /** @description The version being installed. */
+            to: string;
+            /** @description The step the update is at: `backup`, `images`, `operator`, `version`, `wait`, and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore. */
+            step?: string;
+            /** @description Why the update failed at its step, a fixed reason; absent while it runs and once it completed. A failed rollback has the restore's `message`. */
+            message?: string;
+            /** @description The backup taken before the update. */
+            backup?: string;
+            /** Format: date-time */
+            startedAt: string;
+            /** @description Set once the update has asked for the new ILM version; from then on only a rollback undoes it. */
+            pointOfNoReturn: boolean;
         };
         UpdateBundle: {
             kind: components["schemas"]["BundleKind"];
@@ -1481,7 +1598,7 @@ export interface components {
             kind: components["schemas"]["BundleKind"];
             /** @description The version, once known. */
             version?: string;
-            /** @description Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`, `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `noSpace`, `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`. */
+            /** @description Why a load was refused or failed, a fixed reason: `unsigned`, `badSignature`, `truncated`, `damaged`, `formatTooNew`, `invalidBundle`, `wrongKind`, `wrongVersion`, `wrongArch`, `unmirroredRegistry`, `noSpace`, `busy`, `notFound`, `unreachable`, `timeout`, `failed`, or a reason of `blocked`. */
             reason?: string;
             /** Format: date-time */
             startedAt: string;
@@ -1618,6 +1735,8 @@ export interface components {
             dataVolume?: components["schemas"]["DataVolume"];
             recoveryKit?: components["schemas"]["RecoveryKit"];
             backup?: components["schemas"]["StatusBackup"];
+            /** @description The ILM administrator's certificate was renewed and ILM's administrator holds the new one, which has not been downloaded yet; the credential downloaded before no longer signs in. */
+            adminCredentialRenewed?: boolean;
         };
         /** @description The size and free space of the data volume; absent while the manager cannot read it. */
         DataVolume: {
@@ -1704,7 +1823,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore" | "update-check" | "update-upload" | "update-fetch" | "bundle-loaded";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore" | "update-check" | "update-upload" | "update-fetch" | "bundle-loaded" | "platform-update-start" | "platform-update" | "platform-rollback-start";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -2330,10 +2449,12 @@ export interface components {
             backup: string;
             inPlace: boolean;
             /**
-             * @description The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart.
+             * @description The step that runs, or the one a failed restore stopped at; `waitingForKit` after a manager restart and
+             *     `abandoned` once a failed restore was given up. A rollback of a platform update first stops ILM,
+             *     uninstalls the platform and installs it again (`uninstall`, `reinstall`), then restores the backup.
              * @enum {string}
              */
-            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "cbom" | "start" | "keycloak" | "certificate" | "done" | "waitingForKit";
+            step: "secrets" | "appliance" | "platform" | "stop" | "ilmSecrets" | "database" | "cbom" | "start" | "keycloak" | "certificate" | "uninstall" | "reinstall" | "done" | "waitingForKit" | "abandoned";
             /** @description The step a restore waiting for its kit resumes at. */
             pausedStep?: string;
             /**
@@ -2347,6 +2468,13 @@ export interface components {
             ilmHostName?: string;
             /** Format: date-time */
             startedAt?: string;
+            /**
+             * @description Set on a restore that rolls a platform update back: `reinstalling` until the platform runs the previous
+             *     ILM version again, from `stop` through `reinstall`, then `restoring` while the backup is restored into it,
+             *     from a second `stop` on.
+             * @enum {string}
+             */
+            rollback?: "reinstalling" | "restoring";
         };
         RestoreTargetRequest: {
             target: components["schemas"]["BackupTargetUpdate"];
@@ -2387,6 +2515,10 @@ export interface components {
             kit: string;
             /** Format: password */
             passphrase: string;
+        };
+        RestoreAbandon: {
+            /** @description Must be true; the appliance keeps whatever state the failed restore reached. */
+            confirm: boolean;
         };
         RestoreSummary: {
             /** @description Identifies this check of the backup; `POST /restore/start` names it to restore this backup. */
@@ -4381,15 +4513,20 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RestoreAbandon"];
+            };
+        };
         responses: {
-            /** @description The restore is given up; setup continues with part 2. */
+            /** @description The restore is given up or abandoned. */
             204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
@@ -4487,6 +4624,61 @@ export interface operations {
         };
         responses: {
             /** @description The bundle is being loaded. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    postUpdatesPlatform: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformUpdateStart"];
+            };
+        };
+        responses: {
+            /** @description The update is started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    postUpdatesRollback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["RollbackStart"];
+            };
+        };
+        responses: {
+            /** @description The rollback is started. */
             202: {
                 headers: {
                     [name: string]: unknown;

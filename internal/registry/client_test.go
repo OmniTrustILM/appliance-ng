@@ -653,3 +653,60 @@ func TestSplitRef(t *testing.T) {
 		}
 	}
 }
+
+func TestTagImagesUnderUpstreamTags(t *testing.T) {
+	c, _ := newClient(t)
+	images := map[string]v1.Image{
+		"ghcr.io/project-zot/zot-minimal:v2.1.0":                          newImage(t),
+		"quay.io/cilium/cilium:v1.18.0@sha256:" + strings.Repeat("a", 64): newImage(t),
+		"registry.k8s.io/pause@sha256:" + strings.Repeat("b", 64):         newImage(t),
+	}
+	b := newBundle(t, images)
+	if err := c.PushBundle(t.Context(), b, b.metadata("1.2.3"), nil); err != nil {
+		t.Fatal(err)
+	}
+	// The release installed an older image under the tag, which the bundle's image replaces.
+	tagImage(t, c, "ghcr.io/project-zot/zot-minimal:v2.1.0", newImage(t))
+	refs := make([]bundle.ImageRef, 0, len(b.images))
+	for _, im := range b.images {
+		refs = append(refs, im.Ref)
+	}
+
+	for range 2 {
+		if err := c.TagImages(t.Context(), refs); err != nil {
+			t.Fatal(err)
+		}
+		for _, im := range b.images {
+			repo, tag, _ := splitRef(im.Ref.Ref)
+			if tag != "" && tagDigest(t, c, repo+":"+tag) != im.Ref.Digest {
+				t.Errorf("%s:%s does not point to the bundle's digest %s", repo, tag, im.Ref.Digest)
+			}
+		}
+	}
+}
+
+func TestTagImagesRefusesAMissingImage(t *testing.T) {
+	c, _ := newClient(t)
+	present := newImage(t)
+	b := newBundle(t, map[string]v1.Image{"ghcr.io/present:v1": present})
+	if err := c.PushBundle(t.Context(), b, b.metadata("1.0.0"), nil); err != nil {
+		t.Fatal(err)
+	}
+	refs := []bundle.ImageRef{
+		{Ref: "ghcr.io/present:v1", Digest: digestOf(t, present)},
+		{Ref: "ghcr.io/missing:v1", Digest: digestOf(t, newImage(t))},
+	}
+	err := c.TagImages(t.Context(), refs)
+	if !isNotFound(err) {
+		t.Fatalf("TagImages with a missing image = %v, want a not-found error", err)
+	}
+	if exists(t, c, "ghcr.io/present:v1") {
+		t.Error("an image was tagged although another one is missing")
+	}
+	if err := c.TagImages(t.Context(), []bundle.ImageRef{{Ref: "zz.io/", Digest: digestOf(t, present)}}); err == nil {
+		t.Error("TagImages of a reference without a repository: want an error")
+	}
+	if err := c.TagImages(t.Context(), []bundle.ImageRef{{Ref: "ghcr.io/present:v1", Digest: "bad"}}); err == nil {
+		t.Error("TagImages of a bad digest: want an error")
+	}
+}

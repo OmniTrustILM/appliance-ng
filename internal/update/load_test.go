@@ -16,6 +16,7 @@ import (
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/layout"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/bundle"
@@ -108,6 +109,10 @@ func TestLoadRejects(t *testing.T) {
 		{"platform older than running", release.BundlePlatform, func(e *env) string {
 			return e.upload(e.build(e.platform("1.1.0", "2.18.0")))
 		}, update.OlderThanRunning},
+		{"platform images from a registry the release does not mirror", release.BundlePlatform, func(e *env) string {
+			e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
+			return e.upload(e.build(e.platform("1.1.0", "2.20.0")))
+		}, update.UnmirroredRegistry},
 		{"no space", release.BundlePlatform, func(e *env) string {
 			e.noSpace = true
 			return e.upload(e.build(e.platform("1.1.0", "2.20.0")))
@@ -263,6 +268,81 @@ func TestLoadKeepsCurrentAndPrevious(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsTheWayBack keeps the platform bundle the last update started from while its backup is pinned, and the
+// one a rollback installs again until it is done, besides the loaded and the running one.
+func TestLoadKeepsTheWayBack(t *testing.T) {
+	e := newEnv(t)
+	l := e.loader()
+	load := func(version, ilm string) {
+		t.Helper()
+		if _, err := l.Load(t.Context(), release.BundlePlatform, e.upload(e.build(e.platform(version, ilm)))); err != nil {
+			t.Fatalf("load %s: %v", version, err)
+		}
+	}
+	want := func(tags ...string) {
+		t.Helper()
+		if got := e.zotBundles(release.BundlePlatform); !slices.Equal(got, tags) {
+			t.Errorf("zot bundles %v, want %v", got, tags)
+		}
+		if got := e.stored(release.BundlePlatform); !slices.Equal(got, tags) {
+			t.Errorf("stored bundles %v, want %v", got, tags)
+		}
+	}
+	load("1.1.0", "2.20.0")
+	load("1.2.0", "2.21.0")
+	a := e.appliance()
+	a.Status.Versions = v1alpha1.Versions{Appliance: "1.0.0", Operator: "1.0.0", ILM: "2.21.0", PlatformBundle: "1.2.0"}
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: release.BundlePlatform, From: "1.1.0", FromBundle: "1.1.0", To: "1.2.0", Step: update.StepDone,
+		Backup: "pre-update", StartedAt: metav1.Now(),
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	e.lock.setBackups(v1alpha1.BackupRecord{Name: "pre-update", Pinned: release.BundlePlatform})
+	load("1.3.0", "2.22.0")
+	want("1.1.0-amd64", "1.2.0-amd64", "1.3.0-amd64")
+
+	e.lock.setBackups()
+	a = e.appliance()
+	a.Status.Restore = &v1alpha1.RestoreStatus{
+		Backup: "pre-update", InPlace: true, Step: v1alpha1.RestoreStepUninstall, Message: v1alpha1.RestoreFailed,
+		Rollback: &v1alpha1.RestoreRollback{ILMVersion: "2.20.0", PlatformBundle: "1.1.0"},
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	load("1.4.0", "2.23.0")
+	want("1.1.0-amd64", "1.2.0-amd64", "1.4.0-amd64")
+
+	a = e.appliance()
+	a.Status.Restore.Step, a.Status.Restore.Message = v1alpha1.RestoreStepDone, ""
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	load("1.5.0", "2.24.0")
+	want("1.2.0-amd64", "1.5.0-amd64")
+}
+
+// TestReserveRefusedWhileAnUpdateIsUnfinished refuses a load while the status shows a platform update that has not
+// ended, as after a restart before the update took the admission again.
+func TestReserveRefusedWhileAnUpdateIsUnfinished(t *testing.T) {
+	e := newEnv(t)
+	a := e.appliance()
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: release.BundlePlatform, From: "1.0.0", To: "1.1.0", Step: update.StepWait, StartedAt: metav1.Now(),
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.loader().Reserve(t.Context(), release.BundlePlatform, "admin"); update.Reason(err) != update.Busy {
+		t.Errorf("Reserve while an update is unfinished = %v, want busy", err)
+	}
+	if _, err := e.lock.Hold(); err != nil {
+		t.Errorf("the refused load kept the admission: %v", err)
+	}
+}
+
 // TestReserveIsExclusive refuses a second load while one is reserved and while the shared admission is held.
 func TestReserveIsExclusive(t *testing.T) {
 	e := newEnv(t)
@@ -331,7 +411,7 @@ func TestLoadTimesOut(t *testing.T) {
 	l := update.NewLoader(update.LoaderDeps{
 		Client:    e.client,
 		Registry:  func(context.Context) (update.Registry, error) { return stalledRegistry{}, nil },
-		Admission: e.lock, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Admission: e.lock, Backups: e.lock, Audit: e.audit, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Release: e.rel, Dir: e.dir, Uploads: e.uploads, Key: &e.key.PublicKey, Arch: testArch,
 		Space: e.space, LoadTimeout: 300 * time.Millisecond,
 	})

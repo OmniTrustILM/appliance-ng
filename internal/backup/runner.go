@@ -42,13 +42,16 @@ const (
 	RunManual   = "manual"
 	RunSchedule = "schedule"
 	RunReplace  = "replace"
+	// RunUpdate is the backup before a platform update, taken while the update holds the runner.
+	RunUpdate = "update"
 )
 
 var (
 	// ErrBusy refuses a backup while another one runs.
 	ErrBusy = errors.New("a backup is running")
-	// ErrHeld refuses an operation while an update bundle loads; it is an ErrBusy.
-	ErrHeld = fmt.Errorf("%w: an update bundle is loading", ErrBusy)
+	// ErrHeld refuses an operation while a long operation, an update or a bundle load, holds the runner; it is an
+	// ErrBusy.
+	ErrHeld = fmt.Errorf("%w: an update or a bundle load is running", ErrBusy)
 	// ErrUpgradeInProgress refuses a backup while the operator upgrades the platform.
 	ErrUpgradeInProgress = errors.New("the platform is being upgraded")
 	// ErrRestoreInProgress refuses a backup while a restore runs, waits for its kit or failed before it was done.
@@ -59,6 +62,8 @@ var (
 	ErrNoSpace = storage.ErrNoSpace
 	// ErrFailed is a backup that broke off; its error names the stage and a fixed reason only.
 	ErrFailed = errors.New("the backup failed")
+	// ErrNotHeld refuses an update backup while the caller does not hold the runner.
+	ErrNotHeld = errors.New("the update backup needs the runner held")
 	// ErrNotFound is a local backup or a target the Appliance does not have.
 	ErrNotFound = errors.New("no such backup or target")
 
@@ -203,7 +208,11 @@ func createFile(path string) (localFile, error) {
 // RunOption changes how a backup is recorded.
 type RunOption func(*runOptions)
 
-type runOptions struct{ user string }
+type runOptions struct {
+	user string
+	// pin is the update kind whose backup this is; the local copy stays until Unpin releases it.
+	pin string
+}
 
 type pendingRun struct {
 	reason  string
@@ -214,6 +223,12 @@ type pendingRun struct {
 // ByUser records the backup as started by user; without it the manager started it.
 func ByUser(user string) RunOption {
 	return func(o *runOptions) { o.user = user }
+}
+
+// Pin keeps the local copy of the backup, besides the newest LocalCopies, until Unpin releases it. kind names the
+// kind of update the backup is taken for.
+func Pin(kind string) RunOption {
+	return func(o *runOptions) { o.pin = kind }
 }
 
 func runOpts(opts []RunOption) runOptions {
@@ -230,6 +245,10 @@ func runOpts(opts []RunOption) runOptions {
 // ErrRestoreInProgress, ErrUpgradeInProgress, ErrNoKit and ErrNoSpace; a backup that breaks off returns ErrFailed and
 // leaves no file. A replace or scheduled run refused with ErrBusy starts once the running backup ends, with the background context:
 // the backup encrypted to a confirmed new kit must not wait for the next schedule, and a target due must get its copy.
+//
+// RunUpdate is taken by the caller that holds the runner with Hold, which keeps every other backup and operation out
+// meanwhile, and refuses with ErrNotHeld otherwise. It fails with ErrFailed when any named target does not get the
+// copy, and the caller aborts its update; the local copy stays and is pinned when Pin is given.
 func (r *Runner) Run(ctx context.Context, reason string, targets []string, opts ...RunOption) (v1alpha1.BackupRecord, error) {
 	if err := r.begin(reason, targets, opts); err != nil {
 		return v1alpha1.BackupRecord{}, err
@@ -319,6 +338,16 @@ func (r *Runner) holding() bool {
 func (r *Runner) begin(reason string, targets []string, opts []RunOption) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if reason == RunUpdate {
+		if !r.held {
+			return ErrNotHeld
+		}
+		if r.running {
+			return ErrBusy
+		}
+		r.running = true
+		return nil
+	}
 	if !r.running && !r.held {
 		r.running = true
 		return nil
@@ -349,7 +378,7 @@ func (r *Runner) queue(reason string, targets []string, opts []RunOption) {
 	}
 	r.pending = next
 	if r.held {
-		r.deps.Log.Info("an update bundle is loading; the next backup starts when it ends", "reason", next.reason, "targets", next.targets)
+		r.deps.Log.Info("an update or a bundle load is running; the next backup starts when it ends", "reason", next.reason, "targets", next.targets)
 		return
 	}
 	r.deps.Log.Info("a backup is running; the next one starts when it ends", "reason", next.reason, "targets", next.targets)
@@ -448,7 +477,7 @@ func (r *Runner) execute(ctx context.Context, a *v1alpha1.Appliance, recipient a
 	r.deps.Log.Info("backup started", "reason", reason, "user", o.user)
 
 	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
-	rec, stage, err := r.writeLocal(wctx, a, recipient, start)
+	rec, stage, err := r.writeLocal(wctx, a, recipient, start, o.pin)
 	cancel()
 	if err != nil {
 		failure := localReason(err)
@@ -486,6 +515,9 @@ func (r *Runner) execute(ctx context.Context, a *v1alpha1.Appliance, recipient a
 		}
 	})
 	r.audit(o.user, reason, rec.Name, strings.Join(failed, ", "))
+	if reason == RunUpdate && len(failed) > 0 {
+		return rec, fmt.Errorf("%w while copying to the targets: %s", ErrFailed, strings.Join(failed, ", "))
+	}
 	return rec, nil
 }
 
@@ -532,7 +564,7 @@ func (r *Runner) prepare(ctx context.Context) (*v1alpha1.Appliance, age.Recipien
 	if err := r.deps.Reader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, a); err != nil {
 		return nil, nil, fmt.Errorf(readApplianceFailed, err)
 	}
-	if r := a.Status.Restore; r != nil && r.Step != v1alpha1.RestoreStepDone {
+	if a.Status.Restore.Unsettled() {
 		return a, nil, ErrRestoreInProgress
 	}
 	upgrading, err := Upgrading(ctx, r.deps.Reader)
@@ -550,11 +582,7 @@ func (r *Runner) prepare(ctx context.Context) (*v1alpha1.Appliance, age.Recipien
 	if err != nil {
 		return a, nil, err
 	}
-	var last uint64
-	if len(records) > 0 {
-		last = uint64(records[0].SizeBytes) //nolint:gosec // a file size is never negative
-	}
-	return a, recipient, r.check(r.deps.Dir, last)
+	return a, recipient, r.check(r.deps.Dir, expectedSize(records))
 }
 
 // Upgrading tells whether the operator reports an upgrade of the Platform; no Platform, or no Platform kind yet, is
@@ -593,7 +621,7 @@ func (r *Runner) recipient(ctx context.Context, st *v1alpha1.RecoveryKitStatus) 
 
 // writeLocal writes the backup as a partial file and renames it once it is complete and on disk, then keeps the
 // newest LocalCopies. On failure it removes the partial file and names the stage that failed.
-func (r *Runner) writeLocal(ctx context.Context, a *v1alpha1.Appliance, recipient age.Recipient, at time.Time) (v1alpha1.BackupRecord, string, error) {
+func (r *Runner) writeLocal(ctx context.Context, a *v1alpha1.Appliance, recipient age.Recipient, at time.Time, pin string) (v1alpha1.BackupRecord, string, error) {
 	rec := v1alpha1.BackupRecord{Name: FileName(a.Spec.Node.HostName, at, r.deps.Version), Time: metav1.NewTime(at)}
 	if err := os.MkdirAll(r.deps.Dir, dirMode); err != nil {
 		return rec, "backup directory", err
@@ -615,17 +643,21 @@ func (r *Runner) writeLocal(ctx context.Context, a *v1alpha1.Appliance, recipien
 	if cerr := f.Close(); err == nil && cerr != nil {
 		stage, err = stageFile, cerr
 	}
+	if err == nil && pin != "" {
+		err = writePin(path, pin)
+	}
 	if err == nil {
 		err = os.Rename(part, path)
 	}
 	if err != nil {
+		removePin(path)
 		if rerr := os.Remove(part); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
 			r.deps.Log.Error("could not remove the partial backup", "name", rec.Name+partSuffix)
 		}
 		return rec, stage, err
 	}
 	// Renamed, the backup is complete and listed: what fails from here on does not undo it.
-	rec.SizeBytes = out.n
+	rec.SizeBytes, rec.Pinned = out.n, pin
 	if err := syncDir(r.deps.Dir); err != nil {
 		r.deps.Log.Warn("could not sync the backup directory", "failure", localReason(err))
 	}

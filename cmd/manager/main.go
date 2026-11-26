@@ -149,16 +149,17 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 	}
 	defer func() { _ = auditLog.Close() }()
 	reconciler := &manager.ApplianceReconciler{
-		Client:    mgr.GetClient(),
-		APIReader: mgr.GetAPIReader(),
-		Cluster:   cluster,
-		Steps:     steps,
-		Addons:    addonpass.Pinned(addons.FS, rel.ArchPins(goruntime.GOARCH)),
-		Release:   rel,
-		Recorder:  mgr.GetEventRecorder(kube.ManagerFieldManager),
-		Version:   version,
-		DataDir:   data,
-		Audit:     auditLog,
+		Client:     mgr.GetClient(),
+		APIReader:  mgr.GetAPIReader(),
+		Cluster:    cluster,
+		Steps:      steps,
+		Addons:     addonpass.Pinned(addons.FS, rel.ArchPins(goruntime.GOARCH)),
+		Release:    rel,
+		Recorder:   mgr.GetEventRecorder(kube.ManagerFieldManager),
+		Version:    version,
+		DataDir:    data,
+		BundlesDir: filepath.Join(data, bundlesDir),
+		Audit:      auditLog,
 		// The add-on pass and the restore engine both write the ILM operator's replicas.
 		OperatorLock: &sync.Mutex{},
 	}
@@ -219,6 +220,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 		Updates:    ops.loader,
 		Finder:     ops.finder,
 		UpdatesDir: filepath.Join(data, updatesDir),
+		Platform:   ops.jobs,
 	})
 	if err := addConsole(mgr, log, listen, api.Handler()); err != nil {
 		return err
@@ -265,10 +267,11 @@ type operations struct {
 	restorer *restore.Engine
 	loader   *update.Loader
 	finder   *update.Finder
+	jobs     *update.Jobs
 }
 
-// newOperations returns the backup runner with its schedule, the restore engine, and the bundle loader and finder of
-// the bundles in repository.
+// newOperations returns the backup runner with its schedule, the restore engine, the bundle loader and finder of the
+// bundles in repository, and the update jobs.
 func newOperations(ctx context.Context, s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data, repository string) (operations, error) {
 	backups, restorer, err := newBackupAndRestore(ctx, s, rel, reconciler, data)
 	if err != nil {
@@ -278,7 +281,33 @@ func newOperations(ctx context.Context, s services, rel *release.Manifest, recon
 	if err != nil {
 		return operations{}, err
 	}
-	return operations{backups: backups, restorer: restorer, loader: loader, finder: finder}, nil
+	jobs, err := newJobs(s, rel, backups, restorer, loader, data)
+	if err != nil {
+		return operations{}, err
+	}
+	return operations{backups: backups, restorer: restorer, loader: loader, finder: finder, jobs: jobs}, nil
+}
+
+// newJobs returns the update jobs, which share the admission of backups, fetch a bundle not loaded with loader, tag
+// its images in zot and roll an update back with restorer. Once the manager runs, they resume the update a restart
+// cut off.
+func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer *restore.Engine, loader *update.Loader, data string) (*update.Jobs, error) {
+	reader := s.mgr.GetAPIReader()
+	jobs := update.NewJobs(update.JobDeps{
+		Client:   s.direct,
+		Backups:  backups,
+		Restore:  restorer,
+		Registry: func(ctx context.Context) (update.ImageTagger, error) { return zotClient(ctx, reader) },
+		Fetcher:  loader,
+		Audit:    s.audit,
+		Log:      s.log,
+		Release:  rel,
+		Dir:      filepath.Join(data, bundlesDir),
+	})
+	if err := s.mgr.Add(crmanager.RunnableFunc(jobs.KeepResuming)); err != nil {
+		return nil, fmt.Errorf("add the resumption of an interrupted update: %w", err)
+	}
+	return jobs, nil
 }
 
 // newBackupAndRestore returns the backup runner on the data directory data, with its schedule, and the restore
@@ -291,7 +320,7 @@ func newBackupAndRestore(ctx context.Context, s services, rel *release.Manifest,
 	if err := addBackupSchedule(s.mgr, reconciler, backups); err != nil {
 		return nil, nil, err
 	}
-	return backups, newRestoreEngine(ctx, s, backups, reconciler.OperatorLock), nil
+	return backups, newRestoreEngine(ctx, s, backups, reconciler.OperatorLock, data), nil
 }
 
 // newUpdates returns the bundle loader and the finder of the bundles in repository, which checks daily with mgr. The
@@ -312,6 +341,7 @@ func newUpdates(s services, rel *release.Manifest, backups *backup.Runner, data,
 		Client:    s.direct,
 		Registry:  func(ctx context.Context) (update.Registry, error) { return zotClient(ctx, reader) },
 		Admission: backups,
+		Backups:   backups,
 		Audit:     s.audit,
 		Log:       s.log,
 		Release:   rel,
@@ -406,8 +436,10 @@ func newBackupRunner(ctx context.Context, s services, rel *release.Manifest, dir
 }
 
 // newRestoreEngine returns the restore engine and, in the background, marks a restore that a restart cut off as
-// waiting for its recovery kit: the backup key it held lived only in memory.
-func newRestoreEngine(ctx context.Context, s services, backups *backup.Runner, operatorLock sync.Locker) *restore.Engine {
+// waiting for its recovery kit: the backup key it held lived only in memory. A fresh restore from a platform bundle
+// loaded under data tags its images in zot.
+func newRestoreEngine(ctx context.Context, s services, backups *backup.Runner, operatorLock sync.Locker, data string) *restore.Engine {
+	reader := s.mgr.GetAPIReader()
 	engine := restore.New(restore.Deps{
 		Client:       s.direct,
 		Dumper:       backup.NewManagedDumper(s.mgr.GetAPIReader(), s.mgr.GetConfig()),
@@ -416,6 +448,13 @@ func newRestoreEngine(ctx context.Context, s services, backups *backup.Runner, o
 		Audit:        s.audit,
 		Log:          s.log,
 		OperatorLock: operatorLock,
+		Images: func(ctx context.Context, version string) error {
+			reg, err := zotClient(ctx, reader)
+			if err != nil {
+				return err
+			}
+			return update.TagPlatform(ctx, reg, filepath.Join(data, bundlesDir), version, goruntime.GOARCH)
+		},
 	})
 	go engine.KeepRecovering(ctx)
 	return engine

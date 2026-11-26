@@ -65,3 +65,32 @@ type pinnedInfo struct {
 }
 
 func (i pinnedInfo) Size() int64 { return i.size }
+
+// Replaced returns fsys with the file name holding data instead.
+func Replaced(fsys fs.FS, name string, data []byte) fs.FS {
+	return replacedFS{FS: fsys, name: name, data: data}
+}
+
+type replacedFS struct {
+	fs.FS
+	name string
+	data []byte
+}
+
+func (r replacedFS) ReadFile(name string) ([]byte, error) {
+	if name != r.name {
+		return fs.ReadFile(r.FS, name)
+	}
+	return r.data, nil
+}
+
+func (r replacedFS) Open(name string) (fs.File, error) {
+	if name != r.name {
+		return r.FS.Open(name)
+	}
+	info, err := fs.Stat(r.FS, name)
+	if err != nil {
+		return nil, err
+	}
+	return &pinnedFile{Reader: bytes.NewReader(r.data), info: pinnedInfo{FileInfo: info, size: int64(len(r.data))}}, nil
+}

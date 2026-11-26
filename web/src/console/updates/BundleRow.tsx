@@ -39,16 +39,21 @@ function Notes({ bundle }: Readonly<{ bundle: Bundle }>) {
   );
 }
 
-/** One bundle: its version, kind, size and compatibility, with its release notes and, when it can be loaded, "Fetch". */
-export function BundleRow({ bundle, onFetch, fetchDisabled }: Readonly<{ bundle: Bundle; onFetch?: () => void; fetchDisabled?: boolean }>) {
+type BundleRowProps = Readonly<{ bundle: Bundle; onFetch?: () => void; onInstall?: () => void; disabled?: boolean }>;
+
+/** One bundle: its version, kind, size and compatibility, with its release notes and, when it can be, "Fetch" or "Install". */
+export function BundleRow({ bundle, onFetch, onInstall, disabled }: BundleRowProps) {
   const details: string[] = [formatBytes(bundle.sizeBytes), bundle.arch];
   if (bundle.ilm) details.push(`ILM ${bundle.ilm}`);
   if (bundle.operator) details.push(`operator ${bundle.operator}`);
   if (bundle.loadedAt) details.push(`loaded ${new Date(bundle.loadedAt).toLocaleString()}`);
   return (
     <ItemRow
-      actions={onFetch && !bundle.blocked && (
-        <Button variant="secondary" disabled={fetchDisabled} aria-label={`Fetch ${bundle.version}`} onClick={onFetch}>Fetch</Button>
+      actions={!bundle.blocked && (
+        <>
+          {onFetch && <Button variant="secondary" disabled={disabled} aria-label={`Fetch ${bundle.version}`} onClick={onFetch}>Fetch</Button>}
+          {onInstall && <Button disabled={disabled} aria-label={`Install ${bundle.version}`} onClick={onInstall}>Install</Button>}
+        </>
       )}
     >
       <p className="m-0">

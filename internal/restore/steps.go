@@ -398,6 +398,11 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 	if err != nil {
 		return err
 	}
+	if !j.status.InPlace {
+		if err := e.usePlatformBundle(ctx, j.status.PlatformBundle); err != nil {
+			return err
+		}
+	}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		a, err := e.appliance(ctx)
 		if err != nil {
@@ -415,6 +420,23 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 		a.Spec = spec
 		return e.deps.Client.Update(ctx, a, client.FieldOwner(kube.ManagerFieldManager))
 	})
+}
+
+// usePlatformBundle makes the images of the loaded platform bundle version available in the appliance's registry,
+// before the platform is installed from them, and records it as the platform bundle that runs, from which the add-on
+// pass takes the ILM operator. An empty version records the release's own platform, replacing a bundle that an
+// earlier fresh restore recorded.
+func (e *Engine) usePlatformBundle(ctx context.Context, version string) error {
+	if version == "" {
+		return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) { st.Versions.PlatformBundle = "" })
+	}
+	if e.deps.Images == nil {
+		return errors.New("no registry for the images of a platform bundle")
+	}
+	if err := e.deps.Images(ctx, version); err != nil {
+		return fmt.Errorf("tag the images of platform bundle %s: %w", version, err)
+	}
+	return e.updateStatus(ctx, func(st *v1alpha1.ApplianceStatus) { st.Versions.PlatformBundle = version })
 }
 
 // chooseDependencies sets the dependencies of the restored platform p: the current ones of a restore in place,
@@ -442,16 +464,30 @@ func chooseDependencies(p, current *v1alpha1.PlatformSpec, st v1alpha1.RestoreSt
 // restoreILMSecrets writes the backup's Secrets of the platform namespace while the operator and ILM are stopped,
 // after deleting the CertificateRequests there, so that cert-manager keeps the restored CA and certificate. It stops
 // them again first: a resumed restore or an add-on pass may have started the operator since the stop step.
+//
+// A rollback, which skips the secrets step, also writes the backup's ILM identity of the manager, or deletes the
+// current one when the backup holds none: the restored database knows only the backup's.
 func (e *Engine) restoreILMSecrets(ctx context.Context, j *job) error {
-	secrets, err := readSecrets(ctx, j, func(ns string) bool { return ns == platform.Namespace })
+	rollback := j.status.Rollback != nil
+	secrets, err := readSecrets(ctx, j, func(ns string) bool {
+		return ns == platform.Namespace || rollback && ns == kube.SystemNamespace
+	})
 	if err != nil {
 		return err
 	}
+	secrets = slices.DeleteFunc(secrets, func(s corev1.Secret) bool {
+		return s.Namespace == kube.SystemNamespace && s.Name != ilmclient.IdentitySecret
+	})
 	if err := e.stop(ctx, j); err != nil {
 		return err
 	}
 	if err := e.deleteRequests(ctx, platform.Namespace, ""); err != nil {
 		return err
+	}
+	if rollback {
+		if err := e.deleteUnknownIdentity(ctx, secrets); err != nil {
+			return err
+		}
 	}
 	return e.writeSecrets(ctx, secrets)
 }

@@ -138,39 +138,109 @@ func TestAdminCredentialOnce(t *testing.T) {
 	}
 }
 
-// TestAdminCredentialAfterRenewal checks that a renewed certificate can be downloaded, once, although the one it
-// replaced was.
+// TestAdminCredentialAfterRenewal checks that a renewed certificate is handed out, once, although the one it replaced
+// was, as soon as ILM's administrator holds it, and that the status offers it until then.
 func TestAdminCredentialAfterRenewal(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
-	createAdminSecret(t, newAdminCredential(t, pkcs1))
+	createAppliance(t, "complete")
+	first := newAdminCredential(t, pkcs1)
+	createAdminSecret(t, first)
 	body := map[string]string{"password": credentialPassword}
 	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusOK)
+	setAdminSecret(t, nil, first.leaf.Raw)
+	if renewedOffered(t, h, s) {
+		t.Error("a credential is offered again before the certificate is renewed")
+	}
 
 	renewed := newAdminCredential(t, pkcs1)
-	ctx := context.Background()
-	secret := &corev1.Secret{}
-	if err := testClient.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
-		t.Fatal(err)
+	setAdminSecret(t, &renewed, nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
+	wantStatus(t, rec, http.StatusNotFound)
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"not_registered"`)) {
+		t.Errorf("answer %s, want the code not_registered", rec.Body)
 	}
-	secret.Data = map[string][]byte{corev1.TLSCertKey: renewed.cert, corev1.TLSPrivateKeyKey: renewed.key}
-	if err := testClient.Update(ctx, secret); err != nil {
-		t.Fatal(err)
+	if renewedOffered(t, h, s) {
+		t.Error("the renewed credential is offered before ILM's administrator holds it")
 	}
 
-	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
+	setAdminSecret(t, nil, renewed.leaf.Raw)
+	if !renewedOffered(t, h, s) {
+		t.Error("the registered renewed credential is not offered")
+	}
+	rec = h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
 	wantStatus(t, rec, http.StatusOK)
 	if _, leaf, err := pkcs12.Decode(rec.Body.Bytes(), credentialPassword); err != nil || !leaf.Equal(renewed.leaf) {
 		t.Errorf("the download after renewal does not hold the renewed certificate (error %v)", err)
 	}
-	if err := testClient.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
+	secret := &corev1.Secret{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(renewed.cert)
 	if got, want := secret.Annotations[DownloadedAnnotation], hex.EncodeToString(sum[:]); got != want {
 		t.Errorf("annotation %s = %q, want the renewed certificate's SHA-256 %q", DownloadedAnnotation, got, want)
 	}
+	if renewedOffered(t, h, s) {
+		t.Error("the renewed credential is still offered after its download")
+	}
 	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusGone)
+}
+
+// TestAdminCredentialRenewedBeforeRegistration checks that an appliance upgraded from a manager that recorded
+// downloads but not registrations does not hand out a renewed certificate before ILM's administrator holds it.
+func TestAdminCredentialRenewedBeforeRegistration(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	first := newAdminCredential(t, pkcs1)
+	createAdminSecret(t, first)
+	body := map[string]string{"password": credentialPassword}
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusOK)
+
+	renewed := newAdminCredential(t, pkcs1)
+	setAdminSecret(t, &renewed, nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
+	wantStatus(t, rec, http.StatusNotFound)
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"not_registered"`)) {
+		t.Errorf("answer %s, want the code not_registered", rec.Body)
+	}
+	secret := &corev1.Secret{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := secret.Annotations[DownloadedAnnotation], certificateSum(secret); got == want {
+		t.Error("the refused download was recorded as handed out")
+	}
+}
+
+// setAdminSecret writes cred into the administrator's certificate Secret, as cert-manager renews it, and, when
+// registered is set, records that ILM's administrator holds that DER certificate, as the manager does.
+func setAdminSecret(t *testing.T, cred *adminCredential, registered []byte) {
+	t.Helper()
+	ctx := context.Background()
+	secret := &corev1.Secret{}
+	if err := testClient.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
+		t.Fatal(err)
+	}
+	if cred != nil {
+		secret.Data = map[string][]byte{corev1.TLSCertKey: cred.cert, corev1.TLSPrivateKeyKey: cred.key}
+	}
+	if registered != nil {
+		sum := sha256.Sum256(registered)
+		secret.Annotations[platform.AdminCertificateRegisteredAnnotation] = hex.EncodeToString(sum[:])
+	}
+	if err := testClient.Update(ctx, secret); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func renewedOffered(t *testing.T, h *harness, s *session) bool {
+	t.Helper()
+	rec := h.request(http.MethodGet, "/appliance/api/v1/status", nil, s)
+	wantStatus(t, rec, http.StatusOK)
+	var got Status
+	decode(t, rec, &got)
+	return got.AdminCredentialRenewed != nil && *got.AdminCredentialRenewed
 }
 
 func TestAdminCredentialAcceptsAPKCS8Key(t *testing.T) {

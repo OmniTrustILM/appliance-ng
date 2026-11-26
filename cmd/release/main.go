@@ -28,7 +28,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: release validate [-f release.yaml] [--addons addons]")
 	fmt.Fprintln(os.Stderr, "       release images [-f release.yaml] --arch amd64|arm64 [--installer <ref>] [--manager <ref>]")
-	fmt.Fprintln(os.Stderr, "       release pin [--root .] --operator <version> [--ilm <version>]")
+	fmt.Fprintln(os.Stderr, "       release pin [--root .] --operator <version> [--ilm <version>] [--older-ilm]")
 	os.Exit(2)
 }
 

@@ -54,3 +54,28 @@ func TestPinnedWithoutPinsIsTheFiles(t *testing.T) {
 		t.Errorf("Pinned without pins = %T, want the files themselves", got)
 	}
 }
+
+func TestReplacedServesTheFileInstead(t *testing.T) {
+	fsys := Replaced(fstest.MapFS{
+		"op.yaml": {Data: []byte("embedded")},
+		"a.yaml":  {Data: []byte("a")},
+	}, "op.yaml", []byte("from the bundle"))
+
+	if got, err := fs.ReadFile(fsys, "op.yaml"); err != nil || string(got) != "from the bundle" {
+		t.Errorf("ReadFile = %q, %v; want the replacement", got, err)
+	}
+	f, err := fsys.Open("op.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if info, err := f.Stat(); err != nil || info.Name() != "op.yaml" || info.Size() != int64(len("from the bundle")) {
+		t.Errorf("Stat = %v, %v; want the replacement's size", info, err)
+	}
+	if got, err := fs.ReadFile(fsys, "a.yaml"); err != nil || string(got) != "a" {
+		t.Errorf("another file = %q, %v; want it unchanged", got, err)
+	}
+	if _, err := Replaced(fstest.MapFS{}, "op.yaml", nil).Open("op.yaml"); err == nil {
+		t.Error("Open of a replaced file missing underneath: want an error")
+	}
+}

@@ -50,9 +50,18 @@ var (
 // the administrator Certificates exist. An external database or identity provider has nothing of these to wait for.
 // The Secrets restored later are then written into the objects the operators own.
 func (e *Engine) waitForPlatform(ctx context.Context, _ *job) error {
-	a, err := e.appliance(ctx)
+	checks, err := e.platformChecks(ctx)
 	if err != nil {
 		return err
+	}
+	return e.waitFor(ctx, "the Platform", allReady(checks))
+}
+
+// platformChecks are the checks that the operator has made the Platform the Appliance chooses.
+func (e *Engine) platformChecks(ctx context.Context) ([]func(context.Context) (bool, error), error) {
+	a, err := e.appliance(ctx)
+	if err != nil {
+		return nil, err
 	}
 	p := a.Spec.Platform
 	if p == nil {
@@ -65,14 +74,19 @@ func (e *Engine) waitForPlatform(ctx context.Context, _ *job) error {
 	if p.Identity == nil {
 		checks = append(checks, e.keycloakExists)
 	}
-	return e.waitFor(ctx, "the Platform", func(ctx context.Context) (bool, error) {
+	return checks, nil
+}
+
+// allReady reports ready once every one of checks does.
+func allReady(checks []func(context.Context) (bool, error)) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
 		for _, ready := range checks {
 			if ok, err := ready(ctx); err != nil || !ok {
 				return false, err
 			}
 		}
 		return true, nil
-	})
+	}
 }
 
 func (e *Engine) databaseReady(ctx context.Context) (bool, error) {

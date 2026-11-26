@@ -293,3 +293,13 @@ func TestBOMImageRefsNamesMissingComponent(t *testing.T) {
 		t.Fatalf("err = %v, want one naming renamed-component", err)
 	}
 }
+
+func TestOperator(t *testing.T) {
+	m := &Manifest{Addons: []AddonFile{{Name: "cert-manager"}, {Name: OperatorAddon, Version: "v1.1.0"}}}
+	if a, ok := m.Operator(); !ok || a.Version != "v1.1.0" {
+		t.Errorf("Operator() = %+v, %v", a, ok)
+	}
+	if _, ok := (&Manifest{}).Operator(); ok {
+		t.Error("Operator() of a release without the operator: want false")
+	}
+}
