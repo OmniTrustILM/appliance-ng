@@ -170,9 +170,11 @@ func (b *Bundle) checkContent(v *verified) error {
 	return nil
 }
 
-// validFileName reports whether name is a plain, visible file name other than the notes and the metadata.
+// validFileName reports whether name is a plain, visible file name, without a separator, other than the notes and the
+// metadata.
 func validFileName(name string) bool {
-	return filepath.Base(name) == name && !strings.HasPrefix(name, ".") && name != NotesFile && name != MetadataFile
+	return name != "" && !strings.ContainsAny(name, `/\`) && !strings.HasPrefix(name, ".") &&
+		name != NotesFile && name != MetadataFile
 }
 
 // tarNames reads every entry of a tar and returns their names.

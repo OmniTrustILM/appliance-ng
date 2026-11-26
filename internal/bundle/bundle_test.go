@@ -616,3 +616,22 @@ func resign(t *testing.T, dir string, key *ecdsa.PrivateKey, change func(im *v1.
 	}
 	sign(t, dir, key)
 }
+
+func TestValidFileName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"release.yaml": true,
+		"":             false,
+		"/":            false,
+		"a/b.yaml":     false,
+		"/a.yaml":      false,
+		`a\b.yaml`:     false,
+		".hidden":      false,
+		"..":           false,
+		NotesFile:      false,
+		MetadataFile:   false,
+	} {
+		if got := validFileName(name); got != want {
+			t.Errorf("validFileName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
