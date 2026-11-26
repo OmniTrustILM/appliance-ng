@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"archive/tar"
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
@@ -14,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -136,8 +138,60 @@ func (b *Bundle) verifySigned(pub crypto.PublicKey, arch string) (*verified, *v1
 	if v.metadata.Arch != arch {
 		return nil, nil, fmt.Errorf("%w: %s, not %s", ErrWrongArch, v.metadata.Arch, arch)
 	}
+	if err := b.checkContent(v); err != nil {
+		return nil, nil, err
+	}
 	v.index = indexDesc.Digest
 	return v, index, nil
+}
+
+// checkContent checks that the notes and every file the metadata names can be read, and that each name can stand
+// beside the notes and the metadata in a stored bundle's directory.
+func (b *Bundle) checkContent(v *verified) error {
+	if _, err := b.readBlob(v.notes, maxFilesSize); err != nil {
+		return fmt.Errorf("read the bundle notes: %w", err)
+	}
+	archive, err := b.readBlob(v.files, maxFilesSize)
+	if err != nil {
+		return fmt.Errorf("read the bundle manifests: %w", err)
+	}
+	names, err := tarNames(archive)
+	if err != nil {
+		return fmt.Errorf("read the bundle manifests: %w", err)
+	}
+	for _, name := range v.metadata.Files {
+		if !validFileName(name) {
+			return fmt.Errorf("the bundle names a file %q", name)
+		}
+		if !names[name] {
+			return fmt.Errorf("the bundle lacks its file %s", name)
+		}
+	}
+	return nil
+}
+
+// validFileName reports whether name is a plain, visible file name other than the notes and the metadata.
+func validFileName(name string) bool {
+	return filepath.Base(name) == name && !strings.HasPrefix(name, ".") && name != NotesFile && name != MetadataFile
+}
+
+// tarNames reads every entry of a tar and returns their names.
+func tarNames(archive []byte) (map[string]bool, error) {
+	names := map[string]bool{}
+	tr := tar.NewReader(bytes.NewReader(archive))
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return names, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, err := io.Copy(io.Discard, tr); err != nil {
+			return nil, err
+		}
+		names[h.Name] = true
+	}
 }
 
 func (b *Bundle) layoutIndex() (*v1.IndexManifest, error) {

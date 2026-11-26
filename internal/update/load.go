@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,7 +39,6 @@ const AuditAction = "bundle-loaded"
 const (
 	dirMode      = 0o700
 	fileMode     = 0o600
-	notesFile    = "notes.md"
 	sourceLocal  = "upload"
 	sourceOnline = "online"
 )
@@ -366,17 +364,14 @@ func (l *Loader) store(f files, md bundle.Metadata) error {
 	defer func() { _ = os.RemoveAll(tmp) }()
 	contents := map[string][]byte{}
 	for _, name := range md.Files {
-		if filepath.Base(name) != name || name == notesFile || name == metadataFile || name[0] == '.' {
-			return fmt.Errorf("the bundle names a file %q", name)
-		}
 		if contents[name], err = f.File(name); err != nil {
 			return err
 		}
 	}
-	if contents[notesFile], err = f.Notes(); err != nil {
+	if contents[bundle.NotesFile], err = f.Notes(); err != nil {
 		return err
 	}
-	if contents[metadataFile], err = json.Marshal(md); err != nil {
+	if contents[bundle.MetadataFile], err = json.Marshal(md); err != nil {
 		return err
 	}
 	for name, data := range contents {
@@ -391,10 +386,7 @@ func (l *Loader) store(f files, md bundle.Metadata) error {
 	return os.Rename(tmp, dst)
 }
 
-const (
-	metadataFile = "bundle.json"
-	partPrefix   = ".part-"
-)
+const partPrefix = ".part-"
 
 // keep names the bundles of md's kind to keep: md's and the running version's when it is stored, else the newest
 // other stored one.
@@ -512,7 +504,7 @@ func (l *Loader) Notes(kind, version string) ([]byte, error) {
 		return nil, ErrNoNotes
 	}
 	t := tag(version, l.deps.Arch)
-	for _, path := range []string{filepath.Join(l.deps.Dir, kind, t, notesFile), notesPath(l.deps.Dir, kind, t)} {
+	for _, path := range []string{filepath.Join(l.deps.Dir, kind, t, bundle.NotesFile), notesPath(l.deps.Dir, kind, t)} {
 		if data, err := os.ReadFile(path); err == nil { //nolint:gosec // built from a checked kind and version
 			return data, nil
 		}

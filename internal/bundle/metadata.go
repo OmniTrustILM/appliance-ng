@@ -34,6 +34,12 @@ const (
 	manifestsTitle = "manifests.tar"
 )
 
+// Names of the notes and the metadata in a stored bundle's directory, beside the bundle's files.
+const (
+	NotesFile    = "notes.md"
+	MetadataFile = "bundle.json"
+)
+
 // Reasons a bundle is refused.
 var (
 	ErrUnsigned     = errors.New("the bundle is not signed")

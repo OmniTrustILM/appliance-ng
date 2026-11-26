@@ -75,6 +75,22 @@ func TestLoadRejects(t *testing.T) {
 			bundletest.Sign(t, dir, e.key)
 			return e.upload(dir)
 		}, update.Damaged},
+		{"file missing from the manifests", release.BundlePlatform, func(e *env) string {
+			s := e.platform("1.1.0", "2.20.0")
+			s.key = nil
+			dir := e.build(s)
+			rewrite(t, dir, func(md *bundle.Metadata) { md.Files = append(md.Files, "missing.yaml") }, nil)
+			bundletest.Sign(t, dir, e.key)
+			return e.upload(dir)
+		}, update.InvalidBundle},
+		{"file name outside the bundle directory", release.BundlePlatform, func(e *env) string {
+			s := e.platform("1.1.0", "2.20.0")
+			s.key = nil
+			dir := e.build(s)
+			rewrite(t, dir, func(md *bundle.Metadata) { md.Files = append(md.Files, "../escape.yaml") }, nil)
+			bundletest.Sign(t, dir, e.key)
+			return e.upload(dir)
+		}, update.InvalidBundle},
 		{"version not X.Y.Z", release.BundleSystem, func(e *env) string {
 			return e.upload(e.build(e.system("1.2")))
 		}, update.InvalidMetadata},
