@@ -39,8 +39,8 @@ func (p *parts) add(o parts) {
 func (p parts) all() []manifest { return slices.Concat(p.images, p.indexes, p.copies) }
 
 // Prune deletes the bundles of kind that are not in keep, as the tags Bundles lists, with their images, except the
-// manifests and tags a kept bundle or a bundle of another kind lists as well. The registry's garbage collection frees
-// the blobs.
+// manifests and tags a kept bundle or a bundle of another kind lists as well, and an image a tag such a bundle lists
+// still points to. The registry's garbage collection frees the blobs.
 //
 // The images go first, then the bundle index, then the copies, which zot keeps while an index of their repository
 // lists them. A bundle is listed until its index is gone, so the next run repeats what failed before that.
@@ -123,7 +123,11 @@ func (c *Client) prunable(ctx context.Context, kind, tag string, keeping bool) (
 // of its repository still lists is left to that index.
 func (c *Client) removeAll(ctx context.Context, manifests []manifest, kept map[string]bool, referenced bool) error {
 	for _, m := range manifests {
-		if m.digest != "" && kept[m.digestKey()] {
+		keep, err := c.keeps(ctx, m, kept)
+		if err != nil {
+			return err
+		}
+		if keep {
 			continue
 		}
 		if err := c.remove(ctx, m, kept[m.tagKey()], referenced); err != nil {
@@ -131,6 +135,32 @@ func (c *Client) removeAll(ctx context.Context, manifests []manifest, kept map[s
 		}
 	}
 	return nil
+}
+
+// keeps reports whether m stays: kept lists its digest, or lists its tag and the tag still points to m, as a load
+// leaves a tag on the image that created it.
+func (c *Client) keeps(ctx context.Context, m manifest, kept map[string]bool) (bool, error) {
+	if m.digest == "" {
+		return false, nil
+	}
+	if kept[m.digestKey()] {
+		return true, nil
+	}
+	if m.tag == "" || !kept[m.tagKey()] {
+		return false, nil
+	}
+	repo, err := c.repository(m.repo)
+	if err != nil {
+		return false, err
+	}
+	desc, err := remote.Head(repo.Tag(m.tag), c.options(ctx)...)
+	if isNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", m.tagKey(), err)
+	}
+	return desc.Digest.String() == m.digest, nil
 }
 
 // bundleManifests lists the manifests of the bundle tag of kind.

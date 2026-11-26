@@ -33,7 +33,7 @@ func TestPruneAgainstZot(t *testing.T) {
 	shared, onlyOld, onlyNew, oldMoving, newMoving := newImage(t), newImage(t), newImage(t), newImage(t), newImage(t)
 	old := newBundle(t, map[string]v1.Image{ns + "shared:v1": shared, ns + "old:v1": onlyOld, ns + "moving:tag": oldMoving})
 	cur := newBundle(t, map[string]v1.Image{ns + "shared:v1": shared, ns + "new:v2": onlyNew, ns + "moving:tag": newMoving})
-	// The older bundle goes first, so that the tag moving ends on the newer one's image.
+	// The older bundle goes first and creates the tag moving, which the newer one leaves on its image.
 	for _, b := range []struct {
 		version string
 		bundle  *fakeBundle
@@ -61,9 +61,10 @@ func TestPruneAgainstZot(t *testing.T) {
 		ns + "shared:v1":                             true,
 		ns + "new@" + digestOf(t, onlyNew):           true,
 		ns + "moving:tag":                            true,
+		ns + "moving@" + digestOf(t, newMoving):      true,
 		ns + "old@" + digestOf(t, onlyOld):           false,
 		ns + "old:v1":                                false,
-		ns + "moving@" + digestOf(t, oldMoving):      false,
+		ns + "moving@" + digestOf(t, oldMoving):      true,
 		"appliance/system:1.0.0-amd64":               false,
 		"appliance/system@" + digestOf(t, old.index): false,
 		"appliance/system:2.0.0-amd64":               true,
@@ -77,12 +78,26 @@ func TestPruneAgainstZot(t *testing.T) {
 		t.Errorf("Bundles = %v, %v; want [2.0.0-amd64]", got, err)
 	}
 
-	// The repository moving stays, with the newer image, so only garbage collection frees the older one's blobs.
-	if gcWait > 0 && !gone(root, ns+"moving", layerOf(t, oldMoving), 3*gcWait) {
+	if got := tagDigest(t, c, ns+"moving:tag"); got != digestOf(t, oldMoving) {
+		t.Errorf("moving:tag = %s, want the older bundle's image %s", got, digestOf(t, oldMoving))
+	}
+
+	if gcWait > 0 {
+		checkPrunedBlobs(t, root, 3*gcWait, ns+"old", onlyOld, map[string]v1.Image{ns + "shared": shared, ns + "moving": oldMoving})
+	}
+}
+
+// checkPrunedBlobs checks that garbage collection frees the blobs of the pruned image of repo within wait, and keeps
+// those of the kept images, by repository.
+func checkPrunedBlobs(t *testing.T, root string, wait time.Duration, repo string, pruned v1.Image, kept map[string]v1.Image) {
+	t.Helper()
+	if !gone(root, repo, layerOf(t, pruned), wait) {
 		t.Error("zot did not free the blobs of the pruned image")
 	}
-	if gcWait > 0 && !onDisk(root, ns+"shared", layerOf(t, shared)) {
-		t.Error("zot freed a blob of a kept image")
+	for keptRepo, img := range kept {
+		if !onDisk(root, keptRepo, layerOf(t, img)) {
+			t.Errorf("zot freed a blob of the kept image in %s", keptRepo)
+		}
 	}
 }
 

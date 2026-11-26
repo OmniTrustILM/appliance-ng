@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 
@@ -23,8 +24,8 @@ type Source interface {
 }
 
 // PushBundle pushes the images of the verified bundle b into the registry, each under its upstream name by its digest
-// and by its tag, and then the bundle index as appliance/<kind>:<version>-<arch>. Blobs the registry already holds are
-// skipped, so a push that failed can be repeated. progress, if set, is told the bytes of images pushed and the total.
+// and by its tag unless the tag exists, and then the bundle index as appliance/<kind>:<version>-<arch>. Blobs the
+// registry already holds are skipped, so a push that failed can be repeated. progress, if set, is told the bytes of images pushed and the total.
 func (c *Client) PushBundle(ctx context.Context, b Source, md bundle.Metadata, progress func(done, total int64)) error {
 	images, err := b.Images()
 	if err != nil {
@@ -64,7 +65,8 @@ func (c *Client) PushBundle(ctx context.Context, b Source, md bundle.Metadata, p
 	return nil
 }
 
-// pushImage pushes im by its digest and by its tag; report is told the bytes written of the image.
+// pushImage pushes im by its digest and by its tag unless the tag exists; report is told the bytes written of the
+// image.
 func (c *Client) pushImage(ctx context.Context, im bundle.Image, report func(written int64)) error {
 	path, tag, err := splitRef(im.Ref.Ref)
 	if err != nil {
@@ -97,7 +99,24 @@ func (c *Client) pushImage(ctx context.Context, im bundle.Image, report func(wri
 	if tag == "" {
 		return nil
 	}
-	return remote.Tag(repo.Tag(tag), im.Image, opts...)
+	return c.tagIfAbsent(ctx, repo.Tag(tag), im)
+}
+
+// tagIfAbsent tags the image of im as tag unless tag exists already: a workload may pull the tag, and a load leaves
+// it on the image it names.
+func (c *Client) tagIfAbsent(ctx context.Context, tag name.Tag, im bundle.Image) error {
+	opts := c.options(ctx)
+	desc, err := remote.Head(tag, opts...)
+	if isNotFound(err) {
+		return remote.Tag(tag, im.Image, opts...)
+	}
+	if err != nil {
+		return err
+	}
+	if desc.Digest.String() != im.Ref.Digest {
+		slog.InfoContext(ctx, "left the existing tag on its image", "reference", tag.String(), "digest", desc.Digest.String())
+	}
+	return nil
 }
 
 // splitRef splits an image reference as release.yaml writes it, [<host>/]<path>[:<tag>][@<digest>], into the repository

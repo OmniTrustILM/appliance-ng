@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"maps"
@@ -167,6 +168,36 @@ func TestPushBundleUnderUpstreamNames(t *testing.T) {
 	}
 }
 
+// TestPushBundleLeavesExistingTags pushes a second bundle with another image under an existing tag: the image is
+// there by its digest, and the tag stays on the image it named.
+func TestPushBundleLeavesExistingTags(t *testing.T) {
+	c, _ := newClient(t)
+	first, second := newImage(t), newImage(t)
+	for version, img := range []v1.Image{first, second} {
+		b := newBundle(t, map[string]v1.Image{"ghcr.io/cloudnative-pg/postgresql:18": img})
+		if err := c.PushBundle(t.Context(), b, b.metadata(fmt.Sprintf("1.%d.0", version)), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !exists(t, c, "ghcr.io/cloudnative-pg/postgresql@"+digestOf(t, second)) {
+		t.Error("the second bundle's image is not in zot by its digest")
+	}
+	if got := tagDigest(t, c, "ghcr.io/cloudnative-pg/postgresql:18"); got != digestOf(t, first) {
+		t.Errorf("the tag moved to %s, want it on the first image %s", got, digestOf(t, first))
+	}
+}
+
+// tagDigest returns the digest the tag ref points to in c's registry.
+func tagDigest(t *testing.T, c *Client, ref string) string {
+	t.Helper()
+	desc, err := remote.Head(mustTag(t, c.host+"/"+ref), c.options(t.Context())...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return desc.Digest.String()
+}
+
 func TestPushBundleReportsSourceErrors(t *testing.T) {
 	c, _ := newClient(t)
 	b := &fakeBundle{err: errors.New("unreadable")}
@@ -290,8 +321,11 @@ func TestPruneKeepsSharedDigests(t *testing.T) {
 		"ghcr.io/new:v2":     onlyNew,
 		"ghcr.io/moving:tag": newMoving,
 	})
-	for version, b := range map[string]*fakeBundle{"1.0.0": old, "2.0.0": cur} {
-		if err := c.PushBundle(t.Context(), b, b.metadata(version), nil); err != nil {
+	for _, b := range []struct {
+		version string
+		bundle  *fakeBundle
+	}{{"1.0.0", old}, {"2.0.0", cur}} {
+		if err := c.PushBundle(t.Context(), b.bundle, b.bundle.metadata(b.version), nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -306,15 +340,18 @@ func TestPruneKeepsSharedDigests(t *testing.T) {
 		"ghcr.io/new@" + digestOf(t, onlyNew):      true,
 		"ghcr.io/moving@" + digestOf(t, newMoving): true,
 		"ghcr.io/moving:tag":                       true,
+		"ghcr.io/moving@" + digestOf(t, oldMoving): true,
 		"ghcr.io/old@" + digestOf(t, onlyOld):      false,
 		"ghcr.io/old:v1":                           false,
-		"ghcr.io/moving@" + digestOf(t, oldMoving): false,
 		"appliance/system:1.0.0-amd64":             false,
 		"appliance/system:2.0.0-amd64":             true,
 	} {
 		if got := exists(t, c, ref); got != want {
 			t.Errorf("%s exists = %v, want %v", ref, got, want)
 		}
+	}
+	if got := tagDigest(t, c, "ghcr.io/moving:tag"); got != digestOf(t, oldMoving) {
+		t.Errorf("ghcr.io/moving:tag = %s, want the image of the bundle that created it, %s", got, digestOf(t, oldMoving))
 	}
 	if got, err := c.Bundles(t.Context(), "system"); err != nil || !slices.Equal(got, []string{"2.0.0-amd64"}) {
 		t.Errorf("Bundles = %v, %v; want [2.0.0-amd64]", got, err)
