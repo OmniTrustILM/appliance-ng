@@ -116,8 +116,10 @@ func (s *Server) adminCredentialSecret(ctx context.Context) (*corev1.Secret, err
 	if secret.Annotations[DownloadedAnnotation] == certificateSum(secret) {
 		return nil, errDownloaded
 	}
-	// Without a record the certificate is the one ILM registered at its first start.
-	if registered := secret.Annotations[platform.AdminCertificateRegisteredAnnotation]; registered != "" && !registeredNow(secret) {
+	// Without a record of registration or download the certificate is the one ILM registered at its first start; one
+	// downloaded before replaced it, so it waits for ILM's administrator to hold it.
+	recorded := secret.Annotations[platform.AdminCertificateRegisteredAnnotation] != "" || secret.Annotations[DownloadedAnnotation] != ""
+	if recorded && !registeredNow(secret) {
 		return nil, errNotRegistered
 	}
 	return secret, nil

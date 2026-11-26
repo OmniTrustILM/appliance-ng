@@ -187,6 +187,32 @@ func TestAdminCredentialAfterRenewal(t *testing.T) {
 	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusGone)
 }
 
+// TestAdminCredentialRenewedBeforeRegistration checks that an appliance upgraded from a manager that recorded
+// downloads but not registrations does not hand out a renewed certificate before ILM's administrator holds it.
+func TestAdminCredentialRenewedBeforeRegistration(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	first := newAdminCredential(t, pkcs1)
+	createAdminSecret(t, first)
+	body := map[string]string{"password": credentialPassword}
+	wantStatus(t, h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s), http.StatusOK)
+
+	renewed := newAdminCredential(t, pkcs1)
+	setAdminSecret(t, &renewed, nil)
+	rec := h.request(http.MethodPost, "/appliance/api/v1/platform/admin-credential", body, s)
+	wantStatus(t, rec, http.StatusNotFound)
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"not_registered"`)) {
+		t.Errorf("answer %s, want the code not_registered", rec.Body)
+	}
+	secret := &corev1.Secret{}
+	if err := testClient.Get(context.Background(), client.ObjectKey{Namespace: platform.Namespace, Name: AdminCredentialSecret}, secret); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := secret.Annotations[DownloadedAnnotation], certificateSum(secret); got == want {
+		t.Error("the refused download was recorded as handed out")
+	}
+}
+
 // setAdminSecret writes cred into the administrator's certificate Secret, as cert-manager renews it, and, when
 // registered is set, records that ILM's administrator holds that DER certificate, as the manager does.
 func setAdminSecret(t *testing.T, cred *adminCredential, registered []byte) {
