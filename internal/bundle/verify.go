@@ -177,7 +177,8 @@ func validFileName(name string) bool {
 		name != NotesFile && name != MetadataFile
 }
 
-// tarNames reads every entry of a tar and returns their names.
+// tarNames reads every entry of a tar and returns their names. It refuses sparse entries, whose content can expand
+// far beyond the archive.
 func tarNames(archive []byte) (map[string]bool, error) {
 	names := map[string]bool{}
 	tr := tar.NewReader(bytes.NewReader(archive))
@@ -188,6 +189,9 @@ func tarNames(archive []byte) (map[string]bool, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		if sparse(h) {
+			return nil, fmt.Errorf("%s is a sparse entry", h.Name)
 		}
 		if _, err := io.Copy(io.Discard, tr); err != nil {
 			return nil, err
