@@ -97,12 +97,16 @@ func (b *Bundle) Verify(pub crypto.PublicKey, arch string) (Metadata, error) {
 	return v.metadata, nil
 }
 
-// VerifySigned checks the signature, the metadata and the arch as Verify does, but not the images, for a bundle whose
-// images stay in its registry. Its files and notes are available afterwards, its images are not.
+// VerifySigned checks the signature, the metadata and the arch as Verify does, and that the bundle index lists every
+// image of the metadata, but not the images' blobs, for a bundle whose images stay in its registry. Its files and notes
+// are available afterwards, its images are not.
 func (b *Bundle) VerifySigned(pub crypto.PublicKey, arch string) (Metadata, error) {
 	b.verified = nil
-	v, _, err := b.verifySigned(pub, arch)
+	v, index, err := b.verifySigned(pub, arch)
 	if err != nil {
+		return Metadata{}, err
+	}
+	if _, err := listedImages(index, v.metadata.Images); err != nil {
 		return Metadata{}, err
 	}
 	b.verified = v
@@ -329,21 +333,34 @@ func (b *Bundle) readMetadata(index *v1.IndexManifest) (*verified, error) {
 	return v, nil
 }
 
-// checkImages checks that every listed image is in the bundle index with its reference and that all its blobs are
-// present and intact.
-func (b *Bundle) checkImages(index *v1.IndexManifest, images []ImageRef) error {
+// listedImages returns the descriptor in the bundle index of each image, found by its reference and its digest.
+func listedImages(index *v1.IndexManifest, images []ImageRef) ([]v1.Descriptor, error) {
 	// Several references may name the same manifest, so a child is known by its reference and its digest.
 	type key struct{ ref, digest string }
 	children := map[key]v1.Descriptor{}
 	for _, d := range index.Manifests[1:] {
 		children[key{d.Annotations[annotationRefName], d.Digest.String()}] = d
 	}
+	listed := make([]v1.Descriptor, 0, len(images))
 	for _, ref := range images {
 		d, ok := children[key{ref.Ref, ref.Digest}]
 		if !ok || !d.MediaType.IsImage() {
-			return fmt.Errorf("%w: %s %s is not in the bundle index", ErrMissingImage, ref.Ref, ref.Digest)
+			return nil, fmt.Errorf("%w: %s %s is not in the bundle index", ErrMissingImage, ref.Ref, ref.Digest)
 		}
-		size, err := b.checkImage(d)
+		listed = append(listed, d)
+	}
+	return listed, nil
+}
+
+// checkImages checks that every listed image is in the bundle index with its reference and that all its blobs are
+// present and intact.
+func (b *Bundle) checkImages(index *v1.IndexManifest, images []ImageRef) error {
+	listed, err := listedImages(index, images)
+	if err != nil {
+		return err
+	}
+	for i, ref := range images {
+		size, err := b.checkImage(listed[i])
 		if err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrMissingImage, ref.Ref, err)
 		}

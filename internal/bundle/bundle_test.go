@@ -7,7 +7,9 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,7 +20,10 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
+	"github.com/google/go-containerregistry/pkg/v1/match"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
@@ -559,4 +564,55 @@ func TestVerifySignedLeavesOutTheImages(t *testing.T) {
 	if _, err := b.VerifySigned(&key.PublicKey, "arm64"); !errors.Is(err, ErrWrongArch) {
 		t.Errorf("VerifySigned for arm64 = %v, want %v", err, ErrWrongArch)
 	}
+}
+
+// TestVerifySignedRefusesImagesTheIndexDoesNotName checks that the images the metadata lists are in the signed bundle
+// index under their reference and digest, without reading their blobs.
+func TestVerifySignedRefusesImagesTheIndexDoesNotName(t *testing.T) {
+	r := newTestRelease(t)
+	key := newKey(t)
+	cases := map[string]func(d *v1.Descriptor){
+		"other reference": func(d *v1.Descriptor) { d.Annotations[annotationRefName] += "-other" },
+		"other digest":    func(d *v1.Descriptor) { d.Digest.Hex = strings.Repeat("0", 64) },
+		"not an image":    func(d *v1.Descriptor) { d.MediaType = types.OCIImageIndex },
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := build(t, r, release.BundlePlatform, "amd64", nil)
+			resign(t, dir, key, func(im *v1.IndexManifest) { change(&im.Manifests[1]) })
+			b, err := Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.VerifySigned(&key.PublicKey, "amd64"); !errors.Is(err, ErrMissingImage) {
+				t.Errorf("VerifySigned = %v, want %v", err, ErrMissingImage)
+			}
+		})
+	}
+}
+
+// resign replaces the bundle index of the layout in dir with a changed copy and signs that with key.
+func resign(t *testing.T, dir string, key *ecdsa.PrivateKey, change func(im *v1.IndexManifest)) {
+	t.Helper()
+	im := bundleIndex(t, dir)
+	change(im)
+	data, err := json.Marshal(im)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, size, err := v1.SHA256(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := layout.Path(dir)
+	if err := p.WriteBlob(digest, io.NopCloser(bytes.NewReader(data))); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.RemoveDescriptors(match.MediaTypes(string(types.OCIImageIndex))); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AppendDescriptor(v1.Descriptor{MediaType: types.OCIImageIndex, Digest: digest, Size: size}); err != nil {
+		t.Fatal(err)
+	}
+	sign(t, dir, key)
 }
