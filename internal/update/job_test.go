@@ -244,7 +244,7 @@ type jobEnv struct {
 	tagger   *fakeTagger
 	fetcher  *fakeFetcher
 	audit    *fakeAudit
-	logs     *bytes.Buffer
+	logs     *syncBuffer
 	dir      string
 	operator string
 	noSpace  bool
@@ -285,7 +285,7 @@ func newJobEnv(t *testing.T, operator string) *jobEnv {
 	t.Helper()
 	e := &jobEnv{
 		t: t, c: clusterClient(t), backups: &fakeBackups{dir: t.TempDir()}, tagger: &fakeTagger{}, audit: &fakeAudit{},
-		logs: &bytes.Buffer{}, dir: t.TempDir(), operator: operator, applyOperator: true, wait: 10 * time.Second,
+		logs: &syncBuffer{}, dir: t.TempDir(), operator: operator, applyOperator: true, wait: 10 * time.Second,
 	}
 	e.fetcher = &fakeFetcher{e: e}
 	e.resetCluster()
@@ -1376,4 +1376,22 @@ func TestShutdownLeavesTheUpdateToResume(t *testing.T) {
 	if got := e.auditActions(); len(got) != 1 {
 		t.Errorf("audit %v, want the start alone", got)
 	}
+}
+
+// syncBuffer is a log buffer the managers of a system update, each with its own handler, write at once.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

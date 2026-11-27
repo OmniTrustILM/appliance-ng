@@ -1508,10 +1508,13 @@ func (e *systemEnv) pastDeadline() {
 	e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Update.Deadline = &past })
 }
 
-// wantRolledBack waits for the rollback of Talos, never handed back.
+// wantRolledBack waits for the rollback of Talos, never handed back. The step is recorded before the rollback is
+// called, so the call is waited for too.
 func (e *systemEnv) wantRolledBack() {
 	e.t.Helper()
-	e.waitFor("the rollback", func(u *v1alpha1.UpdateStatus) bool { return u.Step == update.StepRolledBack })
+	e.waitFor("the rollback", func(u *v1alpha1.UpdateStatus) bool {
+		return u.Step == update.StepRolledBack && e.node.count("rollback") > 0
+	})
 	if e.node.count("rollback") != 1 {
 		e.t.Errorf("Talos calls %q, want a rollback", e.node.called())
 	}
