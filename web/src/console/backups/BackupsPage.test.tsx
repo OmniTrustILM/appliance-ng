@@ -239,9 +239,16 @@ describe('BackupsPage', () => {
     render(<BackupsPage />);
     await userEvent.click(await screen.findByRole('button', { name: 'Back up now' }));
     await vi.waitFor(() => expect(reads).toBe(2));
+    // The page schedules each read once the previous one settled, so the clock moves in steps until the read is made
+    // rather than by one refresh period that a late settle can outlast.
     for (let read = 3; read < 3 + startedReads; read++) {
-      await vi.advanceTimersByTimeAsync(runningRefreshMs);
-      await vi.waitFor(() => expect(reads).toBe(read));
+      await vi.waitFor(
+        async () => {
+          if (reads < read) await vi.advanceTimersByTimeAsync(runningRefreshMs / 10);
+          expect(reads).toBe(read);
+        },
+        { timeout: 5000 },
+      );
     }
     await vi.advanceTimersByTimeAsync(3 * runningRefreshMs);
     expect(reads).toBe(2 + startedReads);
