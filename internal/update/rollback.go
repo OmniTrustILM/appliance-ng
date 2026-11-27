@@ -238,18 +238,25 @@ func (j *Jobs) source(a *v1alpha1.Appliance, from, fromILM string) (platformSour
 	return platformSource{}, &Error{Reason: NoPreviousBundle}
 }
 
+// sourceCandidates are the platform bundle versions a rollback to ILM version ilm may install again, in the order it
+// tries them: the bundle from, then each loaded platform bundle for arch carrying ilm.
+func sourceCandidates(a *v1alpha1.Appliance, from, ilm, arch string) []string {
+	candidates := []string{from}
+	if a.Status.Updates == nil || ilm == "" {
+		return candidates
+	}
+	for _, b := range a.Status.Updates.Loaded {
+		if runnable(b) && b.ILM == ilm && b.Arch == arch {
+			candidates = append(candidates, b.Version)
+		}
+	}
+	return candidates
+}
+
 // sourceOf is the platform of ILM version ilm: a loaded platform bundle carrying it, the bundle from first, else the
 // release's own platform when it embeds ilm.
 func (j *Jobs) sourceOf(a *v1alpha1.Appliance, from, ilm string) (platformSource, error) {
-	candidates := []string{from}
-	if a.Status.Updates != nil {
-		for _, b := range a.Status.Updates.Loaded {
-			if runnable(b) && b.ILM == ilm && b.Arch == j.deps.Arch {
-				candidates = append(candidates, b.Version)
-			}
-		}
-	}
-	for _, version := range candidates {
+	for _, version := range sourceCandidates(a, from, ilm, j.deps.Arch) {
 		md, err := InstalledPlatform(j.deps.Dir, version, j.deps.Arch)
 		switch {
 		case err == nil && md != nil && md.ILM == ilm:

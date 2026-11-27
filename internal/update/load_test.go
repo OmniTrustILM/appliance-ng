@@ -280,6 +280,39 @@ func TestLoadKeepsCurrentAndPrevious(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsTheBundleOfTheILMToRollBackTo keeps, while the backup of the last update is pinned, the loaded platform
+// bundle that carries the ILM version the update started from, which a rollback installs again.
+func TestLoadKeepsTheBundleOfTheILMToRollBackTo(t *testing.T) {
+	e := newEnv(t)
+	l := e.loader()
+	load := func(version, ilm string) {
+		t.Helper()
+		if _, err := l.Load(t.Context(), release.BundlePlatform, e.upload(e.build(e.platform(version, ilm)))); err != nil {
+			t.Fatalf("load %s: %v", version, err)
+		}
+	}
+	load("1.1.0", "2.20.0")
+	load("1.2.0", "2.21.0")
+	a := e.appliance()
+	a.Status.Versions = v1alpha1.Versions{Appliance: "1.0.0", Operator: "1.0.0", ILM: "2.21.0", PlatformBundle: "1.2.0"}
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: release.BundlePlatform, From: "1.0.0", FromILM: "2.20.0", To: "1.2.0", Step: update.StepDone,
+		Backup: "pre-update", StartedAt: metav1.Now(),
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	e.lock.setBackups(v1alpha1.BackupRecord{Name: "pre-update", Pinned: release.BundlePlatform})
+	load("1.3.0", "2.22.0")
+	load("1.4.0", "2.23.0")
+	if got, want := e.stored(release.BundlePlatform), []string{"1.1.0-amd64", "1.2.0-amd64", "1.4.0-amd64"}; !slices.Equal(got, want) {
+		t.Errorf("stored bundles %v, want %v", got, want)
+	}
+	if !slices.ContainsFunc(e.appliance().Status.Updates.Loaded, func(b v1alpha1.BundleInfo) bool { return b.Version == "1.1.0" }) {
+		t.Error("the bundle a rollback installs again is no longer listed as loaded")
+	}
+}
+
 // TestLoadUnblocksAFailedSystemUpdate lists the running system bundle as installable while a system update to it
 // failed past its point of no return, so that it can run again.
 func TestLoadUnblocksAFailedSystemUpdate(t *testing.T) {

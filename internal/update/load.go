@@ -446,8 +446,8 @@ func (l *Loader) keep(md bundle.Metadata, cur Current) []string {
 	return keep
 }
 
-// wayBack names the platform bundle versions a rollback goes back to: the one the last update started from while a
-// backup is pinned for it, and the one a rollback that is not done installs again.
+// wayBack names the platform bundle versions a rollback goes back to: those it may install again for the last update
+// while a backup is pinned for it, and the one a rollback that is not done installs again.
 func (l *Loader) wayBack(ctx context.Context) ([]string, error) {
 	a, err := l.appliance(ctx)
 	if err != nil {
@@ -465,7 +465,8 @@ func (l *Loader) wayBack(ctx context.Context) ([]string, error) {
 		return nil, fail("list the local backups", err)
 	}
 	if slices.ContainsFunc(backups, func(b v1alpha1.BackupRecord) bool { return b.Pinned == release.BundlePlatform }) {
-		versions = append(versions, a.Status.Update.From)
+		u := a.Status.Update
+		versions = append(versions, sourceCandidates(a, u.From, u.FromILM, l.deps.Arch)...)
 	}
 	return versions, nil
 }
