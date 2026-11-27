@@ -99,7 +99,7 @@ const reasonRechecking = "UpdateRechecking"
 // *Error while another long operation runs, while the operator upgrades the platform, when the bundle is not loaded
 // or cannot be installed, would downgrade Kubernetes, or needs more free space than the data volume has. A system
 // update that failed past its point of no return runs again from its recorded step in the manager of its version.
-func (j *Jobs) StartSystem(ctx context.Context, to string, user string) error {
+func (j *Jobs) StartSystem(ctx context.Context, to, user string) error {
 	return j.startUpdate(ctx, user, func(ctx context.Context) (v1alpha1.UpdateStatus, error) {
 		return j.admitSystem(ctx, to)
 	})
