@@ -208,3 +208,21 @@ func TestLeader(t *testing.T) {
 		}
 	})
 }
+
+func TestNodeEntryMatchesByAddressThenName(t *testing.T) {
+	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+		{HostName: "one.example.com", Address: "192.0.2.10/24"},
+		{HostName: "two.example.com"},
+	}}}}
+	byAddress := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "renamed"},
+		Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.0.2.10"}}}}
+	if got := NodeEntry(a, byAddress); got == nil || got.HostName != "one.example.com" {
+		t.Errorf("by address: %+v", got)
+	}
+	if got := NodeEntry(a, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "two"}}); got == nil || got.HostName != "two.example.com" {
+		t.Errorf("by first label: %+v", got)
+	}
+	if got := NodeEntry(a, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "three"}}); got != nil {
+		t.Errorf("no entry: %+v", got)
+	}
+}

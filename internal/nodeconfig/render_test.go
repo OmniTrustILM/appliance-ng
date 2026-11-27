@@ -62,8 +62,12 @@ func runningLink() *network.LinkConfigV1Alpha1 {
 	return nodeconfig.LinkConfig(link, netip.MustParsePrefix("192.0.2.10/24"), netip.MustParseAddr("192.0.2.254"))
 }
 
+// render renders a for n, as the first node of a unless n names its entry.
 func render(t *testing.T, a *v1alpha1.Appliance, n nodeconfig.Node) []config.Document {
 	t.Helper()
+	if n.Entry == nil {
+		n.Entry = a.Spec.FirstNode()
+	}
 	docs, err := nodeconfig.Render(a, n, nodeconfig.Secrets{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -226,9 +230,12 @@ func TestRenderRefuses(t *testing.T) {
 	} {
 		a := appliance()
 		edit(a)
-		if _, err := nodeconfig.Render(a, nodeconfig.Node{IP: nodeIP}, nodeconfig.Secrets{}); err == nil {
+		if _, err := nodeconfig.Render(a, nodeconfig.Node{Entry: a.Spec.FirstNode(), IP: nodeIP}, nodeconfig.Secrets{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	if _, err := nodeconfig.Render(appliance(), nodeconfig.Node{IP: nodeIP}, nodeconfig.Secrets{}); err == nil {
+		t.Error("no entry: accepted")
 	}
 }
 
@@ -241,7 +248,7 @@ func TestRenderTrustedRootsAndRegistryAuth(t *testing.T) {
 			{Host: "hub.example.com", Username: "puller", Password: "w0rd"},
 		},
 	}
-	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{IP: nodeIP, Link: runningLink()}, secrets)
+	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{Entry: appliance().Spec.FirstNode(), IP: nodeIP, Link: runningLink()}, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +283,7 @@ func TestRenderRegistryAuthOncePerHost(t *testing.T) {
 		{Host: "registry.example.com", Username: "robot", Password: "pa55"},
 		{Host: "registry.example.com", Username: "other", Password: "w0rd"},
 	}}
-	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{IP: nodeIP, Link: runningLink()}, secrets)
+	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{Entry: appliance().Spec.FirstNode(), IP: nodeIP, Link: runningLink()}, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}

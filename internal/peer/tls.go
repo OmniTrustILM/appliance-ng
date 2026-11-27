@@ -145,6 +145,17 @@ func VotingNodes(ctx context.Context, reader client.Reader, a *v1alpha1.Applianc
 	return nodes, nil
 }
 
+// NodeEntry returns the entry of a's cluster nodes that kn is, matched as VotingNodes matches them, or nil when there
+// is none.
+func NodeEntry(a *v1alpha1.Appliance, kn *corev1.Node) *v1alpha1.ClusterNode {
+	for i := range a.Spec.Cluster.Nodes {
+		if kubeNode([]corev1.Node{*kn}, a.Spec.Cluster.Nodes[i]) != nil {
+			return &a.Spec.Cluster.Nodes[i]
+		}
+	}
+	return nil
+}
+
 // kubeNode returns the Kubernetes node of the cluster node n: the one with n's address, or else the one named n's host
 // name or its first label, as Talos registers the short host name.
 func kubeNode(nodes []corev1.Node, n v1alpha1.ClusterNode) *corev1.Node {

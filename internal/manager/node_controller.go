@@ -34,6 +34,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/nodeconfig"
+	"github.com/OmniTrustILM/appliance-ng/internal/peer"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
 
@@ -47,10 +48,12 @@ const (
 	reasonApplied        = "Applied"
 	reasonInvalid        = "Invalid"
 	reasonWaitingForNode = "WaitingForNode"
+	reasonNodeNotInSpec  = "NodeNotInSpec"
 
 	messageNodeApplied           = "the node runs the configured settings"
 	messageNodeFailed            = "applying the node settings failed, retrying; the manager log has the details"
 	messageNodeInvalid           = "the node settings do not fit the node; the manager log has the details"
+	messageNodeNotInSpec         = "the node has no entry among the cluster nodes, so its node settings are not applied"
 	messageWaitingForNode        = "waiting for the Kubernetes node"
 	messageWaitingForTalosAccess = "waiting for access to the Talos API"
 )
@@ -116,9 +119,10 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err := r.clearReboot(ctx, a, node.Status.NodeInfo.BootID); err != nil {
 		return ctrl.Result{}, err
 	}
-	observed := nodeObservation{address: nodeIP(a, node)}
+	entry := peer.NodeEntry(a, node)
+	observed := nodeObservation{address: nodeIP(entry, node)}
 	observed.talos, observed.kubernetes = talosVersions(ctx, r.Talos)
-	reason, message, waitingForZot, err := r.configure(ctx, a, node)
+	reason, message, waitingForZot, err := r.configure(ctx, a, node, entry)
 	if serr := r.writeStatus(ctx, a, reason, message, observed); serr != nil {
 		return ctrl.Result{}, serr
 	}
@@ -134,9 +138,15 @@ func (r *NodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 }
 
 // configure replaces the documents of the running machine configuration that differ from those of the Appliance and
-// returns the reason and message of the NodeConfigured condition, and whether the mirrors wait for zot.
-func (r *NodeReconciler) configure(ctx context.Context, a *v1alpha1.Appliance, node *corev1.Node) (string, string, bool, error) {
+// returns the reason and message of the NodeConfigured condition, and whether the mirrors wait for zot. The documents
+// follow entry, the node's entry of the Appliance's cluster nodes; without one nothing is applied.
+func (r *NodeReconciler) configure(ctx context.Context, a *v1alpha1.Appliance, node *corev1.Node, entry *v1alpha1.ClusterNode) (string, string, bool, error) {
 	logger := log.FromContext(ctx)
+	if entry == nil {
+		// Nothing changes until the Appliance does, which the watch reports.
+		logger.Info("the node has no entry among the cluster nodes; its node settings are not applied", "node", node.Name)
+		return reasonNodeNotInSpec, messageNodeNotInSpec, false, nil
+	}
 	tn, err := r.Talos(ctx)
 	if err != nil {
 		logger.Info("waiting for access to the Talos API", "error", err)
@@ -159,7 +169,7 @@ func (r *NodeReconciler) configure(ctx context.Context, a *v1alpha1.Appliance, n
 		return reasonFailed, messageNodeFailed, false, err
 	}
 	waiting := zot == nil && slices.ContainsFunc(r.Steps, isRegistryStep)
-	rendered, err := nodeconfig.Render(a, nodeconfig.Node{IP: nodeIP(a, node), Link: nodeconfig.StaticLink(running), Registry: zot}, secrets)
+	rendered, err := nodeconfig.Render(a, nodeconfig.Node{Entry: entry, IP: nodeIP(entry, node), Link: nodeconfig.StaticLink(running), Registry: zot}, secrets)
 	if err != nil {
 		// Nothing changes until the Appliance does, which the watch reports.
 		logger.Error(err, "the node settings do not fit the node")
@@ -292,11 +302,11 @@ func mirrorCA(running []configdoc.Document) ([]byte, bool) {
 	return nil, false
 }
 
-// nodeIP returns the static address of the Appliance, or with DHCP the node's internal address, or "" when neither is
-// known.
-func nodeIP(a *v1alpha1.Appliance, node *corev1.Node) string {
-	if first := a.Spec.FirstNode(); first != nil {
-		if addr, ok := certs.ParseAddress(first.Address); ok {
+// nodeIP returns the static address of entry, the node's entry of the Appliance's cluster nodes, or with DHCP or
+// without an entry the node's internal address, or "" when neither is known.
+func nodeIP(entry *v1alpha1.ClusterNode, node *corev1.Node) string {
+	if entry != nil {
+		if addr, ok := certs.ParseAddress(entry.Address); ok {
 			return addr.String()
 		}
 	}
