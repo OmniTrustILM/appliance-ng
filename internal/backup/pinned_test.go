@@ -263,3 +263,48 @@ func TestRunRefusedWhileAnUpdateIsUnfinished(t *testing.T) {
 		t.Errorf("the update's own backup: %v", err)
 	}
 }
+
+// TestScheduledRunKeptForTheUpdate keeps a scheduled backup an unfinished update refused, while no job holds the
+// runner, and starts it once the update has ended and its job releases the runner.
+func TestScheduledRunKeptForTheUpdate(t *testing.T) {
+	f := newFixture(t)
+	a := getAppliance(t)
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: v1alpha1.UpdateKindSystem, From: "1.0.0", To: "1.1.0", Step: "talos", StartedAt: metav1.Now(),
+	}
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	f.dumper.started, f.dumper.block = make(chan struct{}, 1), make(chan struct{})
+	if _, err := f.runner.Run(context.Background(), RunSchedule, nil); !errors.Is(err, ErrHeld) {
+		t.Fatalf("scheduled backup during an unfinished update: %v, want ErrHeld", err)
+	}
+	release, err := f.runner.Hold()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = getAppliance(t)
+	a.Status.Update.Step = v1alpha1.UpdateStepDone
+	if err := testClient.Status().Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-f.dumper.started:
+		t.Fatal("the kept backup started while the update's job holds the runner")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-f.dumper.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the kept backup did not start once the update ended")
+	}
+	close(f.dumper.block)
+	deadline := time.Now().Add(10 * time.Second)
+	for f.runner.Busy() {
+		if time.Now().After(deadline) {
+			t.Fatal("the kept backup did not end")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

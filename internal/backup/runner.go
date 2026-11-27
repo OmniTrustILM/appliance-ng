@@ -52,6 +52,8 @@ var (
 	// ErrHeld refuses an operation while a long operation, an update or a bundle load, holds the runner; it is an
 	// ErrBusy.
 	ErrHeld = fmt.Errorf("%w: an update or a bundle load is running", ErrBusy)
+	// errUpdateUnfinished refuses a backup while the status shows an unfinished update; it is an ErrHeld.
+	errUpdateUnfinished = fmt.Errorf("%w: an update is unfinished", ErrHeld)
 	// ErrUpgradeInProgress refuses a backup while the operator upgrades the platform.
 	ErrUpgradeInProgress = errors.New("the platform is being upgraded")
 	// ErrRestoreInProgress refuses a backup while a restore runs, waits for its kit or failed before it was done.
@@ -170,6 +172,9 @@ type Runner struct {
 	held bool
 	// pending is a replace or scheduled run that waits for the running backup to end.
 	pending *pendingRun
+	// afterUpdate is a replace or scheduled run an unfinished update refused; it waits for the next release of a hold,
+	// as at the end of an update's job.
+	afterUpdate *pendingRun
 	// admission keeps the checks before a backup apart from a restore's admission, so that neither starts unseen by
 	// the other.
 	admission sync.Mutex
@@ -245,6 +250,8 @@ func runOpts(opts []RunOption) runOptions {
 // ErrRestoreInProgress, ErrUpgradeInProgress, ErrNoKit and ErrNoSpace; a backup that breaks off returns ErrFailed and
 // leaves no file. A replace or scheduled run refused with ErrBusy starts once the running backup ends, with the background context:
 // the backup encrypted to a confirmed new kit must not wait for the next schedule, and a target due must get its copy.
+// Such a run refused with ErrHeld because an update is unfinished starts at the next release of a hold, as when the
+// update's job ends.
 //
 // RunUpdate is taken by the caller that holds the runner with Hold, which keeps every other backup and operation out
 // meanwhile, and refuses with ErrNotHeld otherwise. It fails with ErrFailed when any named target does not get the
@@ -321,6 +328,10 @@ func (r *Runner) Hold() (release func(), err error) {
 		once.Do(func() {
 			r.mu.Lock()
 			r.held = false
+			if w := r.afterUpdate; w != nil {
+				r.afterUpdate = nil
+				r.pending = merged(r.pending, w.reason, w.targets, w.opts)
+			}
 			r.mu.Unlock()
 			r.startPending()
 		})
@@ -364,24 +375,42 @@ func (r *Runner) begin(reason string, targets []string, opts []RunOption) error 
 // queue keeps a run for when the running backup ends. Runs that wait together become one run to all their targets:
 // a replace run with the options of the latest replace when one of them is a replace run.
 func (r *Runner) queue(reason string, targets []string, opts []RunOption) {
-	next := &pendingRun{reason: reason, targets: targets, opts: opts}
-	if p := r.pending; p != nil {
-		next.targets = slices.Clone(p.targets)
-		for _, name := range targets {
-			if !slices.Contains(next.targets, name) {
-				next.targets = append(next.targets, name)
-			}
-		}
-		if reason != RunReplace {
-			next.reason, next.opts = p.reason, p.opts
-		}
-	}
+	next := merged(r.pending, reason, targets, opts)
 	r.pending = next
 	if r.held {
 		r.deps.Log.Info("an update or a bundle load is running; the next backup starts when it ends", "reason", next.reason, "targets", next.targets)
 		return
 	}
 	r.deps.Log.Info("a backup is running; the next one starts when it ends", "reason", next.reason, "targets", next.targets)
+}
+
+// merged is the run that waits, p, nil for none, together with a run for reason to targets with opts.
+func merged(p *pendingRun, reason string, targets []string, opts []RunOption) *pendingRun {
+	next := &pendingRun{reason: reason, targets: targets, opts: opts}
+	if p == nil {
+		return next
+	}
+	next.targets = slices.Clone(p.targets)
+	for _, name := range targets {
+		if !slices.Contains(next.targets, name) {
+			next.targets = append(next.targets, name)
+		}
+	}
+	if reason != RunReplace {
+		next.reason, next.opts = p.reason, p.opts
+	}
+	return next
+}
+
+// keepForUpdate keeps a replace or scheduled run that an unfinished update refused for the next release of a hold.
+func (r *Runner) keepForUpdate(reason string, targets []string, opts []RunOption) {
+	if reason != RunReplace && reason != RunSchedule {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.afterUpdate = merged(r.afterUpdate, reason, targets, opts)
+	r.deps.Log.Info("an update is unfinished; the backup starts when it ends", "reason", r.afterUpdate.reason, "targets", r.afterUpdate.targets)
 }
 
 // end ends a run and starts the run that waits for it.
@@ -448,6 +477,9 @@ func (r *Runner) ResetRunning(ctx context.Context) error {
 func (r *Runner) run(ctx context.Context, reason string, targets []string, opts ...RunOption) (v1alpha1.BackupRecord, error) {
 	o := runOpts(opts)
 	a, recipient, err := r.admit(ctx, reason, o)
+	if errors.Is(err, errUpdateUnfinished) {
+		r.keepForUpdate(reason, targets, opts)
+	}
 	if err != nil {
 		return v1alpha1.BackupRecord{}, err
 	}
@@ -461,7 +493,7 @@ func (r *Runner) admit(ctx context.Context, reason string, o runOptions) (*v1alp
 	r.admission.Unlock()
 	// An unfinished update keeps other backups out also while no job of it runs, as between two managers.
 	if err == nil && reason != RunUpdate && a.Status.Update.Unfinished() {
-		return a, nil, ErrHeld
+		return a, nil, errUpdateUnfinished
 	}
 	if err != nil && a != nil {
 		r.refused(ctx, a, o.user, reason, err)
