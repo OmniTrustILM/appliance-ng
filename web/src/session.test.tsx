@@ -88,4 +88,31 @@ describe('SessionProvider', () => {
     await userEvent.click(screen.getByRole('button', { name: 'read' }));
     expect(await screen.findByText('sign-in returns to /updates')).toBeInTheDocument();
   });
+
+  it('keeps the page to come back to when a further request finds the session ended', async () => {
+    stubApi({
+      'GET /appliance/api/v1/session': [200, { user: 'admin', csrfToken: 'token-0' }],
+      'GET /appliance/api/v1/updates': [401, { code: 'unauthorized', message: 'x' }],
+    });
+    function SignIn() {
+      const state = useLocation().state as SignInState | null;
+      return <p>sign-in returns to {state?.returnTo ?? 'nothing'}</p>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/updates']}>
+        <SessionProvider>
+          <Routes>
+            <Route path="/updates" element={<button type="button" onClick={() => void api.GET('/updates')}>read</button>} />
+            <Route path="/signin" element={<SignIn />} />
+          </Routes>
+        </SessionProvider>
+      </MemoryRouter>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'read' }));
+    expect(await screen.findByText('sign-in returns to /updates')).toBeInTheDocument();
+    await act(async () => {
+      await api.GET('/updates');
+    });
+    expect(screen.getByText('sign-in returns to /updates')).toBeInTheDocument();
+  });
 });

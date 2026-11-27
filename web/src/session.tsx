@@ -56,8 +56,10 @@ export function SessionProvider({ children }: Readonly<{ children: ReactNode }>)
       changes.current++;
       setCsrfToken(undefined);
       setSession({ state: 'signedOut' });
+      // A further request ending while sign-in is open must keep the page sign-in returns to.
       const returnTo = pathnameRef.current;
-      void navigateRef.current('/signin', { state: (returnTo === '/signin' ? {} : { returnTo }) satisfies SignInState });
+      if (returnTo === '/signin') return;
+      void navigateRef.current('/signin', { state: { returnTo } satisfies SignInState });
     });
     let active = true;
     const before = changes.current;
