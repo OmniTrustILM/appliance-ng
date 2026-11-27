@@ -20,15 +20,21 @@ const SessionContext = createContext<SessionControl>({
   signOut: () => {},
 });
 
-/** Loads the console session once and sends the user to sign-in when the session ends. */
+/**
+ * Loads the console session once and sends the user to sign-in when the session ends, to come back to the page that
+ * found it ended.
+ */
 export function SessionProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [session, setSession] = useState<Session>({ state: 'loading' });
   const navigate = useNavigate();
-  // navigate changes with every page, which must not load the session again.
+  const { pathname } = useLocation();
+  // navigate and the page change with every page, which must not load the session again.
   const navigateRef = useRef(navigate);
+  const pathnameRef = useRef(pathname);
   useEffect(() => {
     navigateRef.current = navigate;
-  }, [navigate]);
+    pathnameRef.current = pathname;
+  }, [navigate, pathname]);
 
   // Counts the changes of the session, so that the initial lookup does not undo a sign-in or sign-out made while it
   // was pending.
@@ -50,7 +56,8 @@ export function SessionProvider({ children }: Readonly<{ children: ReactNode }>)
       changes.current++;
       setCsrfToken(undefined);
       setSession({ state: 'signedOut' });
-      void navigateRef.current('/signin');
+      const returnTo = pathnameRef.current;
+      void navigateRef.current('/signin', { state: (returnTo === '/signin' ? {} : { returnTo }) satisfies SignInState });
     });
     let active = true;
     const before = changes.current;
