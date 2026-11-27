@@ -311,9 +311,13 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 		return requeue(certificate), nil
 	}
 	// The CBOM repository runs apart from the operator, also while a restore writes the stored CBOMs back; its failure
-	// does not hold up the platform.
-	cbomErr := r.reconcileCBOM(ctx, a)
-	setCBOMCondition(a, cbomErr)
+	// does not hold up the platform. While a system update holds the add-on pass it is left as applied, with its
+	// condition: this manager's release is not the one the node is updated to, or runs.
+	var cbomErr error
+	if !updateHeld {
+		cbomErr = r.reconcileCBOM(ctx, a)
+		setCBOMCondition(a, cbomErr)
+	}
 	result, err := r.reconcileOperated(ctx, a, certificate, updateHeld)
 	if err = errors.Join(err, cbomErr); err != nil {
 		return ctrl.Result{}, err
