@@ -334,3 +334,50 @@ func TestLeaderStopsWritingWhenLeaseLost(t *testing.T) {
 		}
 	})
 }
+
+// recordingNode is a Talos node that counts the calls that reach it.
+type recordingNode struct {
+	talos.Node
+	reboots, upgrades, patches, versions int
+}
+
+func (n *recordingNode) Reboot(context.Context) error              { n.reboots++; return nil }
+func (n *recordingNode) Upgrade(context.Context, string) error     { n.upgrades++; return nil }
+func (n *recordingNode) PatchConfig(context.Context, []byte) error { n.patches++; return nil }
+func (n *recordingNode) Versions(context.Context) (string, string, error) {
+	n.versions++
+	return "v1", "v1", nil
+}
+
+// TestHeldTalosNodeRefusesChangesWhenLeaseLost: a leader that acquired a Talos node and was paused past its lease
+// has every change through that node refused, while reads still pass.
+func TestHeldTalosNodeRefusesChangesWhenLeaseLost(t *testing.T) {
+	ctx := context.Background()
+	lease, _, clock, _ := heldLease(t)
+	fake := &recordingNode{}
+	node, err := lease.Talos(func(context.Context) (talos.Node, error) { return fake, nil })(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := node.Reboot(ctx); err != nil || fake.reboots != 1 {
+		t.Fatalf("the leader's reboot: %v, %d reboots", err, fake.reboots)
+	}
+
+	clock.advance(30 * time.Second)
+	if err := node.Reboot(ctx); !errors.Is(err, ErrNotLeader) {
+		t.Errorf("a stale leader's reboot: %v, want %v", err, ErrNotLeader)
+	}
+	if err := node.Upgrade(ctx, "installer"); !errors.Is(err, ErrNotLeader) {
+		t.Errorf("a stale leader's upgrade: %v, want %v", err, ErrNotLeader)
+	}
+	if err := node.PatchConfig(ctx, nil); !errors.Is(err, ErrNotLeader) {
+		t.Errorf("a stale leader's patch: %v, want %v", err, ErrNotLeader)
+	}
+	if fake.reboots != 1 || fake.upgrades != 0 || fake.patches != 0 {
+		t.Errorf("Talos got %d reboots, %d upgrades, %d patches; want the leader's reboot only", fake.reboots,
+			fake.upgrades, fake.patches)
+	}
+	if _, _, err := node.Versions(ctx); err != nil || fake.versions != 1 {
+		t.Errorf("a stale leader's read: %v, %d reads", err, fake.versions)
+	}
+}

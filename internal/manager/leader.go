@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	configdoc "github.com/siderolabs/talos/pkg/machinery/config/config"
 	coordinationv1client "k8s.io/client-go/kubernetes/typed/coordination/v1"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
@@ -199,14 +200,101 @@ type roundTripper func(*http.Request) (*http.Response, error)
 
 func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// Talos returns access that fails with ErrNotLeader unless Check passes.
+// Talos returns access that fails with ErrNotLeader unless Check passes. The node it returns checks the lease again
+// before every call that changes the node, since a caller may hold it across a long step.
 func (l *Lease) Talos(access func(context.Context) (talos.Node, error)) func(context.Context) (talos.Node, error) {
 	return func(ctx context.Context) (talos.Node, error) {
 		if err := l.Check(); err != nil {
 			return nil, err
 		}
-		return access(ctx)
+		node, err := access(ctx)
+		if err != nil || node == nil {
+			return node, err
+		}
+		return fencedNode{Node: node, lease: l}, nil
 	}
+}
+
+// fencedNode is a Talos node whose calls that change the node fail with ErrNotLeader unless Check passes; reads
+// pass.
+type fencedNode struct {
+	talos.Node
+	lease *Lease
+}
+
+func (n fencedNode) ApplyConfig(ctx context.Context, cfg []byte) error {
+	return n.fenced(func() error { return n.Node.ApplyConfig(ctx, cfg) })
+}
+
+func (n fencedNode) Bootstrap(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.Bootstrap(ctx) })
+}
+
+func (n fencedNode) RecordReset(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.RecordReset(ctx) })
+}
+
+func (n fencedNode) ClearResetRecord(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.ClearResetRecord(ctx) })
+}
+
+func (n fencedNode) MarkReady(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.MarkReady(ctx) })
+}
+
+func (n fencedNode) ResetEphemeral(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.ResetEphemeral(ctx) })
+}
+
+func (n fencedNode) PatchConfig(ctx context.Context, patch []byte) error {
+	return n.fenced(func() error { return n.Node.PatchConfig(ctx, patch) })
+}
+
+func (n fencedNode) RemoveExtensionConfig(ctx context.Context, name, file string) error {
+	return n.fenced(func() error { return n.Node.RemoveExtensionConfig(ctx, name, file) })
+}
+
+func (n fencedNode) ReplaceDocuments(ctx context.Context, docs []configdoc.Document, remove []string) error {
+	return n.fenced(func() error { return n.Node.ReplaceDocuments(ctx, docs, remove) })
+}
+
+func (n fencedNode) Upgrade(ctx context.Context, image string) error {
+	return n.fenced(func() error { return n.Node.Upgrade(ctx, image) })
+}
+
+func (n fencedNode) RebootPowercycle(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.RebootPowercycle(ctx) })
+}
+
+func (n fencedNode) SetInstallerImage(ctx context.Context, image string) error {
+	return n.fenced(func() error { return n.Node.SetInstallerImage(ctx, image) })
+}
+
+func (n fencedNode) PullSystemImage(ctx context.Context, image string) error {
+	return n.fenced(func() error { return n.Node.PullSystemImage(ctx, image) })
+}
+
+func (n fencedNode) Rollback(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.Rollback(ctx) })
+}
+
+func (n fencedNode) SetKubernetesImages(ctx context.Context, component, image string) error {
+	return n.fenced(func() error { return n.Node.SetKubernetesImages(ctx, component, image) })
+}
+
+func (n fencedNode) Reboot(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.Reboot(ctx) })
+}
+
+func (n fencedNode) Shutdown(ctx context.Context) error {
+	return n.fenced(func() error { return n.Node.Shutdown(ctx) })
+}
+
+func (n fencedNode) fenced(call func() error) error {
+	if err := n.lease.Check(); err != nil {
+		return err
+	}
+	return call()
 }
 
 // FencedAudit is the audit log that only the leader writes.
