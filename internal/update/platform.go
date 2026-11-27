@@ -56,8 +56,14 @@ var stepTables = map[string]*stepTable{
 }
 
 // backupStep takes the backup to every target of the Appliance and pins its local copy until the next update of its
-// kind ends. A backup without the database is no way back from an update that migrates it.
+// kind ends. A backup without the database is no way back from an update that migrates it. A system update first waits
+// for a step of the add-on pass that is being applied.
 func (j *Jobs) backupStep(ctx context.Context, jb *job) error {
+	if l := j.deps.AddonLock; l != nil && jb.status.Kind == release.BundleSystem {
+		// A step of the add-on pass that began before the update held it ends first.
+		l.Lock()
+		l.Unlock() //nolint:staticcheck // waits for the step, takes nothing
+	}
 	a, err := j.readAppliance(ctx, StepBackup)
 	if err != nil {
 		return err

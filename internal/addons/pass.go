@@ -68,34 +68,66 @@ func Check(ctx context.Context, c kube.Cluster, steps []kube.Step) (Progress, er
 	return done(steps), nil
 }
 
-// CheckApplied is Check over the steps that were applied: a step with a wait whose object does not exist is pending,
-// not failed, and the steps after it are checked still.
-func CheckApplied(ctx context.Context, c kube.Cluster, steps []kube.Step) (Progress, error) {
+// CheckApplied is Check while another release's pass applied the add-ons, over steps: each step named in applied, which
+// that pass applied, must be ready. Any other step is new: it is pending, and the steps after it are checked still,
+// while every wait of it that does not pass misses its object. With applied empty, every step must be ready.
+func CheckApplied(ctx context.Context, c kube.Cluster, steps []kube.Step, applied []string) (Progress, error) {
 	for _, step := range steps {
-		p, err := wait(ctx, c, step)
+		p, err := waitAll(ctx, c, step)
 		switch {
 		case err != nil:
 			return p, err
-		case !p.Done && !p.pending:
+		case p.Done:
+		case !p.pending || len(applied) == 0 || slices.Contains(applied, step.Name):
 			return p, nil
 		}
 	}
 	return done(steps), nil
 }
 
+// waitAll is wait over every wait of the step: it is pending only when each wait that does not pass misses its
+// object.
+func waitAll(ctx context.Context, c kube.Cluster, step kube.Step) (Progress, error) {
+	var missing *Progress
+	for _, w := range step.Wait {
+		p, err := waitFor(ctx, c, step, w)
+		switch {
+		case err != nil:
+			return p, err
+		case p.Done:
+		case !p.pending:
+			return p, nil
+		case missing == nil:
+			missing = &p
+		}
+	}
+	if missing != nil {
+		return *missing, nil
+	}
+	return Progress{Step: step.Name, Done: true}, nil
+}
+
 // wait reports Done when every wait of the step passes, and otherwise which one does not.
 func wait(ctx context.Context, c kube.Cluster, step kube.Step) (Progress, error) {
 	for _, w := range step.Wait {
-		ready, reason, err := c.Ready(ctx, w)
-		if err != nil {
-			return Progress{}, fmt.Errorf("step %s: %w", step.Name, err)
+		if p, err := waitFor(ctx, c, step, w); err != nil || !p.Done {
+			return p, err
 		}
-		if !ready {
-			return Progress{
-				Step: step.Name, Message: fmt.Sprintf("waiting for %s %s: %s", w.Kind, objectName(w), reason),
-				pending: reason == kube.NotFound,
-			}, nil
-		}
+	}
+	return Progress{Step: step.Name, Done: true}, nil
+}
+
+// waitFor reports Done when the wait w of the step passes, and otherwise why not.
+func waitFor(ctx context.Context, c kube.Cluster, step kube.Step, w kube.WaitFor) (Progress, error) {
+	ready, reason, err := c.Ready(ctx, w)
+	switch {
+	case err != nil:
+		return Progress{}, fmt.Errorf("step %s: %w", step.Name, err)
+	case !ready:
+		return Progress{
+			Step: step.Name, Message: fmt.Sprintf("waiting for %s %s: %s", w.Kind, objectName(w), reason),
+			pending: reason == kube.NotFound,
+		}, nil
 	}
 	return Progress{Step: step.Name, Done: true}, nil
 }

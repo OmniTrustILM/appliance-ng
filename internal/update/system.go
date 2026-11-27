@@ -214,8 +214,8 @@ func (j *Jobs) systemBundle(ctx context.Context, version, step string) (*bundle.
 	return md, filepath.Join(j.deps.Dir, release.BundleSystem, tag(version, j.deps.Arch)), nil
 }
 
-// managerStep records the manager image that runs and the deadline by which the manager of the bundle must take the
-// update over, once, before it applies the manager's manifest of the bundle with its manager image; resumed past that
+// managerStep records the manager image that runs, the add-on steps of its release and the deadline by which the
+// manager of the bundle must take the update over, once, before it applies the manager's manifest of the bundle with its manager image; resumed past that
 // deadline, it fails the update as the hand-over does. The manager of the bundle runs once it is applied, so in that
 // manager the step is done.
 func (j *Jobs) managerStep(ctx context.Context, jb *job) error {
@@ -235,6 +235,7 @@ func (j *Jobs) managerStep(ctx context.Context, jb *job) error {
 			return fail(StepManager, err)
 		}
 		jb.status.PreviousManager, jb.status.Deadline = previous, j.handOverDeadline()
+		jb.status.PreviousAddonSteps = j.deps.AddonSteps
 		if err := j.record(ctx, jb.status); err != nil {
 			return err
 		}
@@ -620,13 +621,18 @@ func (j *Jobs) healthStep(ctx context.Context, jb *job) error {
 	return j.pointOfNoReturn(ctx, jb)
 }
 
-// pointOfNoReturn records that the update jb can no longer be undone by a Talos rollback, once.
+// pointOfNoReturn records that the update jb can no longer be undone by a Talos rollback, once, with the version it
+// installs as the one whose manager alone applies the add-ons from now on.
 func (j *Jobs) pointOfNoReturn(ctx context.Context, jb *job) error {
 	if jb.status.PointOfNoReturn {
 		return nil
 	}
 	jb.status.PointOfNoReturn = true
-	return j.record(ctx, jb.status)
+	st := jb.status
+	return j.writeStatus(ctx, func(s *v1alpha1.ApplianceStatus) {
+		s.Update = &st
+		s.Versions.RequiredManager = st.To
+	})
 }
 
 // healthy tells whether the node that booted the new Talos is healthy. On its first call it marks the conditions

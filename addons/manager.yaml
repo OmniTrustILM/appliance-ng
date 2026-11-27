@@ -1767,6 +1767,13 @@ spec:
                       PointOfNoReturn is set once the update has asked for the new ILM version, or the health check of a system update
                       passed; from then on only a rollback, or for a system update a restore onto a fresh appliance, undoes it.
                     type: boolean
+                  previousAddonSteps:
+                    description: |-
+                      PreviousAddonSteps are the add-on steps of the release a system update started from, which its pass applied:
+                      while the update holds the pass, they must stay ready.
+                    items:
+                      type: string
+                    type: array
                   previousManager:
                     description: PreviousManager is the manager image that ran before
                       a system update applied the manager of the new release.
@@ -1917,6 +1924,12 @@ spec:
                   platformBundle:
                     description: PlatformBundle is the version of the platform bundle
                       that is running.
+                    type: string
+                  requiredManager:
+                    description: |-
+                      RequiredManager is the version of the release a system update installed once it passed its point of no return.
+                      The manager of any other version holds the add-on pass: its add-ons are not for the upgraded Kubernetes. It is
+                      kept across later updates and restores in place.
                     type: string
                   talos:
                     type: string

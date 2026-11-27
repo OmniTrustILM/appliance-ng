@@ -405,11 +405,8 @@ func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Ap
 	if err != nil {
 		return addons.Progress{}, false, err
 	}
-	if live.Update.HoldsAddonsFor(r.Version) {
-		// The steps are those of the release being installed: one it adds was never applied and is pending.
-		r.passed = false
-		progress, err = addons.CheckApplied(ctx, r.Cluster, r.Steps)
-		return progress, true, err
+	if live.HoldsAddonsFor(r.Version) {
+		return r.checkHeld(ctx, live)
 	}
 	held := live.Restore.HoldsOperator()
 	files, operator, err := r.operatorAddons(a)
@@ -422,12 +419,31 @@ func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Ap
 		return progress, false, err
 	}
 	progress, err = addons.Pass(ctx, r.Cluster, r.Steps, files, operatorHold{r})
+	if errors.Is(err, errUpdateHeld) {
+		// A system update began to hold the pass while it ran.
+		if live, err = r.liveStatus(ctx); err != nil {
+			return addons.Progress{}, false, err
+		}
+		return r.checkHeld(ctx, live)
+	}
 	r.passed = err == nil && progress.Done
 	if r.passed {
 		r.passedAt, r.passedGen, r.passedHeld, r.passedOperator = r.now(), a.Generation, held, operator
 		keepKnown(&a.Status.Versions.Operator, operator)
 	}
 	return progress, false, err
+}
+
+// checkHeld checks the add-ons without applying them while a system update holds the pass: the steps the release it
+// started from applied must stay ready, and one it adds was never applied and is pending.
+func (r *ApplianceReconciler) checkHeld(ctx context.Context, live *v1alpha1.ApplianceStatus) (addons.Progress, bool, error) {
+	r.passed = false
+	var applied []string
+	if live.Update != nil {
+		applied = live.Update.PreviousAddonSteps
+	}
+	progress, err := addons.CheckApplied(ctx, r.Cluster, r.Steps, applied)
+	return progress, true, err
 }
 
 // errBundleMissing is the installed platform bundle whose files are not on the data volume.
@@ -464,16 +480,6 @@ func bundleMissing(err error) error {
 	return err
 }
 
-// holdsOperator tells whether a restore needs the ILM operator stopped, from the Appliance as the API server has it:
-// the cached one may not show yet the step that stopped the operator.
-func (r *ApplianceReconciler) holdsOperator(ctx context.Context) (bool, error) {
-	live, err := r.liveStatus(ctx)
-	if err != nil {
-		return false, err
-	}
-	return live.Restore.HoldsOperator(), nil
-}
-
 // liveStatus is the status of the Appliance as the API server has it.
 func (r *ApplianceReconciler) liveStatus(ctx context.Context) (*v1alpha1.ApplianceStatus, error) {
 	live := &v1alpha1.Appliance{}
@@ -483,8 +489,13 @@ func (r *ApplianceReconciler) liveStatus(ctx context.Context) (*v1alpha1.Applian
 	return &live.Status, nil
 }
 
-// operatorHold holds the operator lock while a step is applied and reads the restore's hold under it, so that a pass
-// that began before a restore stopped the operator does not start it again.
+// errUpdateHeld stops a pass at a step once a system update holds the add-on pass.
+var errUpdateHeld = errors.New("a system update holds the add-on pass")
+
+// operatorHold holds the operator lock while a step is applied and reads the restore's and the system update's holds
+// under it, so that a pass that began before a restore stopped the operator does not start it again, and one that
+// began before a system update held the pass stops at its next step. A system update waits for the lock before its
+// backup.
 type operatorHold struct{ r *ApplianceReconciler }
 
 func (h operatorHold) Hold(ctx context.Context) (addons.Holds, func(), error) {
@@ -493,12 +504,16 @@ func (h operatorHold) Hold(ctx context.Context) (addons.Holds, func(), error) {
 		lock = &sync.Mutex{}
 	}
 	lock.Lock()
-	held, err := h.r.holdsOperator(ctx)
-	if err != nil {
+	live, err := h.r.liveStatus(ctx)
+	switch {
+	case err != nil:
 		lock.Unlock()
 		return nil, nil, err
+	case live.HoldsAddonsFor(h.r.Version):
+		lock.Unlock()
+		return nil, nil, errUpdateHeld
 	}
-	return restoreHolds(held), lock.Unlock, nil
+	return restoreHolds(live.Restore.HoldsOperator()), lock.Unlock, nil
 }
 
 // restoreHolds keeps the ILM operator at zero replicas while held.

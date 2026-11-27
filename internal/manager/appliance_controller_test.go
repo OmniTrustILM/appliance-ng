@@ -165,10 +165,15 @@ type fakeCluster struct {
 	missing  string
 	applies  int
 	applyErr error
+	// onApply runs after each apply.
+	onApply func()
 }
 
 func (f *fakeCluster) Apply(context.Context, []byte) error {
 	f.applies++
+	if f.onApply != nil {
+		f.onApply()
+	}
 	return f.applyErr
 }
 

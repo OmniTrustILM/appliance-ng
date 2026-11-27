@@ -292,6 +292,7 @@ func newSystemEnvWith(t *testing.T, kubernetes string) *systemEnv {
 	e.newLock = &processBackups{fakeBackups: e.backups}
 	e.health = 10 * time.Second
 	e.upstreams = []string{builtRegistry, "registry.k8s.io"}
+	e.addonSteps = []string{"cilium", "cert-manager"}
 	e.talos, e.applier, e.console = e.node, e.manifests, e.consoleCheck
 	e.resetNode()
 	e.storeSystemBundle()
@@ -657,6 +658,9 @@ func TestSystemUpdateRunsEveryStep(t *testing.T) {
 	e.wantCalls(append(slices.Clone(upgradeCalls), kubernetesCalls(newKubernetes)...)...)
 	if u.PreviousManager != previousManager || e.managerImage() != managerRef {
 		t.Errorf("previous manager %q, manager image %q", u.PreviousManager, e.managerImage())
+	}
+	if !slices.Equal(u.PreviousAddonSteps, e.addonSteps) || e.appliance().Status.Versions.RequiredManager != systemTo {
+		t.Errorf("previous add-on steps %v, required manager %q", u.PreviousAddonSteps, e.appliance().Status.Versions.RequiredManager)
 	}
 	if e.manifests.count() != 1 {
 		t.Fatalf("%d applies of the manager's manifest, want 1", e.manifests.count())
@@ -1782,4 +1786,27 @@ func TestKubernetesStepDecidesOnWhatRuns(t *testing.T) {
 		t.Errorf("update %+v", u)
 	}
 	e.wantCalls(kubernetesCalls(newKubernetes)...)
+}
+
+// TestSystemUpdateWaitsForTheAddonStep starts the backup of a system update only once a step of the add-on pass that
+// was being applied when it started ended.
+func TestSystemUpdateWaitsForTheAddonStep(t *testing.T) {
+	e := newSystemEnv(t)
+	lock := &sync.Mutex{}
+	e.addonLock = lock
+	e.backups.entered, e.backups.block = make(chan struct{}), make(chan struct{})
+	lock.Lock()
+	old := e.oldManager()
+	if err := old.StartSystem(t.Context(), systemTo, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-e.backups.entered:
+		t.Fatal("the backup began while the add-on pass applied a step")
+	case <-time.After(100 * time.Millisecond):
+	}
+	lock.Unlock()
+	<-e.backups.entered
+	close(e.backups.block)
+	e.waitHandedOver()
 }

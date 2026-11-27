@@ -266,6 +266,9 @@ type jobEnv struct {
 	rebootRetry time.Duration
 	// upstreams are the registries the registry mirror serves.
 	upstreams []string
+	// addonSteps are the add-on steps of the running release; addonLock is the add-on pass's lock.
+	addonSteps []string
+	addonLock  sync.Locker
 	// releaseILM is the ILM version the running release embeds, oldILM when empty.
 	releaseILM string
 
@@ -476,6 +479,8 @@ func (e *jobEnv) newJobsWithRestorer(backups update.JobBackups, restorer update.
 		ComponentTimeout: 10 * time.Second,
 		RebootRetry:      e.rebootRetry,
 		Upstreams:        e.upstreams,
+		AddonSteps:       e.addonSteps,
+		AddonLock:        e.addonLock,
 	})
 }
 

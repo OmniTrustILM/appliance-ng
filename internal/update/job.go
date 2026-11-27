@@ -189,6 +189,11 @@ type JobDeps struct {
 	// Upstreams are the registries the registry mirror serves, which the images the node pulls for a system update
 	// must come from; the release's own when nil.
 	Upstreams []string
+	// AddonSteps are the names of the add-on steps of the running release, which a system update records.
+	AddonSteps []string
+	// AddonLock, when set, is held by the add-on pass while it applies a step; a system update takes it once before
+	// its backup, so that no step applies after the update began to hold the pass.
+	AddonLock sync.Locker
 }
 
 func (d *JobDeps) defaults() {

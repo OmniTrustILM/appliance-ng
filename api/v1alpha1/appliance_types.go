@@ -497,6 +497,11 @@ type Versions struct {
 	// PlatformBundle is the version of the platform bundle that is running.
 	// +optional
 	PlatformBundle string `json:"platformBundle,omitempty"`
+	// RequiredManager is the version of the release a system update installed once it passed its point of no return.
+	// The manager of any other version holds the add-on pass: its add-ons are not for the upgraded Kubernetes. It is
+	// kept across later updates and restores in place.
+	// +optional
+	RequiredManager string `json:"requiredManager,omitempty"`
 }
 
 // ApplianceStatus is the observed state of the appliance.
@@ -631,6 +636,10 @@ type UpdateStatus struct {
 	// PreviousManager is the manager image that ran before a system update applied the manager of the new release.
 	// +optional
 	PreviousManager string `json:"previousManager,omitempty"`
+	// PreviousAddonSteps are the add-on steps of the release a system update started from, which its pass applied:
+	// while the update holds the pass, they must stay ready.
+	// +optional
+	PreviousAddonSteps []string `json:"previousAddonSteps,omitempty"`
 	// HandBack is the fixed reason of a system update that failed before the node booted the new Talos: the manager
 	// of the new release runs the previous manager again, which records the update failed with it.
 	// +optional
@@ -658,11 +667,10 @@ func (u *UpdateStatus) HoldsAddons() bool {
 	return u.Unfinished() && u.Kind == UpdateKindSystem && u.Step != UpdateStepAddons
 }
 
-// HoldsAddonsFor tells whether u holds the add-on pass of the manager of version: while it holds it for every
-// manager, and, once a system update passed its point of no return, done or not, in a manager of another version
-// than the one it installs, which must not apply its add-ons on the upgraded Kubernetes.
-func (u *UpdateStatus) HoldsAddonsFor(version string) bool {
-	return u.HoldsAddons() || u != nil && u.Kind == UpdateKindSystem && u.PointOfNoReturn && u.To != version
+// HoldsAddonsFor tells whether s holds the add-on pass of the manager of version: while a system update holds it,
+// and in a manager of another version than the one a system update made required past its point of no return.
+func (s *ApplianceStatus) HoldsAddonsFor(version string) bool {
+	return s.Update.HoldsAddons() || s.Versions.RequiredManager != "" && s.Versions.RequiredManager != version
 }
 
 // ConnectorState is the state of one chosen connector.

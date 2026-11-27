@@ -262,8 +262,8 @@ downgraded, and the only way back is to restore the backup onto a fresh applianc
 - A system update that failed past the point of no return, at the Kubernetes or add-ons step, can be installed again
   from the Updates page: it goes on from the step it failed at.
 - If the node boots the previous Talos after the health check passed, through a manual rollback or a firmware
-  fallback, the previous manager runs no step and keeps the add-ons held, also once the update is done or failed, so
-  that it never applies its add-ons on the upgraded Kubernetes. A power cycle into the new Talos lets the update
+  fallback, the previous manager runs no step and keeps the add-ons held, also once the update ended and after later
+  platform updates, so that it never applies its add-ons on the upgraded Kubernetes. A power cycle into the new Talos lets the update
   finish or the appliance run again; otherwise contact support.
 - A system update moves Kubernetes by at most one minor version; a bundle that skips one is refused.
 - After a system update the node keeps the image cache of the release it was installed with. Images it needs before

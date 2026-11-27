@@ -299,7 +299,7 @@ func newOperations(ctx context.Context, s services, rel *release.Manifest, recon
 	if err != nil {
 		return operations{}, err
 	}
-	jobs, err := newJobs(s, rel, backups, restorer, loader, reconciler.Cluster, data)
+	jobs, err := newJobs(s, rel, backups, restorer, loader, reconciler, data)
 	if err != nil {
 		return operations{}, err
 	}
@@ -307,25 +307,32 @@ func newOperations(ctx context.Context, s services, rel *release.Manifest, recon
 }
 
 // newJobs returns the update jobs, which share the admission of backups, fetch a bundle not loaded with loader, tag
-// its images in zot, roll an update back with restorer, apply the manager's manifest of a system bundle with
-// manifests and drive Talos. Once the manager runs, they resume the update a restart cut off.
-func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer *restore.Engine, loader *update.Loader, manifests update.Applier, data string) (*update.Jobs, error) {
+// its images in zot, roll an update back with restorer, apply the manager's manifest of a system bundle with the
+// reconciler's cluster, share its add-on lock and steps, and drive Talos. Once the manager runs, they resume the update
+// a restart cut off.
+func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer *restore.Engine, loader *update.Loader, reconciler *manager.ApplianceReconciler, data string) (*update.Jobs, error) {
+	steps := make([]string, 0, len(reconciler.Steps))
+	for _, step := range reconciler.Steps {
+		steps = append(steps, step.Name)
+	}
 	reader := s.mgr.GetAPIReader()
 	jobs := update.NewJobs(update.JobDeps{
-		Client:    s.direct,
-		Backups:   backups,
-		Restore:   restorer,
-		Registry:  func(ctx context.Context) (update.ImageTagger, error) { return zotClient(ctx, reader) },
-		Fetcher:   loader,
-		Audit:     s.audit,
-		Log:       s.log,
-		Release:   rel,
-		Dir:       filepath.Join(data, bundlesDir),
-		Version:   version,
-		Talos:     func(ctx context.Context) (update.TalosNode, error) { return s.talos(ctx) },
-		Manifests: manifests,
-		Console:   s.console,
-		Upstreams: s.upstreams,
+		Client:     s.direct,
+		Backups:    backups,
+		Restore:    restorer,
+		Registry:   func(ctx context.Context) (update.ImageTagger, error) { return zotClient(ctx, reader) },
+		Fetcher:    loader,
+		Audit:      s.audit,
+		Log:        s.log,
+		Release:    rel,
+		Dir:        filepath.Join(data, bundlesDir),
+		Version:    version,
+		Talos:      func(ctx context.Context) (update.TalosNode, error) { return s.talos(ctx) },
+		Manifests:  reconciler.Cluster,
+		Console:    s.console,
+		Upstreams:  s.upstreams,
+		AddonSteps: steps,
+		AddonLock:  reconciler.OperatorLock,
 	})
 	if err := s.mgr.Add(crmanager.RunnableFunc(jobs.KeepResuming)); err != nil {
 		return nil, fmt.Errorf("add the resumption of an interrupted update: %w", err)
