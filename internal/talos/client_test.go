@@ -1078,6 +1078,8 @@ func TestClientConfigErrors(t *testing.T) {
 type fakeImages struct {
 	machineapi.UnimplementedImageServiceServer
 	pulled *machineapi.ImageServicePullRequest
+	// delay is how long a pull takes.
+	delay time.Duration
 }
 
 const resolvedInstaller = "registry.local/siderolabs/installer@sha256:0123"
@@ -1087,6 +1089,11 @@ func (f *fakeImages) Pull(req *machineapi.ImageServicePullRequest, stream grpc.S
 		return err
 	}
 	f.pulled = req
+	select {
+	case <-time.After(f.delay):
+	case <-stream.Context().Done():
+		return stream.Context().Err()
+	}
 	return stream.Send(&machineapi.ImageServicePullResponse{Response: &machineapi.ImageServicePullResponse_Name{Name: resolvedInstaller}})
 }
 
@@ -1146,7 +1153,10 @@ func TestUpgradeFails(t *testing.T) {
 }
 
 func TestPullSystemImage(t *testing.T) {
-	fake := &fakeMachine{images: &fakeImages{}}
+	// A pull outlasts the bound of a call.
+	defer func(d time.Duration) { callTimeout = d }(callTimeout)
+	callTimeout = 50 * time.Millisecond
+	fake := &fakeMachine{images: &fakeImages{delay: 200 * time.Millisecond}}
 	const image = "registry.k8s.io/etcd:v3.8.0@sha256:0123"
 	if err := dialFake(t, fake).PullSystemImage(context.Background(), image); err != nil {
 		t.Fatalf("PullSystemImage: %v", err)

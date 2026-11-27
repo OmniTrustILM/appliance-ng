@@ -437,7 +437,12 @@ func (n *node) pull(ctx context.Context, image string) (string, error) {
 	}
 }
 
+// pullTimeout bounds the pull of an image into the system store, which may take longer than a call.
+const pullTimeout = 15 * time.Minute
+
 func (n *node) PullSystemImage(ctx context.Context, image string) error {
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
 	_, err := n.pull(ctx, image)
 	return err
 }
