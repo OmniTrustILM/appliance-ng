@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 	"github.com/OmniTrustILM/appliance-ng/internal/setup"
@@ -21,7 +22,8 @@ import (
 
 // platformConsole models the updates API through an update and its rollback: the uploaded bundle is loaded, an
 // update steps to done, a rollback waits for its kit once, is resumed and steps to done, and the status shows the ILM
-// version that runs.
+// version that runs. A system bundle, uploaded as one, is loaded as system bundle 0.1.0; once its update is done the
+// status shows the versions of that release.
 type platformConsole struct {
 	mu                  sync.Mutex
 	started             map[string]any
@@ -31,7 +33,12 @@ type platformConsole struct {
 	offer               map[string]any
 	ilm                 string
 	kind, from, to      string
+	uploadKind          string
+	versions            map[string]string
 }
+
+// systemVersions are the versions of system bundle 0.1.0.
+var systemVersions = map[string]string{"appliance": "0.1.0", "talos": "v1.14.5", "kubernetes": "v1.37.1"}
 
 func (pc *platformConsole) serve(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -39,14 +46,21 @@ func (pc *platformConsole) serve(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /appliance/api/v1/updates/upload", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
+		pc.mu.Lock()
+		pc.uploadKind = r.URL.Query().Get("kind")
+		pc.mu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 	})
 	mux.HandleFunc("GET /appliance/api/v1/updates", func(w http.ResponseWriter, _ *http.Request) {
 		pc.mu.Lock()
 		defer pc.mu.Unlock()
+		load := map[string]any{"state": "loaded", "kind": "platform", "version": "0.1.1"}
+		if pc.uploadKind == kindSystem {
+			load = map[string]any{"state": "loaded", "kind": kindSystem, "version": "0.1.0"}
+		}
 		body := map[string]any{
 			"available": []any{}, "loaded": []map[string]any{{"kind": "platform", "version": "0.1.1", "arch": "arm64", "ilm": "2.20.0"}},
-			"load":     map[string]any{"state": "loaded", "kind": "platform", "version": "0.1.1"},
+			"load":     load,
 			"rollback": pc.offer,
 		}
 		if pc.kind != "" {
@@ -58,7 +72,10 @@ func (pc *platformConsole) serve(t *testing.T) *httptest.Server {
 				pc.steps = pc.steps[1:]
 			}
 			if pc.steps[0] == restoreStepDone {
-				pc.ilm = map[string]string{kindPlatform: "2.20.0", kindRollback: "2.19.0"}[pc.kind]
+				pc.ilm = map[string]string{kindPlatform: "2.20.0", kindRollback: "2.19.0", kindSystem: "2.20.0"}[pc.kind]
+				if pc.kind == kindSystem {
+					pc.versions = systemVersions
+				}
 			}
 			body["update"] = u
 		}
@@ -70,6 +87,14 @@ func (pc *platformConsole) serve(t *testing.T) *httptest.Server {
 		_ = json.NewDecoder(r.Body).Decode(&pc.started)
 		pc.kind, pc.from, pc.to = kindPlatform, "0.1.0", "0.1.1"
 		pc.steps = []string{"backup", "images", "operator", "version", "wait", restoreStepDone}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("POST /appliance/api/v1/updates/system", func(w http.ResponseWriter, r *http.Request) {
+		pc.mu.Lock()
+		defer pc.mu.Unlock()
+		_ = json.NewDecoder(r.Body).Decode(&pc.started)
+		pc.kind, pc.from, pc.to = kindSystem, "0.0.0-test", "0.1.0"
+		pc.steps = []string{"backup", "images", "manager", "talos", "health", "kubernetes", "addons", restoreStepDone}
 		w.WriteHeader(http.StatusAccepted)
 	})
 	mux.HandleFunc("POST /appliance/api/v1/updates/rollback", func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +117,11 @@ func (pc *platformConsole) serve(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /appliance/api/v1/status", func(w http.ResponseWriter, _ *http.Request) {
 		pc.mu.Lock()
 		defer pc.mu.Unlock()
-		reply(w, map[string]any{"versions": map[string]string{"ilm": pc.ilm}})
+		versions := map[string]string{"ilm": pc.ilm}
+		for k, v := range pc.versions {
+			versions[k] = v
+		}
+		reply(w, map[string]any{"versions": versions})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -162,6 +191,64 @@ func TestDriveUpdateNeverPrintsSecrets(t *testing.T) {
 	}
 	if pc.resumed["kit"] != string(kit) || pc.resumed[partPassphrase] != testPassphrase {
 		t.Error("the rollback that waited for its kit was not resumed with the kit and its passphrase")
+	}
+}
+
+func TestDriveSystemUpdateNeverPrintsSecrets(t *testing.T) {
+	fastPolls(t)
+	o, _, secrets := updateSecrets(t)
+	o.kind, o.talosVersion, o.kubernetesVersion = kindSystem, systemVersions["talos"], systemVersions["kubernetes"]
+	pc := &platformConsole{}
+	c := newClient(pc.serve(t).URL, nil, "")
+	var err error
+	out := captureStdout(t, func() { err = c.update(context.Background(), o) })
+	if err != nil {
+		t.Fatalf("system update = %v\n%s", err, out)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(out, secret) {
+			t.Errorf("drive printed a secret:\n%s", out)
+		}
+	}
+	for _, want := range []string{
+		"load loaded system 0.1.0", "system from 0.0.0-test to 0.1.0 at step manager", "at step talos",
+		"runs appliance 0.1.0, Talos v1.14.5, Kubernetes v1.37.1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("drive printed no %q:\n%s", want, out)
+		}
+	}
+	if pc.uploadKind != kindSystem {
+		t.Errorf("uploaded as a %q bundle, want system", pc.uploadKind)
+	}
+	if pc.started["version"] != "0.1.0" || pc.started["confirm"] != true {
+		t.Errorf("system update started with %v, want the loaded bundle confirmed", pc.started)
+	}
+}
+
+func TestDriveSystemUpdateFails(t *testing.T) {
+	fastPolls(t)
+	for name, tc := range map[string]struct {
+		pc    *platformConsole
+		talos string
+		want  string
+	}{
+		"a failed update":    {&platformConsole{failAt: "health"}, systemVersions["talos"], "stopped at step health: timeout"},
+		"another Talos runs": {&platformConsole{}, "v1.14.6", "want 0.1.0, v1.14.6, v1.37.1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o, _, _ := updateSecrets(t)
+			o.kind, o.talosVersion, o.kubernetesVersion = kindSystem, tc.talos, systemVersions["kubernetes"]
+			saved := versionsTimeout
+			versionsTimeout = 50 * time.Millisecond
+			t.Cleanup(func() { versionsTimeout = saved })
+			c := newClient(tc.pc.serve(t).URL, nil, "")
+			var err error
+			out := captureStdout(t, func() { err = c.update(context.Background(), o) })
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one naming %q\n%s", err, tc.want, out)
+			}
+		})
 	}
 }
 

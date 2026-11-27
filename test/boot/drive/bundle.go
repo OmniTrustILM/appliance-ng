@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -125,11 +126,12 @@ type bundleState struct {
 // loadState is a load: running, loaded, refused or failed for a reason.
 type loadState struct{ State, Kind, Version, Reason string }
 
-// uploadBundle uploads size bytes of body as a platform bundle and returns the load once it ended.
+// uploadBundle uploads size bytes of body as a bundle of kind o.kind, a platform bundle when unset, and returns the
+// load once it ended.
 func (c *client) uploadBundle(ctx context.Context, o options, body io.Reader, size int64) (*loadState, error) {
 	path := updatesPath + "/upload"
 	// The bundle file is read again after the upload, so the request must not close it.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+path+"?kind=platform", io.NopCloser(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+path+"?kind="+cmp.Or(o.kind, kindPlatform), io.NopCloser(body))
 	if err != nil {
 		return nil, err
 	}

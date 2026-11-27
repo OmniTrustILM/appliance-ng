@@ -107,7 +107,7 @@ func (j *Jobs) rollbackPlan(ctx context.Context, user string) (string, restore.O
 	if err != nil {
 		return "", restore.Options{}, err
 	}
-	prev, err := j.previous(a, u.From)
+	prev, err := j.previous(a, u.From, u.FromILM)
 	if err != nil {
 		return "", restore.Options{}, err
 	}
@@ -121,7 +121,8 @@ func (j *Jobs) rollbackPlan(ctx context.Context, user string) (string, restore.O
 	return file, restore.Options{InPlace: true, User: user, Rollback: &restore.Rollback{
 		Version: prev.ilm, PlatformBundle: prev.bundle,
 		Update: v1alpha1.UpdateStatus{
-			Kind: KindRollback, From: u.To, To: u.From, Backup: u.Backup, StartedAt: metav1.NewTime(j.deps.Now()),
+			Kind: KindRollback, From: u.To, To: u.From, FromILM: u.FromILM, Backup: u.Backup,
+			StartedAt: metav1.NewTime(j.deps.Now()),
 		},
 	}}, nil
 }
@@ -135,12 +136,12 @@ func lastPlatformUpdate(a *v1alpha1.Appliance) (*v1alpha1.UpdateStatus, error) {
 		return nil, &Error{Reason: RestoreRunning, err: errRestoreRunning}
 	case a.Spec.Platform != nil && a.Spec.Platform.Database != nil:
 		return nil, &Error{Reason: ExternalDatabase}
-	case abandonedRollback(a):
-		return &v1alpha1.UpdateStatus{Kind: release.BundlePlatform, From: u.To, To: u.From, Backup: u.Backup}, nil
-	case u == nil || u.Kind != release.BundlePlatform || u.Backup == "":
-		return nil, &Error{Reason: NoPreUpdateBackup}
 	case u.Unfinished():
 		return nil, &Error{Reason: UpdateRunning, err: errUpdateRunning}
+	case abandonedRollback(a):
+		return &v1alpha1.UpdateStatus{Kind: release.BundlePlatform, From: u.To, To: u.From, FromILM: u.FromILM, Backup: u.Backup}, nil
+	case u == nil || u.Kind != release.BundlePlatform || u.Backup == "":
+		return nil, &Error{Reason: NoPreUpdateBackup}
 	case u.Message != "" && !u.PointOfNoReturn:
 		return nil, &Error{Reason: NotNeeded}
 	}
@@ -200,11 +201,10 @@ type platformSource struct {
 	md     *bundle.Metadata
 }
 
-// previous is the platform that ran before the update from bundle version from: that platform bundle when it is
-// loaded, else the release's own platform when the update was the first; the update must not have changed the ILM
-// operator.
-func (j *Jobs) previous(a *v1alpha1.Appliance, from string) (platformSource, error) {
-	src, err := j.source(a, from)
+// previous is the platform that ran before the update from bundle version from and ILM version fromILM, empty when
+// not recorded: see source. The update must not have changed the ILM operator.
+func (j *Jobs) previous(a *v1alpha1.Appliance, from, fromILM string) (platformSource, error) {
+	src, err := j.source(a, from, fromILM)
 	if err != nil {
 		return platformSource{}, err
 	}
@@ -218,7 +218,14 @@ func (j *Jobs) previous(a *v1alpha1.Appliance, from string) (platformSource, err
 	return src, nil
 }
 
-func (j *Jobs) source(a *v1alpha1.Appliance, from string) (platformSource, error) {
+// source is the platform a rollback installs again. With the ILM version the update started from recorded, it is a
+// loaded platform bundle that carries that version, the bundle from first, else the release's own platform when it
+// embeds that version: a system update since may have brought a release with another. Without it, it is the bundle
+// from when loaded, else the release's own platform when the update was the first.
+func (j *Jobs) source(a *v1alpha1.Appliance, from, fromILM string) (platformSource, error) {
+	if fromILM != "" {
+		return j.sourceOf(a, from, fromILM)
+	}
 	md, err := InstalledPlatform(j.deps.Dir, from, j.deps.Arch)
 	switch {
 	case err == nil && md != nil:
@@ -227,6 +234,32 @@ func (j *Jobs) source(a *v1alpha1.Appliance, from string) (platformSource, error
 		return platformSource{}, fail(stepRollback, err)
 	case from != "" && from == a.Status.Versions.Appliance && j.deps.Release.Platform.ILMVersion != "":
 		return platformSource{ilm: j.deps.Release.Platform.ILMVersion}, nil
+	}
+	return platformSource{}, &Error{Reason: NoPreviousBundle}
+}
+
+// sourceOf is the platform of ILM version ilm: a loaded platform bundle carrying it, the bundle from first, else the
+// release's own platform when it embeds ilm.
+func (j *Jobs) sourceOf(a *v1alpha1.Appliance, from, ilm string) (platformSource, error) {
+	candidates := []string{from}
+	if a.Status.Updates != nil {
+		for _, b := range a.Status.Updates.Loaded {
+			if runnable(b) && b.ILM == ilm && b.Arch == j.deps.Arch {
+				candidates = append(candidates, b.Version)
+			}
+		}
+	}
+	for _, version := range candidates {
+		md, err := InstalledPlatform(j.deps.Dir, version, j.deps.Arch)
+		switch {
+		case err == nil && md != nil && md.ILM == ilm:
+			return platformSource{ilm: ilm, bundle: version, md: md}, nil
+		case err != nil && !errors.Is(err, fs.ErrNotExist):
+			return platformSource{}, fail(stepRollback, err)
+		}
+	}
+	if j.deps.Release.Platform.ILMVersion == ilm {
+		return platformSource{ilm: ilm}, nil
 	}
 	return platformSource{}, &Error{Reason: NoPreviousBundle}
 }

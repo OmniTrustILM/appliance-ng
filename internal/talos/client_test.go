@@ -72,6 +72,13 @@ type fakeMachine struct {
 	applyCalls   int
 	version      string
 	reboots      int
+	rebootMode   machineapi.RebootRequest_Mode
+	upgrade      *machineapi.UpgradeRequest
+	// images and lifecycle, when set, serve the ImageService and the LifecycleService.
+	images       *fakeImages
+	lifecycle    *fakeLifecycle
+	rollbacks    int
+	upgradeErr   error
 	shutdowns    int
 	clientReq    *machineapi.GenerateClientConfigurationRequest
 	clientConfig []byte
@@ -108,12 +115,29 @@ func (f *fakeMachine) Version(ctx context.Context, _ *emptypb.Empty) (*machineap
 	return &machineapi.VersionResponse{Messages: []*machineapi.Version{{Version: &machineapi.VersionInfo{Tag: f.version}}}}, nil
 }
 
-func (f *fakeMachine) Reboot(ctx context.Context, _ *machineapi.RebootRequest) (*machineapi.RebootResponse, error) {
+func (f *fakeMachine) Reboot(ctx context.Context, req *machineapi.RebootRequest) (*machineapi.RebootResponse, error) {
 	if err := authorize(ctx); err != nil {
 		return nil, err
 	}
 	f.reboots++
+	f.rebootMode = req.GetMode()
 	return &machineapi.RebootResponse{}, nil
+}
+
+func (f *fakeMachine) Upgrade(ctx context.Context, req *machineapi.UpgradeRequest) (*machineapi.UpgradeResponse, error) {
+	if err := authorize(ctx); err != nil {
+		return nil, err
+	}
+	f.upgrade = req
+	return &machineapi.UpgradeResponse{}, f.upgradeErr
+}
+
+func (f *fakeMachine) Rollback(ctx context.Context, _ *machineapi.RollbackRequest) (*machineapi.RollbackResponse, error) {
+	if err := authorize(ctx); err != nil {
+		return nil, err
+	}
+	f.rollbacks++
+	return &machineapi.RollbackResponse{}, f.upgradeErr
 }
 
 func (f *fakeMachine) Shutdown(ctx context.Context, _ *machineapi.ShutdownRequest) (*machineapi.ShutdownResponse, error) {
@@ -228,6 +252,12 @@ func dialFake(t *testing.T, fake *fakeMachine) *node {
 	}
 	srv := grpc.NewServer()
 	machineapi.RegisterMachineServiceServer(srv, fake)
+	if fake.images != nil {
+		machineapi.RegisterImageServiceServer(srv, fake.images)
+	}
+	if fake.lifecycle != nil {
+		machineapi.RegisterLifecycleServiceServer(srv, fake.lifecycle)
+	}
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
@@ -787,6 +817,12 @@ func serveTLS(t *testing.T, fake *fakeMachine, server pki) string {
 	}
 	srv := grpc.NewServer(grpc.Creds(creds))
 	machineapi.RegisterMachineServiceServer(srv, fake)
+	if fake.images != nil {
+		machineapi.RegisterImageServiceServer(srv, fake.images)
+	}
+	if fake.lifecycle != nil {
+		machineapi.RegisterLifecycleServiceServer(srv, fake.lifecycle)
+	}
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 	return lis.Addr().String()
@@ -1035,5 +1071,115 @@ func TestClientConfigErrors(t *testing.T) {
 	_ = n.Close()
 	if _, err := n.ClientConfig(context.Background(), []string{"os:reader"}, time.Hour); err == nil {
 		t.Error("a closed connection: expected error")
+	}
+}
+
+// fakeImages is the ImageService: it pulls every image under the name resolved.
+type fakeImages struct {
+	machineapi.UnimplementedImageServiceServer
+	pulled *machineapi.ImageServicePullRequest
+}
+
+const resolvedInstaller = "registry.local/siderolabs/installer@sha256:0123"
+
+func (f *fakeImages) Pull(req *machineapi.ImageServicePullRequest, stream grpc.ServerStreamingServer[machineapi.ImageServicePullResponse]) error {
+	if err := authorize(stream.Context()); err != nil {
+		return err
+	}
+	f.pulled = req
+	return stream.Send(&machineapi.ImageServicePullResponse{Response: &machineapi.ImageServicePullResponse_Name{Name: resolvedInstaller}})
+}
+
+// fakeLifecycle is the LifecycleService: an upgrade reports a message and ends with exitCode.
+type fakeLifecycle struct {
+	machineapi.UnimplementedLifecycleServiceServer
+	upgrade  *machineapi.LifecycleServiceUpgradeRequest
+	exitCode int32
+}
+
+func (f *fakeLifecycle) Upgrade(req *machineapi.LifecycleServiceUpgradeRequest, stream grpc.ServerStreamingServer[machineapi.LifecycleServiceUpgradeResponse]) error {
+	if err := authorize(stream.Context()); err != nil {
+		return err
+	}
+	f.upgrade = req
+	for _, p := range []*machineapi.LifecycleServiceInstallProgress{
+		{Response: &machineapi.LifecycleServiceInstallProgress_Message{Message: "installing"}},
+		{Response: &machineapi.LifecycleServiceInstallProgress_ExitCode{ExitCode: f.exitCode}},
+	} {
+		if err := stream.Send(&machineapi.LifecycleServiceUpgradeResponse{Progress: p}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestUpgradePullsAndInstalls(t *testing.T) {
+	fake := &fakeMachine{images: &fakeImages{}, lifecycle: &fakeLifecycle{}}
+	const image = "127.0.0.1:5443/siderolabs/installer:v1.14.6"
+	if err := dialFake(t, fake).Upgrade(context.Background(), image); err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	pull := fake.images.pulled
+	if pull.GetImageRef() != image || pull.GetContainerd().GetNamespace() != common.ContainerdNamespace_NS_SYSTEM {
+		t.Errorf("pulled %q into %v, want the installer into the system namespace", pull.GetImageRef(), pull.GetContainerd())
+	}
+	if got := fake.lifecycle.upgrade.GetSource().GetImageName(); got != resolvedInstaller {
+		t.Errorf("installed %q, want the pulled image", got)
+	}
+	if fake.lifecycle.upgrade.GetContainerd().GetNamespace() != common.ContainerdNamespace_NS_SYSTEM {
+		t.Errorf("installed from %v, want the system namespace", fake.lifecycle.upgrade.GetContainerd())
+	}
+	if fake.upgrade != nil || fake.reboots != 0 {
+		t.Errorf("machine upgrade %v, reboots %d: the upgrade must neither drain nor reboot", fake.upgrade, fake.reboots)
+	}
+}
+
+func TestUpgradeFails(t *testing.T) {
+	fake := &fakeMachine{images: &fakeImages{}, lifecycle: &fakeLifecycle{exitCode: 1}}
+	if err := dialFake(t, fake).Upgrade(context.Background(), "installer:v1"); err == nil || !strings.Contains(err.Error(), "exit code 1") {
+		t.Errorf("error %v, want the installer's exit code", err)
+	}
+	fake = &fakeMachine{}
+	if err := dialFake(t, fake).Upgrade(context.Background(), "installer:v1"); err == nil {
+		t.Error("an upgrade without the image service passed")
+	}
+}
+
+func TestPullSystemImage(t *testing.T) {
+	fake := &fakeMachine{images: &fakeImages{}}
+	const image = "registry.k8s.io/etcd:v3.8.0@sha256:0123"
+	if err := dialFake(t, fake).PullSystemImage(context.Background(), image); err != nil {
+		t.Fatalf("PullSystemImage: %v", err)
+	}
+	if pull := fake.images.pulled; pull.GetImageRef() != image || pull.GetContainerd().GetNamespace() != common.ContainerdNamespace_NS_SYSTEM {
+		t.Errorf("pulled %q into %v, want the image into the system namespace", pull.GetImageRef(), pull.GetContainerd())
+	}
+	if err := dialFake(t, &fakeMachine{}).PullSystemImage(context.Background(), image); err == nil {
+		t.Error("a pull without the image service passed")
+	}
+}
+
+func TestRebootPowercycle(t *testing.T) {
+	fake := &fakeMachine{}
+	if err := dialFake(t, fake).RebootPowercycle(context.Background()); err != nil || fake.reboots != 1 ||
+		fake.rebootMode != machineapi.RebootRequest_POWERCYCLE {
+		t.Errorf("reboot: %v, %d calls, mode %v", err, fake.reboots, fake.rebootMode)
+	}
+}
+
+func TestRollback(t *testing.T) {
+	fake := &fakeMachine{}
+	if err := dialFake(t, fake).Rollback(context.Background()); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if fake.rollbacks != 1 {
+		t.Errorf("rollbacks %d, want 1", fake.rollbacks)
+	}
+}
+
+func TestRollbackError(t *testing.T) {
+	err := dialFake(t, &fakeMachine{upgradeErr: status.Error(codes.Internal, "boom")}).Rollback(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "roll back") {
+		t.Fatalf("error %v, want one naming the rollback", err)
 	}
 }

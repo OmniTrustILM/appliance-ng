@@ -230,11 +230,52 @@ The CBOM repository keeps the CBOMs ILM stores, either in an S3 store on the dat
 `http://cbom-repository-service.ilm.svc:8080`; it is not published, because it has no authentication of its own.
 Turned off, the repository is removed while the store on the appliance keeps running with its CBOMs.
 
+## Updates
+
+The Updates page lists the releases the appliance can install. **Check for updates** asks the online repository,
+`ghcr.io/omnitrustilm/appliance-ng`; a failed check names the reason. Without internet access, upload a bundle file
+(see Offline update file under Releases). The manager verifies the signature, the architecture and the compatibility
+with what runs, and loads nothing that fails. Loaded bundles are listed with the reason when one cannot be installed
+yet, for example because an earlier release must be installed first. An upload, a load or an update is refused while
+the data volume has too little free space (twice the bundle's size or more), and while a backup, a restore or another
+update runs.
+
+**Platform update** changes the ILM version. It takes a backup to every target first, pins it and then installs the
+bundle's ILM operator and switches ILM to the new version.
+
+**Roll back** undoes the last platform update. It needs the pinned backup taken before the update, the platform bundle
+that ran before, and the recovery kit with its passphrase; it restores the backup, so data changed since is lost. It is
+refused when the update installed a newer ILM operator (an operator is never downgraded), when the platform uses an
+external database, when the update failed before it asked for the new ILM version, and when the backup or the previous
+bundle is gone. The refusal names the reason; the way back is then to restore the backup onto a fresh appliance.
+
+**System update** changes the manager, Talos, Kubernetes and the add-ons. Expect about 10 minutes of downtime: the
+manager restarts, then the node reboots. The Updates page waits for the appliance and asks to sign in again once it is
+back; ILM needs a few minutes more. After the reboot a health check runs, and if the node is not healthy, Talos is
+rolled back automatically. The passed health check is the point of no return: Kubernetes is upgraded next and never
+downgraded, and the only way back is to restore the backup onto a fresh appliance of the previous release.
+
+- If the new manager never starts, power-cycle the node. The previous manager comes back and fails the update after
+  15 minutes.
+- If an update installed Talos but could not reboot the node, the update fails and says so: the next reboot starts the
+  new Talos without the health check.
+- A system update that failed past the point of no return, at the Kubernetes or add-ons step, can be installed again
+  from the Updates page: it goes on from the step it failed at.
+- If the node boots the previous Talos after the health check passed, through a manual rollback or a firmware
+  fallback, the previous manager runs no step and keeps the add-ons held, also once the update is done or failed, so
+  that it never applies its add-ons on the upgraded Kubernetes. A power cycle into the new Talos lets the update
+  finish or the appliance run again; otherwise contact support.
+- A system update moves Kubernetes by at most one minor version; a bundle that skips one is refused.
+- After a system update the node keeps the image cache of the release it was installed with. Images it needs before
+  the registry is up come from the node's container store.
+- A finished system update replaces the record of an earlier platform update, which can then no longer be rolled
+  back.
+
 ## Limitations
 
 - The node's host name and address are read-only after setup. To change the public name, change the ILM host name and
   the certificate. To rename the machine or move it to another address, reinstall it.
-- Only the ILM version in the image is offered.
+- Updates are installed one at a time, from a signed bundle; there is no downgrade.
 - Connectors that implement only the v1 connector interface, such as email-notification-provider 1.3.0 and
   x509-compliance-provider 1.3.1, run but do not register with ILM. The Components page marks them as not registered
   and shows their URL; register them in ILM with that URL. Other connectors register on their own and count as ready
@@ -277,6 +318,19 @@ second VM then restores that backup under another ILM host name and the test che
 administrator certificate, that the group and the CBOM are back and that Keycloak accepts the restored client. It
 prints `PASS <seconds> restored <seconds>`.
 
+With `SYSTEM_UPDATE=1` the VM boots the qcow2 of a previous release, installs the system bundle of the checked-out
+code from the console and checks that the appliance runs the new versions with its data intact. It then power-cycles
+the node and checks that it comes back by itself:
+
+```bash
+SYSTEM_UPDATE=1 FROM=test make boot-test MEDIA=qcow2 ARCH=arm64
+```
+
+`FROM=test` starts from a build of the current commit stamped `0.0.0-test`; use `FROM=<tag>` once a tag exists. The
+test needs `BUNDLE_TEST_KEY` (the public key that both builds trust) and the system bundle made with
+`KIND=system test/boot/bundle.sh`; see the comments in `test/boot/run.sh` and `test/boot/previous.sh`. If the host
+ports are taken, set `PORT_OFFSET` to move all of them.
+
 By default `test/boot/drive` answers the wizard through the API. With `E2E=1` the Playwright tests in `test/e2e` answer
 it in Chromium instead and then change settings in the console (DNS servers, a trusted CA, a component, the audit log):
 
@@ -311,15 +365,21 @@ needs at least 40 GB of free disk after the runner clean-up and fails with a cle
 
 ## Releases
 
-A tag `X.Y.Z` equal to `version` in `release.yaml`, with `release-notes/X.Y.Z.md` committed, runs
-`.github/workflows/release.yaml`. It publishes the images and runs the long tests; once they pass, it pushes the system
-and platform bundles of each architecture to `ghcr.io/omnitrustilm/appliance-ng/{system,platform}:X.Y.Z-<arch>`, signs
-them, attaches an SPDX SBOM of each as an attestation and drafts a GitHub release with the notes, the SBOMs and
-`cosign.pub`. The system bundle carries the installer and manager images the run built. Signatures
+Tags are `X.Y.Z`, without a `v`. The maintainer sets `version` in `release.yaml`, commits
+`release-notes/X.Y.Z.md` and cuts the tag by hand from `main`. The tag runs `.github/workflows/release.yaml`. It
+publishes the images, runs the long tests it can and, once they pass, pushes the system and platform bundles of each
+architecture to `ghcr.io/omnitrustilm/appliance-ng/{system,platform}:X.Y.Z-<arch>`, signs them, attaches an SPDX SBOM
+of each as an attestation and creates a draft GitHub release with the notes, the SBOMs and `cosign.pub`. The maintainer
+publishes the draft. The system bundle carries the installer and manager images the run built. Signatures
 are made with the key behind `cosign.pub` and are not written to a public transparency log. A manual run with
 `dry-run` pushes the bundles under `ghcr.io/omnitrustilm/appliance-ng/dev/` as `<commit>-<arch>`, signs them with a
 throw-away key pair made in the run, keeps its public key as the `dry-run-cosign-pub-<arch>` artifact and drafts no
 release.
+
+The long VM tests (`restore`, `bundle-load`, `platform-update`, `system-update`) are in
+`.github/workflows/long-tests.yaml`. They run on pull requests labelled `long-tests` and on manual dispatch. The tag
+run does not run `bundle-load`, `platform-update` or `system-update`, because they need a test signing key: run them
+through the label before tagging.
 
 `make bundles ARCH=amd64` builds the unsigned bundles into `out/<arch>/bundles/`; with `PUSH=1 REGISTRY=<registry>`
 it also pushes them with oras.

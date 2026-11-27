@@ -2133,6 +2133,49 @@ paths:
           $ref: '#/components/responses/Conflict'
         '503':
           $ref: '#/components/responses/UpdatesUnavailable'
+  /updates/system:
+    post:
+      tags: [updates]
+      operationId: postUpdatesSystem
+      summary: Install a system bundle
+      description: |
+        Installs the loaded system bundle `version` for the appliance's architecture in the background: a backup to
+        every target first, then the bundle's images and manager, Talos and Kubernetes. The
+        manager restarts and the node reboots once, so the API and the console are gone for about 10 minutes.
+        `update` in GET /updates shows its progress. Needs `confirm` set to true; otherwise it is answered with 400.
+        Refused with 409: `update_running`, `backup_running`, `restore_running`, `bundle_loading`, `busy` while another
+        operation is being admitted, `upgrade_in_progress` while the ILM operator upgrades the platform,
+        `last_update_failed` while the last platform update failed past its point of no return and can be rolled back,
+        `not_installed` while the platform is not installed, `blocked` when the bundle cannot be installed on what
+        runs, `bundle_unavailable` when the bundle's files are no longer on the appliance, `invalid_bundle` when the
+        bundle carries no installer, manager or etcd image, `kubernetes_older_than_running` when the bundle's Kubernetes is
+        older than the one that runs, which is never downgraded, `kubernetes_minor_skip` when it is more than one minor
+        version above the one that runs, and `no_space` when the data volume has less than
+        twice the bundle's size free; with 404 `not_found` when the bundle is not loaded. A system update that failed
+        past its point of no return runs again from the step it failed at, in the manager of its version.
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemUpdateStart'
+      responses:
+        '202':
+          description: The update is started.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/UpdatesUnavailable'
   /updates/rollback:
     post:
       tags: [updates]
@@ -2402,6 +2445,16 @@ components:
         confirm:
           type: boolean
           description: Must be true; the way back from the update is a reinstall and a restore of the backup taken first.
+    SystemUpdateStart:
+      type: object
+      required: [version, confirm]
+      properties:
+        version:
+          type: string
+          description: The version of the system bundle, X.Y.Z.
+        confirm:
+          type: boolean
+          description: Must be true; the manager restarts and the node reboots, which takes the appliance down for about 10 minutes.
     UpdateProgress:
       type: object
       description: The latest update, while it runs and once it ended.
@@ -2419,8 +2472,9 @@ components:
         step:
           type: string
           description: >-
-            The step the update is at: `backup`, `images`, `operator`, `version`, `wait`, and `done` once it
-            completed. A rollback is at the step of the restore that does it, as `step` in GET /restore.
+            The step the update is at: `backup`, `images`, `operator`, `version`, `wait` for a platform update;
+            `backup`, `images`, `manager`, `talos`, `health`, `kubernetes`, `addons` for a system update, which
+            ends at `rolledBack` when it undid Talos; and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore.
         message:
           type: string
           description: >-
@@ -2434,7 +2488,9 @@ components:
           format: date-time
         pointOfNoReturn:
           type: boolean
-          description: Set once the update has asked for the new ILM version; from then on only a rollback undoes it.
+          description: >-
+            Set once the update has asked for the new ILM version, or the health check of a system update passed;
+            from then on only a rollback, or a restore onto a fresh appliance, undoes it.
     UpdateBundle:
       type: object
       required: [kind, version, arch, sizeBytes, notes]
@@ -2921,7 +2977,8 @@ components:
             recovery-kit-confirm, backup, backup-download, backup-target-set, backup-target-remove,
             backup-target-test, backup-host-key-scan, restore-upload, restore-fetch, restore-inspect, restore-start,
             restore-resume, restore-abandon, restore, update-check, update-upload, update-fetch, bundle-loaded,
-            platform-update-start, platform-update, platform-rollback-start]
+            platform-update-start, platform-update, platform-rollback-start, system-update-start,
+            system-update]
         result:
           type: string
           enum: [success, failure, denied]

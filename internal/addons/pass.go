@@ -38,6 +38,8 @@ type Progress struct {
 	Step    string
 	Done    bool
 	Message string
+	// pending is a step that is not ready because an object it waits for does not exist.
+	pending bool
 }
 
 // Pass applies each step in order and returns at the first step whose waits do not pass, so a controller can
@@ -66,6 +68,21 @@ func Check(ctx context.Context, c kube.Cluster, steps []kube.Step) (Progress, er
 	return done(steps), nil
 }
 
+// CheckApplied is Check over the steps that were applied: a step with a wait whose object does not exist is pending,
+// not failed, and the steps after it are checked still.
+func CheckApplied(ctx context.Context, c kube.Cluster, steps []kube.Step) (Progress, error) {
+	for _, step := range steps {
+		p, err := wait(ctx, c, step)
+		switch {
+		case err != nil:
+			return p, err
+		case !p.Done && !p.pending:
+			return p, nil
+		}
+	}
+	return done(steps), nil
+}
+
 // wait reports Done when every wait of the step passes, and otherwise which one does not.
 func wait(ctx context.Context, c kube.Cluster, step kube.Step) (Progress, error) {
 	for _, w := range step.Wait {
@@ -74,7 +91,10 @@ func wait(ctx context.Context, c kube.Cluster, step kube.Step) (Progress, error)
 			return Progress{}, fmt.Errorf("step %s: %w", step.Name, err)
 		}
 		if !ready {
-			return Progress{Step: step.Name, Message: fmt.Sprintf("waiting for %s %s: %s", w.Kind, objectName(w), reason)}, nil
+			return Progress{
+				Step: step.Name, Message: fmt.Sprintf("waiting for %s %s: %s", w.Kind, objectName(w), reason),
+				pending: reason == kube.NotFound,
+			}, nil
 		}
 	}
 	return Progress{Step: step.Name, Done: true}, nil

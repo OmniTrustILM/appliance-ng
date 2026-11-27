@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { Loading } from './components/Spinner';
 import { api, setCsrfToken, setUnauthorizedHandler } from './api/client';
 import { attempt } from './setup/failure';
@@ -79,10 +79,14 @@ export function useSessionControl() {
   return { signIn, signOut };
 }
 
-/** Shows children to a signed-in user and sends anyone else to sign-in. */
+/** What sign-in is sent: the page to open again once signed in. */
+export type SignInState = { returnTo?: string };
+
+/** Shows children to a signed-in user and sends anyone else to sign-in, to come back to this page. */
 export function RequireSession({ children }: Readonly<{ children: ReactNode }>) {
   const session = useSession();
+  const { pathname } = useLocation();
   if (session.state === 'loading') return <Loading />;
-  if (session.state === 'signedOut') return <Navigate to="/signin" replace />;
+  if (session.state === 'signedOut') return <Navigate to="/signin" replace state={{ returnTo: pathname } satisfies SignInState} />;
   return children;
 }

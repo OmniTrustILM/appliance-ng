@@ -1,8 +1,11 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RequireSession, SessionProvider } from '../../session';
 import { hang, stubApi } from '../../setup/test-utils';
-import { UpdatesPage, checkTimeoutMs, runningRefreshMs } from './UpdatesPage';
+import { SignInPage } from '../../signin/SignInPage';
+import { UpdatesPage, checkTimeoutMs, maxBackoffMs, runningRefreshMs } from './UpdatesPage';
 
 const UPDATES = 'GET /appliance/api/v1/updates';
 const MB = 1024 * 1024;
@@ -389,7 +392,7 @@ function progress(over: object = {}) {
 }
 
 describe('UpdatesPage platform update', () => {
-  it('offers Install only for a loaded platform bundle that can be installed', async () => {
+  it('offers Install only for a loaded bundle that can be installed', async () => {
     stubApi({
       [UPDATES]: [200, updates({
         available: [platform],
@@ -398,7 +401,8 @@ describe('UpdatesPage platform update', () => {
     });
     render(<UpdatesPage />);
     expect(await screen.findByRole('button', { name: 'Install 2.1.0' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /^install/i })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Install 1.3.0' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^install/i })).toHaveLength(2);
   });
 
   it('says before the update that a backup comes first and that the way back loses the data since', async () => {
@@ -525,5 +529,192 @@ describe('UpdatesPage platform update', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Install 2.1.0' }));
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Install' }));
     expect(await screen.findByText(/cannot be reached/i)).toBeInTheDocument();
+  });
+});
+
+const SYSTEM = 'POST /appliance/api/v1/updates/system';
+const loadedSystem = { ...system, loadedAt: '2026-11-24T10:00:00Z' };
+
+function systemProgress(over: object = {}) {
+  return { kind: 'system', from: '1.2.0', to: '1.3.0', step: 'backup', startedAt: '2026-11-24T10:00:00Z', pointOfNoReturn: false, ...over };
+}
+
+async function openSystemDialog() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Install 1.3.0' }));
+  return screen.getByRole('dialog', { name: /install system 1\.3\.0/i });
+}
+
+describe('UpdatesPage system update', () => {
+  it('announces the downtime and the point of no return before starting, and sends nothing on Cancel', async () => {
+    const { sent } = stubApi({ [UPDATES]: [200, updates({ loaded: [loadedSystem] })] });
+    render(<UpdatesPage />);
+    const dialog = await openSystemDialog();
+    expect(dialog).toHaveTextContent(/about 10 minutes of downtime/i);
+    expect(dialog).toHaveTextContent(/manager restarts, then the node reboots/i);
+    expect(dialog).toHaveTextContent(/waits for the appliance and asks you to sign in again once it is back/i);
+    expect(dialog).toHaveTextContent(/does not come back healthy on the new talos, talos is rolled back/i);
+    expect(dialog).not.toHaveTextContent(/before kubernetes is upgraded/i);
+    expect(dialog).toHaveTextContent(/backup to every backup target first/i);
+    expect(dialog).toHaveTextContent(/restore .* onto a fresh appliance of the previous release/i);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(sent[SYSTEM]).toBeUndefined();
+  });
+
+  it('starts the confirmed update and shows its steps with the point of no return marked at Kubernetes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let update: object | undefined;
+    const { sent } = stubApi({
+      [UPDATES]: () => [200, updates({ loaded: [loadedSystem], update })],
+      [SYSTEM]: () => {
+        update = systemProgress();
+        return [202];
+      },
+    });
+    render(<UpdatesPage />);
+    await openSystemDialog();
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /install/i }));
+    expect(sent[SYSTEM]).toEqual([{ version: '1.3.0', confirm: true }]);
+    expect(await screen.findByText(/updating the system from 1\.2\.0 to 1\.3\.0/i)).toBeInTheDocument();
+    const steps = screen.getByRole('list', { name: 'Steps of the system update' });
+    expect(within(steps).getAllByRole('listitem')).toHaveLength(7);
+    expect(within(steps).getByText(/taking a backup/i).closest('li')).toHaveAttribute('aria-current', 'step');
+    expect(within(steps).getByText(/upgrading Kubernetes/i).closest('li')).toHaveTextContent(/point of no return/i);
+    expect(screen.queryByText(/past the point of no return/i)).not.toBeInTheDocument();
+    update = systemProgress({ step: 'addons', pointOfNoReturn: true });
+    await act(async () => { await vi.advanceTimersByTimeAsync(runningRefreshMs); });
+    expect(await screen.findByText(/past the point of no return/i)).toHaveTextContent(/restore .* onto a fresh appliance of the previous release/i);
+    update = systemProgress({ step: 'done', pointOfNoReturn: true });
+    await act(async () => { await vi.advanceTimersByTimeAsync(runningRefreshMs); });
+    expect(await screen.findByText(/the system was updated to 1\.3\.0/i)).toBeInTheDocument();
+  });
+
+  it('keeps polling through the restart with a growing delay, says so, and goes on once the appliance answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let calls = 0;
+    const { mock } = stubApi({
+      [UPDATES]: () => {
+        calls++;
+        if (calls === 1) return [200, updates({ loaded: [loadedSystem], update: systemProgress({ step: 'talos' }) })];
+        if (calls <= 4) return Promise.reject(new TypeError('offline'));
+        return [200, updates({ loaded: [loadedSystem], update: systemProgress({ step: 'done', pointOfNoReturn: true }) })];
+      },
+    });
+    const signedOut = vi.fn();
+    const { setUnauthorizedHandler } = await import('../../api/client');
+    setUnauthorizedHandler(signedOut);
+    render(<UpdatesPage />);
+    expect(await screen.findByText(/updating the system from 1\.2\.0/i)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(runningRefreshMs); });
+    await vi.waitFor(() => expect(calls).toBe(2));
+    expect(await screen.findByText(/the appliance is restarting\. this page waits until it is back, then asks you to sign in again/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cannot be reached/i)).not.toBeInTheDocument();
+    // The delay between failed reads doubles up to a limit: 10, 20 and then 30 seconds.
+    for (const [ms, reads] of [[2 * runningRefreshMs, 3], [4 * runningRefreshMs, 4], [maxBackoffMs, 5]]) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(ms - 1000); });
+      expect(calls).toBe(reads - 1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      await vi.waitFor(() => expect(calls).toBe(reads));
+    }
+    expect(await screen.findByText(/the system was updated to 1\.3\.0/i)).toBeInTheDocument();
+    expect(screen.queryByText(/restarting/i)).not.toBeInTheDocument();
+    expect(signedOut).not.toHaveBeenCalled();
+    const reads = mock.mock.calls.map(([request]) => request).filter((request) => request.method === 'GET' && request.url.endsWith('/updates'));
+    expect(reads.slice(1).map((request) => request.headers.get('X-Background-Refresh'))).toEqual(reads.slice(1).map(() => '1'));
+  });
+
+  it('still says the appliance cannot be reached when no system update runs', async () => {
+    let calls = 0;
+    stubApi({ [UPDATES]: () => (++calls === 1 ? [200, updates({ update: systemProgress({ step: 'done' }) })] : Promise.reject(new TypeError('offline'))) });
+    render(<UpdatesPage />);
+    expect(await screen.findByText(/the system was updated/i)).toBeInTheDocument();
+    expect(screen.queryByText(/restarting/i)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['managerDidNotStart', /undone before talos changed.*previous release/i],
+    ['talosUpgradeRefused', /undone before talos changed.*previous release/i],
+    ['talosNotRebooted', /handed back to the previous release.*next reboot may start the new talos/i],
+    ['talosInstalledNotRebooted', /new talos is installed.*next reboot starts it, without the health check/i],
+    ['healthCheckFailed', /talos was rolled back/i],
+    ['talosRollbackFailed', /rollback of talos did not take.*runs the new talos/i],
+    ['backupFailed', /backup to every target did not complete/i],
+    ['strange', /the manager log has the details/i],
+  ])('explains a system update that failed with %s', async (message, text) => {
+    stubApi({ [UPDATES]: [200, updates({ update: systemProgress({ step: 'talos', message }) })] });
+    render(<UpdatesPage />);
+    expect(await screen.findByText(/the update to 1\.3\.0 failed/i)).toHaveTextContent(text);
+  });
+
+  it('names the health check, not the rollback, as the step a failed health check failed at', async () => {
+    stubApi({ [UPDATES]: [200, updates({ update: systemProgress({ step: 'rolledBack', message: 'healthCheckFailed' }) })] });
+    render(<UpdatesPage />);
+    const failed = await screen.findByText(/the update to 1\.3\.0 failed/i);
+    expect(failed).toHaveTextContent(/failed while checking that the node is healthy\. .*talos was rolled back/i);
+    expect(failed).not.toHaveTextContent(/rolling talos back/i);
+  });
+
+  it('gives the way back of a failed update past the point of no return', async () => {
+    stubApi({ [UPDATES]: [200, updates({ update: systemProgress({ step: 'kubernetes', message: 'failed', pointOfNoReturn: true }) })] });
+    render(<UpdatesPage />);
+    expect(await screen.findByText(/past the point of no return/i)).toHaveTextContent(/restore .* onto a fresh appliance of the previous release/i);
+  });
+
+  it('asks to sign in again once the appliance is back and returns to the Updates page', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let calls = 0;
+    stubApi({
+      'GET /appliance/api/v1/session': [200, { user: 'admin', csrfToken: 'token-0' }],
+      [UPDATES]: () => {
+        calls++;
+        if (calls === 1) return [200, updates({ loaded: [loadedSystem], update: systemProgress({ step: 'talos' }) })];
+        if (calls === 2) return Promise.reject(new TypeError('offline'));
+        // The restarted manager no longer knows the session.
+        if (calls === 3) return [401, { code: 'unauthorized', message: 'x' }];
+        return [200, updates({ update: systemProgress({ step: 'done', pointOfNoReturn: true }) })];
+      },
+      'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+      'GET /appliance/api/v1/status': [200, { setup: 'complete', conditions: [], versions: {}, rebootRequired: false }],
+      'GET /appliance/api/v1/recovery-kit': [200, { issued: true, confirmed: true }],
+    });
+    render(
+      <MemoryRouter initialEntries={['/updates']}>
+        <SessionProvider>
+          <Routes>
+            <Route path="/updates" element={<RequireSession><UpdatesPage /></RequireSession>} />
+            <Route path="/signin" element={<SignInPage />} />
+            <Route path="/" element={<p>status page</p>} />
+          </Routes>
+        </SessionProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(/updating the system from 1\.2\.0/i)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(runningRefreshMs); });
+    expect(await screen.findByText(/the appliance is restarting/i)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2 * runningRefreshMs); });
+    expect(await screen.findByRole('heading', { name: 'Sign in to the appliance' })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('User name'), 'admin');
+    await userEvent.type(screen.getByLabelText('Password'), 'correct horse battery');
+    await userEvent.type(screen.getByLabelText('Authenticator code'), '123 456');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText(/the system was updated to 1\.3\.0/i)).toBeInTheDocument();
+    expect(screen.queryByText('status page')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [409, 'kubernetes_older_than_running', /kubernetes is older than the one that runs/i],
+    [409, 'bundle_unavailable', /no longer on the appliance\. load the bundle again/i],
+    [409, 'invalid_bundle', /carries no installer, manager or etcd image/i],
+    [409, 'kubernetes_minor_skip', /more than one minor version above.*releases in between first/i],
+    [409, 'update_running', /another update is running/i],
+    [409, 'blocked', /cannot be installed on what runs/i],
+    [404, 'not_found', /^the system bundle is not loaded\.$/i],
+  ])('explains a system update refused with %i %s', async (status, code, text) => {
+    stubApi({ [UPDATES]: [200, updates({ loaded: [loadedSystem] })], [SYSTEM]: [status, { code, message: 'x' }] });
+    render(<UpdatesPage />);
+    await openSystemDialog();
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /install/i }));
+    expect(await screen.findByText(text)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

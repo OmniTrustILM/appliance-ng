@@ -1,5 +1,5 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { api } from '../api/client';
 import ilmColor from '../assets/brand/ilm-color.svg';
 import ilmWhite from '../assets/brand/ilm-white.svg';
@@ -7,7 +7,7 @@ import { Alert } from '../components/Alert';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Field } from '../components/Field';
-import { useSessionControl } from '../session';
+import { useSessionControl, type SignInState } from '../session';
 import { attempt, failureMessage, unreachable } from '../setup/failure';
 
 /** One message for every failed sign-in, so that it never tells which of the three was wrong. */
@@ -41,6 +41,7 @@ export function SignInPage() {
   const [busy, setBusy] = useState(false);
   const { signIn } = useSessionControl();
   const navigate = useNavigate();
+  const returnTo = (useLocation().state as SignInState | null)?.returnTo;
 
   // Counts the lock-out down; the effect restarts with each new value and stops when the page closes.
   useEffect(() => {
@@ -59,7 +60,9 @@ export function SignInPage() {
     const { response, data, error } = result;
     if (response.ok && data) {
       signIn(user, data.csrfToken);
-      return navigate(await startPage());
+      // The page whose session ended opens again, unless sign-in has to open another one.
+      const start = await startPage();
+      return navigate(start === '/' && returnTo ? returnTo : start);
     }
     setPassword('');
     setTotp('');

@@ -273,3 +273,23 @@ func TestPassHoldsAroundEachStep(t *testing.T) {
 		t.Errorf("err = %v, calls %v; want the pass to stop before applying", err, c.calls)
 	}
 }
+
+// TestCheckAppliedLeavesNewStepsPending checks only the steps whose objects exist: a step that was never applied is
+// pending, and the steps after it are still checked.
+func TestCheckAppliedLeavesNewStepsPending(t *testing.T) {
+	c := &fakeCluster{unready: map[string]string{"cm": kube.NotFound}}
+	if p, err := CheckApplied(context.Background(), c, steps); err != nil || p != (Progress{Step: "cnpg", Done: true}) {
+		t.Errorf("progress = %+v, %v, want done", p, err)
+	}
+	c = &fakeCluster{unready: map[string]string{"cm": "0/1 available"}}
+	want := Progress{Step: "cert-manager", Message: "waiting for Deployment cert-manager/cm: 0/1 available"}
+	if p, err := CheckApplied(context.Background(), c, steps); err != nil || p != want {
+		t.Errorf("progress = %+v, %v, want %+v", p, err, want)
+	}
+	if _, err := CheckApplied(context.Background(), &fakeCluster{readyErr: errors.New("boom")}, steps); err == nil {
+		t.Error("a failed check passed")
+	}
+	if len(c.calls) != 0 {
+		t.Errorf("calls = %v, want none", c.calls)
+	}
+}

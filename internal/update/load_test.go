@@ -176,6 +176,18 @@ func TestLoadChecksSpaceBeforeOpening(t *testing.T) {
 	}
 }
 
+// TestLoadAcceptsImagesOfAnotherMirroredRegistry loads a platform bundle whose images come from a registry that is
+// mirrored although the release pins no image there.
+func TestLoadAcceptsImagesOfAnotherMirroredRegistry(t *testing.T) {
+	e := newEnv(t)
+	e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
+	e.upstreams = []string{"ghcr.io", sourceHost}
+	path := e.upload(e.build(e.platform("1.1.0", "2.20.0")))
+	if _, err := e.loader().Load(t.Context(), release.BundlePlatform, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestLoadStoresTheBundle pushes the bundle into zot, stores its files and notes and records it.
 func TestLoadStoresTheBundle(t *testing.T) {
 	e := newEnv(t)
@@ -264,6 +276,35 @@ func TestLoadKeepsCurrentAndPrevious(t *testing.T) {
 	for _, b := range e.appliance().Status.Updates.Loaded {
 		if b.Version == "1.2.0" && b.Blocked != update.SameVersion {
 			t.Errorf("the running bundle is listed as %q, want %q", b.Blocked, update.SameVersion)
+		}
+	}
+}
+
+// TestLoadUnblocksAFailedSystemUpdate lists the running system bundle as installable while a system update to it
+// failed past its point of no return, so that it can run again.
+func TestLoadUnblocksAFailedSystemUpdate(t *testing.T) {
+	e := newEnv(t)
+	l := e.loader()
+	load := func(version string) {
+		t.Helper()
+		if _, err := l.Load(t.Context(), release.BundleSystem, e.upload(e.build(e.system(version)))); err != nil {
+			t.Fatalf("load %s: %v", version, err)
+		}
+	}
+	load("1.2.0")
+	e.setVersions(v1alpha1.Versions{Appliance: "1.2.0", Operator: "1.0.0", ILM: "2.19.0"})
+	a := e.appliance()
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: release.BundleSystem, From: "1.1.0", To: "1.2.0", Step: update.StepKubernetes, Message: update.Failed,
+		PointOfNoReturn: true, StartedAt: metav1.Now(),
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	load("1.3.0")
+	for _, b := range e.appliance().Status.Updates.Loaded {
+		if b.Version == "1.2.0" && b.Blocked != "" {
+			t.Errorf("the bundle of the failed update is listed as %q, want installable", b.Blocked)
 		}
 	}
 }

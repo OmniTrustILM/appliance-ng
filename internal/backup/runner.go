@@ -459,6 +459,10 @@ func (r *Runner) admit(ctx context.Context, reason string, o runOptions) (*v1alp
 	r.admission.Lock()
 	a, recipient, err := r.prepare(ctx)
 	r.admission.Unlock()
+	// An unfinished update keeps other backups out also while no job of it runs, as between two managers.
+	if err == nil && reason != RunUpdate && a.Status.Update.Unfinished() {
+		return a, nil, ErrHeld
+	}
 	if err != nil && a != nil {
 		r.refused(ctx, a, o.user, reason, err)
 	}

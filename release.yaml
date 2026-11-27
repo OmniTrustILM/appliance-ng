@@ -26,7 +26,7 @@ addons:
   - { name: ilm-operator, file: ilm-operator.yaml, version: "v1.1.0", source: "https://github.com/OmniTrustILM/operator/releases/download/v1.1.0/ilm-operator.yaml", sha256: "b7f16e99e71a66746e58bf72667fd1e5bd8b84b225a8b23f213e82b36614ee36" }
   - { name: zot, file: zot.yaml, version: "local", source: "local", sha256: "1ceeeb7b154fe0b7701ffb8aa3217c303059e335ca4b7ce9d37420154913a7da" }
   - { name: ilm-edge, file: ilm-edge.yaml, version: "local", source: "local", sha256: "285f95e4430587e27891a5fe49d7d480f220cde49151e563466dfbde37efd4e6" }
-  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "671ce153db0a95e64b9aa23a8372844e1c0f89d80133f1d945ab894a18cee98c" }
+  - { name: appliance-manager, file: manager.yaml, version: "local", source: "local", sha256: "b1dbf2c5a2290431dd9606e1d12b72ab0e6f13080aa329fb9dbfb156245b2bc8" }
   - { name: platform, file: platform.yaml, version: "2.20.0", source: "local", sha256: "c85bb9f48bb14f757bbe0666bd98d0b203e718dc4965ff3065c28a63b2d16231" }
 # Helm charts the manager renders itself; the file is relative to addons/.
 charts:

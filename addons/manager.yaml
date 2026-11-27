@@ -162,13 +162,20 @@ subjects:
 # replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
 # Failed pods, which pile up while the node shuts down. A backup of an external database runs pg_dump in a short-lived
 # pod it creates, execs into and deletes; an NFS backup target is written the same way, by a pod with a claim on the
-# target's volume.
+# target's volume. A system update applies the manager's own manifest, its Talos ServiceAccount included.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: appliance-manager
   namespace: appliance-system
 rules:
+  - apiGroups: [talos.dev]
+    resources: [serviceaccounts]
+    resourceNames: [appliance-manager]
+    verbs: [get, patch]
+  - apiGroups: [talos.dev]
+    resources: [serviceaccounts]
+    verbs: [create]
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, list, watch, create, update, delete]
@@ -187,6 +194,32 @@ kind: RoleBinding
 metadata:
   name: appliance-manager
   namespace: appliance-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A system update moves the control plane to a new Kubernetes version one component after the other and waits for each
+# static pod to run ready at its new image. Applying the manager's own manifest needs nothing beyond the ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: kube-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -1687,12 +1720,38 @@ spec:
                     description: Backup is the name of the backup taken before the
                       update.
                     type: string
+                  bootID:
+                    description: |-
+                      BootID is the boot ID of the node before the reboot a system update waits for: the reboot into the new Talos,
+                      or back into the old one.
+                    type: string
+                  deadline:
+                    description: |-
+                      Deadline is when the wait at the recorded step of a system update gives up: for the manager of the new release
+                      to take the update over, for the node to boot the new Talos and come back healthy, or to boot the old Talos
+                      again after a rollback.
+                    format: date-time
+                    type: string
                   from:
                     type: string
                   fromBundle:
                     description: FromBundle is the platform bundle that ran before
                       the update; empty for the release's own platform.
                     type: string
+                  fromILM:
+                    description: |-
+                      FromILM is the ILM version that ran before a platform update, to which a rollback goes back; a rollback keeps
+                      it. Unset in the status of an update recorded before it was kept.
+                    type: string
+                  handBack:
+                    description: |-
+                      HandBack is the fixed reason of a system update that failed before the node booted the new Talos: the manager
+                      of the new release runs the previous manager again, which records the update failed with it.
+                    type: string
+                  installed:
+                    description: Installed is set once a system update installed the
+                      new Talos as the boot entry the next boot boots.
+                    type: boolean
                   kind:
                     enum:
                     - platform
@@ -1704,10 +1763,14 @@ spec:
                       component.
                     type: string
                   pointOfNoReturn:
-                    description: PointOfNoReturn is set once the update has asked
-                      for the new ILM version; from then on only a rollback undoes
-                      it.
+                    description: |-
+                      PointOfNoReturn is set once the update has asked for the new ILM version, or the health check of a system update
+                      passed; from then on only a rollback, or for a system update a restore onto a fresh appliance, undoes it.
                     type: boolean
+                  previousManager:
+                    description: PreviousManager is the manager image that ran before
+                      a system update applied the manager of the new release.
+                    type: string
                   startedAt:
                     format: date-time
                     type: string

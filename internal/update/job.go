@@ -58,9 +58,17 @@ const (
 
 // Audit actions of an update: its start, and its end with success or a failure at a step.
 const (
-	AuditUpdateStart = "platform-update-start"
-	AuditUpdate      = "platform-update"
+	AuditUpdateStart       = "platform-update-start"
+	AuditUpdate            = "platform-update"
+	AuditSystemUpdateStart = "system-update-start"
+	AuditSystemUpdate      = "system-update"
 )
+
+// auditActions are the start and end audit actions of each kind of update.
+var auditActions = map[string][2]string{
+	release.BundlePlatform: {AuditUpdateStart, AuditUpdate},
+	release.BundleSystem:   {AuditSystemUpdateStart, AuditSystemUpdate},
+}
 
 // Defaults of JobDeps.
 const (
@@ -68,7 +76,15 @@ const (
 	WaitTimeout = 60 * time.Minute
 	// OperatorTimeout bounds the wait for the ILM operator of the bundle to roll out.
 	OperatorTimeout = 30 * time.Minute
-	defaultPoll     = 10 * time.Second
+	// HealthTimeout bounds the health check after the reboot into the new Talos, from the reboot on.
+	HealthTimeout = 20 * time.Minute
+	// ComponentTimeout bounds the wait for a Kubernetes component to run healthy at its new version.
+	ComponentTimeout = 10 * time.Minute
+	// HandOverTimeout bounds the wait for the manager of the new release to take a system update over.
+	HandOverTimeout = 15 * time.Minute
+	// RebootRetry is how long a node may keep its boot after a reboot into the new Talos before it is rebooted again.
+	RebootRetry = 5 * time.Minute
+	defaultPoll = 10 * time.Second
 )
 
 // What runs when an update is refused, for the manager and the log.
@@ -110,13 +126,30 @@ type ImageTagger interface {
 	TagImages(ctx context.Context, images []bundle.ImageRef) error
 }
 
+// TalosNode is the Talos API a system update drives.
+type TalosNode interface {
+	Upgrade(ctx context.Context, image string) error
+	RebootPowercycle(ctx context.Context) error
+	SetInstallerImage(ctx context.Context, image string) error
+	Rollback(ctx context.Context) error
+	ExtensionVersion(ctx context.Context, name string) (string, error)
+	Versions(ctx context.Context) (talos, kubernetes string, err error)
+	SetKubernetesImages(ctx context.Context, component, image string) error
+	PullSystemImage(ctx context.Context, image string) error
+}
+
+// Applier server-side-applies every document of a multi-document YAML.
+type Applier interface {
+	Apply(ctx context.Context, docs []byte) error
+}
+
 // BundleFetcher loads a bundle from the online repository.
 type BundleFetcher interface {
 	Fetch(ctx context.Context, kind, version string) error
 }
 
-// JobDeps is what Jobs need. Left unset, Arch, Now, Space, Poll, OperatorTimeout and WaitTimeout take the manager's
-// arch, time.Now, storage.Check and the defaults above.
+// JobDeps is what Jobs need. Left unset, Arch, Now, Space, Poll, OperatorTimeout, WaitTimeout, HealthTimeout,
+// ComponentTimeout and HandOverTimeout take the manager's arch, time.Now, storage.Check and the defaults above.
 type JobDeps struct {
 	// Client reads and writes the Appliance and reads the Platform and the ILM operator's Deployment.
 	Client  client.Client
@@ -139,6 +172,20 @@ type JobDeps struct {
 	Poll            time.Duration
 	OperatorTimeout time.Duration
 	WaitTimeout     time.Duration
+
+	// Version is the manager's own version: a system update runs past its manager step only in the manager of the
+	// version it installs.
+	Version string
+	// Talos returns the Talos API of the node.
+	Talos func(ctx context.Context) (TalosNode, error)
+	// Manifests applies the manager's manifest of a system bundle.
+	Manifests Applier
+	// Console tells whether the console answers.
+	Console          func(ctx context.Context) error
+	HealthTimeout    time.Duration
+	ComponentTimeout time.Duration
+	HandOverTimeout  time.Duration
+	RebootRetry      time.Duration
 }
 
 func (d *JobDeps) defaults() {
@@ -153,6 +200,18 @@ func (d *JobDeps) defaults() {
 	}
 	if d.WaitTimeout == 0 {
 		d.WaitTimeout = WaitTimeout
+	}
+	if d.HealthTimeout == 0 {
+		d.HealthTimeout = HealthTimeout
+	}
+	if d.ComponentTimeout == 0 {
+		d.ComponentTimeout = ComponentTimeout
+	}
+	if d.HandOverTimeout == 0 {
+		d.HandOverTimeout = HandOverTimeout
+	}
+	if d.RebootRetry == 0 {
+		d.RebootRetry = RebootRetry
 	}
 }
 
@@ -218,6 +277,12 @@ func (j *Jobs) end() {
 // platform, when the bundle is neither loaded nor found online, cannot be installed, or needs more free space than
 // the data volume has.
 func (j *Jobs) StartPlatform(ctx context.Context, to, user string) error {
+	return j.startUpdate(ctx, user, func(ctx context.Context) (v1alpha1.UpdateStatus, error) { return j.admit(ctx, to) })
+}
+
+// startUpdate takes the shared admission, admits the update admit returns and runs it in the background, started by
+// user.
+func (j *Jobs) startUpdate(ctx context.Context, user string, admit func(ctx context.Context) (v1alpha1.UpdateStatus, error)) error {
 	if !j.begin() {
 		return &Error{Reason: UpdateRunning, err: errUpdateRunning}
 	}
@@ -226,7 +291,7 @@ func (j *Jobs) StartPlatform(ctx context.Context, to, user string) error {
 		j.end()
 		return j.holdRefusal(ctx, err)
 	}
-	st, err := j.admit(ctx, to)
+	st, err := admit(ctx)
 	if err == nil {
 		err = updateStatus(ctx, j.deps.Client, func(s *v1alpha1.ApplianceStatus) { s.Update = &st })
 	}
@@ -235,8 +300,8 @@ func (j *Jobs) StartPlatform(ctx context.Context, to, user string) error {
 		j.end()
 		return err
 	}
-	j.auditEntry(user, AuditUpdateStart, auditOK, st, "")
-	j.deps.Log.Info("platform update started", "from", st.From, "to", st.To)
+	j.auditEntry(user, auditActions[st.Kind][0], auditOK, st, "")
+	j.deps.Log.Info("update started", "kind", st.Kind, "from", st.From, "to", st.To)
 	j.start(ctx, &job{status: st, user: user, release: release})
 	return nil
 }
@@ -270,7 +335,7 @@ func (j *Jobs) admit(ctx context.Context, to string) (v1alpha1.UpdateStatus, err
 		return v1alpha1.UpdateStatus{}, err
 	}
 	cur := current(a, j.deps.Release, j.deps.Arch)
-	info, ok := target(a.Status.Updates, to, j.deps.Arch)
+	info, ok := target(a.Status.Updates, release.BundlePlatform, to, j.deps.Arch, true)
 	if !ok {
 		return v1alpha1.UpdateStatus{}, &Error{Reason: NotFound}
 	}
@@ -281,16 +346,24 @@ func (j *Jobs) admit(ctx context.Context, to string) (v1alpha1.UpdateStatus, err
 	if err := j.refuseOperatorDowngrade(a, info); err != nil {
 		return v1alpha1.UpdateStatus{}, err
 	}
-	if info.SizeBytes <= 0 {
-		return v1alpha1.UpdateStatus{}, &Error{Reason: InvalidMetadata}
-	}
-	if err := j.deps.Space(j.deps.Dir, uint64(info.SizeBytes)); err != nil { //nolint:gosec // checked positive
-		return v1alpha1.UpdateStatus{}, spaceError(err)
+	if err := j.refuseSpace(info); err != nil {
+		return v1alpha1.UpdateStatus{}, err
 	}
 	return v1alpha1.UpdateStatus{
 		Kind: release.BundlePlatform, From: runningVersion(cur, release.BundlePlatform), FromBundle: cur.platformBundle,
-		To: to, Step: StepBackup, StartedAt: metav1.NewTime(j.deps.Now()),
+		FromILM: a.Spec.Platform.ILMVersion, To: to, Step: StepBackup, StartedAt: metav1.NewTime(j.deps.Now()),
 	}, nil
+}
+
+// refuseSpace refuses the bundle info when its size is unknown or the data volume has less than twice its size free.
+func (j *Jobs) refuseSpace(info v1alpha1.BundleInfo) error {
+	if info.SizeBytes <= 0 {
+		return &Error{Reason: InvalidMetadata}
+	}
+	if err := j.deps.Space(j.deps.Dir, uint64(info.SizeBytes)); err != nil { //nolint:gosec // checked positive
+		return spaceError(err)
+	}
+	return nil
 }
 
 // refuseOperatorDowngrade refuses installing the platform bundle info when the add-on pass would then apply an older
@@ -327,14 +400,19 @@ func (j *Jobs) refuseBusy(ctx context.Context, a *v1alpha1.Appliance) error {
 	return nil
 }
 
-// target is the platform bundle version for arch among the loaded bundles, else among those found online.
-func target(u *v1alpha1.UpdatesStatus, version, arch string) (v1alpha1.BundleInfo, bool) {
+// target is the bundle of kind and version for arch among the loaded bundles, else, when online, among those found
+// online.
+func target(u *v1alpha1.UpdatesStatus, kind, version, arch string, online bool) (v1alpha1.BundleInfo, bool) {
 	if u == nil {
 		return v1alpha1.BundleInfo{}, false
 	}
-	for _, list := range [][]v1alpha1.BundleInfo{u.Loaded, u.Available} {
+	lists := [][]v1alpha1.BundleInfo{u.Loaded}
+	if online {
+		lists = append(lists, u.Available)
+	}
+	for _, list := range lists {
 		for _, b := range list {
-			if b.Kind == release.BundlePlatform && b.Version == version && b.Arch == arch {
+			if b.Kind == kind && b.Version == version && b.Arch == arch {
 				return b, true
 			}
 		}
@@ -360,12 +438,13 @@ func (j *Jobs) Resume(ctx context.Context) error {
 		j.end()
 		return j.holdRefusal(ctx, err)
 	}
-	j.deps.Log.Info("platform update resumed", "from", st.From, "to", st.To, "step", st.Step)
+	j.deps.Log.Info("update resumed", "kind", st.Kind, "from", st.From, "to", st.To, "step", st.Step)
 	j.start(ctx, &job{status: *st, user: audit.SystemUser, release: release})
 	return nil
 }
 
-// interrupted is the platform update the status shows unfinished; nil without one. It refuses while a restore has
+// interrupted is the update the status shows unfinished that this manager runs; nil without one, and for a system
+// update past its manager step that waits for the manager of the version it installs. It refuses while a restore has
 // not ended, which a restart may have cut off as well.
 func (j *Jobs) interrupted(ctx context.Context) (*v1alpha1.UpdateStatus, error) {
 	a, err := j.appliance(ctx)
@@ -377,7 +456,7 @@ func (j *Jobs) interrupted(ctx context.Context) (*v1alpha1.UpdateStatus, error) 
 	}
 	st := a.Status.Update
 	switch {
-	case !st.Unfinished() || st.Kind != release.BundlePlatform:
+	case !st.Unfinished() || stepTables[st.Kind] == nil || !j.runs(st):
 		return nil, nil
 	case a.Status.Restore.Unsettled():
 		return nil, &Error{Reason: RestoreRunning, err: errRestoreRunning}
@@ -391,7 +470,7 @@ func (j *Jobs) interrupted(ctx context.Context) (*v1alpha1.UpdateStatus, error) 
 func (j *Jobs) KeepResuming(ctx context.Context) error {
 	for {
 		if err := j.Resume(ctx); err != nil {
-			j.deps.Log.Warn("could not resume the platform update", "reason", Reason(err), "error", err)
+			j.deps.Log.Warn("could not resume the update", "reason", Reason(err), "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -409,9 +488,19 @@ func (j *Jobs) run(ctx context.Context, jb *job) {
 	defer jb.release()
 	for jb.status.Step != StepDone {
 		step := jb.status.Step
+		if !j.runs(&jb.status) {
+			j.deps.Log.Info("the update waits for the manager of the new release", "kind", jb.status.Kind,
+				"from", jb.status.From, "to", jb.status.To, "step", step, "version", j.deps.Version)
+			return
+		}
 		err := j.do(ctx, jb, step)
+		if errors.Is(err, errHandedOver) {
+			j.deps.Log.Debug("the update step is with the other manager", "kind", jb.status.Kind, "step", step)
+			return
+		}
 		if errors.Is(err, errInterrupted) || err != nil && ctx.Err() != nil {
-			j.deps.Log.Warn("platform update interrupted; it resumes from its recorded step", "step", step, "error", err)
+			j.deps.Log.Warn("update interrupted; it resumes from its recorded step", "kind", jb.status.Kind, "step", step,
+				"error", err)
 			return
 		}
 		if err != nil {
@@ -424,15 +513,19 @@ func (j *Jobs) run(ctx context.Context, jb *job) {
 
 // do runs step of jb and records the next step.
 func (j *Jobs) do(ctx context.Context, jb *job, step string) error {
-	run, ok := platformSteps[step]
+	table := stepTables[jb.status.Kind]
+	run, ok := j.stepFunc(jb, step)
 	if !ok {
 		return &Error{Reason: Failed, step: step, err: errors.New("unknown update step")}
 	}
+	st := jb.status
+	j.deps.Log.Info("update step started", "kind", st.Kind, "from", st.From, "to", st.To, "step", step)
 	if err := run(j, ctx, jb); err != nil {
 		return err
 	}
+	j.deps.Log.Info("update step done", "kind", st.Kind, "from", st.From, "to", st.To, "step", step)
 	next := jb.status
-	next.Step = nextStep(step)
+	next.Step = table.next(step)
 	if next.Step != StepDone {
 		if err := j.record(ctx, next); err != nil {
 			return err
@@ -448,7 +541,7 @@ func (j *Jobs) do(ctx context.Context, jb *job, step string) error {
 func (j *Jobs) failed(ctx context.Context, jb *job, step string, err error) {
 	reason := Reason(err)
 	jb.status.Message = reason
-	goBack := !jb.status.PointOfNoReturn && j.keepsOperator(jb.status)
+	goBack := jb.status.Kind == release.BundlePlatform && !jb.status.PointOfNoReturn && j.keepsOperator(jb.status)
 	rerr := j.writeStatus(ctx, func(s *v1alpha1.ApplianceStatus) {
 		st := jb.status
 		s.Update = &st
@@ -457,12 +550,12 @@ func (j *Jobs) failed(ctx context.Context, jb *job, step string, err error) {
 		}
 	})
 	if rerr != nil {
-		j.deps.Log.Error("could not record the failed platform update; it resumes from its recorded step", "step", step,
-			"reason", reason, "error", rerr)
+		j.deps.Log.Error("could not record the failed update; it resumes from its recorded step", "kind", jb.status.Kind,
+			"step", step, "reason", reason, "error", rerr)
 		return
 	}
-	j.auditEntry(jb.user, AuditUpdate, auditFailed, jb.status, step)
-	j.deps.Log.Warn("platform update failed", "from", jb.status.From, "to", jb.status.To, "step", step,
+	j.auditEntry(jb.user, auditActions[jb.status.Kind][1], auditFailed, jb.status, step)
+	j.deps.Log.Warn("update failed", "kind", jb.status.Kind, "from", jb.status.From, "to", jb.status.To, "step", step,
 		"reason", reason, "error", err)
 }
 
@@ -477,18 +570,19 @@ func (j *Jobs) keepsOperator(st v1alpha1.UpdateStatus) bool {
 	return err == nil && !older(j.activeOperator(from), j.activeOperator(to))
 }
 
-// finished releases the pins of the platform backups but the update's own and records the update done.
+// finished releases the pins of the backups of the update's kind but the update's own and records the update done.
 func (j *Jobs) finished(ctx context.Context, jb *job) {
-	if err := j.deps.Backups.Unpin(release.BundlePlatform, jb.status.Backup); err != nil {
-		j.deps.Log.Warn("could not release the older pinned backups", "error", err)
+	st := jb.status
+	if err := j.deps.Backups.Unpin(st.Kind, st.Backup); err != nil {
+		j.deps.Log.Warn("could not release the older pinned backups", "kind", st.Kind, "error", err)
 	}
-	if err := j.record(ctx, jb.status); err != nil {
-		j.deps.Log.Error("could not record the finished platform update; it resumes from its recorded step", "to",
-			jb.status.To, "error", err)
+	if err := j.record(ctx, st); err != nil {
+		j.deps.Log.Error("could not record the finished update; it resumes from its recorded step", "kind", st.Kind,
+			"to", st.To, "error", err)
 		return
 	}
-	j.auditEntry(jb.user, AuditUpdate, auditOK, jb.status, "")
-	j.deps.Log.Info("platform update done", "from", jb.status.From, "to", jb.status.To)
+	j.auditEntry(jb.user, auditActions[st.Kind][1], auditOK, st, "")
+	j.deps.Log.Info("update done", "kind", st.Kind, "from", st.From, "to", st.To)
 }
 
 func (j *Jobs) record(ctx context.Context, st v1alpha1.UpdateStatus) error {

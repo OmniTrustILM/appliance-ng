@@ -85,12 +85,18 @@ const updateRefusals: Record<string, string> = {
   last_update_failed: 'The last platform update failed. Roll it back before installing another.',
   operator_older_than_running: "The bundle's ILM operator is older than the one that runs, which is never downgraded.",
   blocked: 'This bundle cannot be installed on what runs.',
+  kubernetes_older_than_running: "The bundle's Kubernetes is older than the one that runs, which is never downgraded.",
   no_space: "The data volume has too little free space for the update: it needs twice the bundle's size.",
   not_found: 'The bundle is neither loaded nor found online.',
+  bundle_unavailable: "The bundle's files are no longer on the appliance. Load the bundle again.",
+  invalid_bundle: 'The bundle carries no installer, manager or etcd image, so it cannot be installed.',
+  kubernetes_minor_skip: "The bundle's Kubernetes is more than one minor version above the one that runs. Install the system releases in between first.",
 };
 
-/** The text of the code an update was refused with; an unknown code gets a general text. */
-export function updateRefusalText(code?: string) {
+/** The text of the code an update of kind was refused with; an unknown code gets a general text. */
+export function updateRefusalText(code?: string, kind?: Bundle['kind']) {
+  // A system bundle is installed only once loaded.
+  if (code === 'not_found' && kind === 'system') return 'The system bundle is not loaded.';
   return (code && updateRefusals[code]) || 'The update could not be started.';
 }
 
@@ -107,7 +113,34 @@ export function stepText(step?: string) {
   return (step && steps[step]) || 'preparing';
 }
 
+const systemSteps: Record<string, string> = {
+  backup: steps.backup,
+  images: steps.images,
+  manager: 'switching to the new manager',
+  talos: 'upgrading Talos and rebooting the node',
+  health: 'checking that the node is healthy',
+  kubernetes: 'upgrading Kubernetes',
+  addons: 'updating the add-ons',
+  rolledBack: 'rolling Talos back',
+};
+
+/** What a system update does at step. */
+export function systemStepText(step?: string) {
+  return (step && systemSteps[step]) || 'preparing';
+}
+
+/** The steps of a system update in order, with what each does. */
+export const systemStepOrder = ['backup', 'images', 'manager', 'talos', 'health', 'kubernetes', 'addons'] as const;
+
+const undone = 'The update was undone before Talos changed, and the appliance runs the previous release.';
+
 const updateFailures: Record<string, string> = {
+  managerDidNotStart: `The manager of the new release did not start in time. ${undone}`,
+  talosUpgradeRefused: `The node refused the Talos upgrade. ${undone}`,
+  talosNotRebooted: 'The node did not boot the new Talos in time, and the update was handed back to the previous release. If Talos was installed already, the next reboot may start the new Talos.',
+  talosInstalledNotRebooted: 'The new Talos is installed, but the node did not reboot into it in time. The next reboot starts it, without the health check of the update.',
+  healthCheckFailed: 'The node did not come back healthy on the new Talos in time. Talos was rolled back and the appliance runs the previous release.',
+  talosRollbackFailed: 'The node did not come back healthy on the new Talos, and the rollback of Talos did not take, so it runs the new Talos.',
   backupFailed: 'The backup to every target did not complete.',
   backupIncomplete: 'The backup does not include the database, which could not be reached. Update once it answers again.',
   bundleUnavailable: 'The bundle is no longer loaded and could not be fetched.',

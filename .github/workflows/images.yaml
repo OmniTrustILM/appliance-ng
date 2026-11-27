@@ -37,6 +37,13 @@ on:
           kept as the platform-update-<arch> artifact; the images artifact is images-<arch>-old-ilm.
         type: string
         default: ''
+      system-update-from:
+        description: >-
+          With bundle-test-key, also sign the system bundle of these images with the throw-away key and build the qcow2
+          of the appliance the system update test starts from, a tag, or test for this commit stamped 0.0.0-test,
+          trusting that key; both are kept as the system-update-<arch> artifact.
+        type: string
+        default: ''
 
 defaults:
   run:
@@ -60,9 +67,11 @@ jobs:
         ports:
           - 5005:5000
     steps:
+      # A system update test from a tag builds that tag.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: ${{ (inputs.system-update-from == '' || inputs.system-update-from == 'test') && 1 || 0 }}
 
       - name: Free disk space
         uses: ./.github/actions/free-disk-space
@@ -181,9 +190,23 @@ jobs:
           COSIGN_PASSWORD='' ./test/boot/bundle.sh "$ARCH" "$RUNNER_TEMP/bundle-key/cosign.key" \
             "out/$ARCH/platform-test.tar"
 
+      # The system bundle carries the installer and the manager this job built and pushed.
+      - name: Sign the system update test's bundle
+        if: inputs.bundle-test-key && inputs.system-update-from != ''
+        run: |
+          KIND=system COSIGN_PASSWORD='' ./test/boot/bundle.sh "$ARCH" "$RUNNER_TEMP/bundle-key/cosign.key" \
+            "out/$ARCH/system-update.tar"
+
       - name: Delete the throw-away bundle key
         if: always() && inputs.bundle-test-key
         run: rm -rf -- "$RUNNER_TEMP/bundle-key"
+
+      # A second image build in a throw-away worktree; it shares the image layer cache of the first.
+      - name: Build the appliance the system update test starts from
+        if: inputs.bundle-test-key && inputs.system-update-from != ''
+        env:
+          FROM: ${{ inputs.system-update-from }}
+        run: ./test/boot/previous.sh "$FROM" "$ARCH"
 
       # The boot test answers the wizard and changes settings in Chromium; the browser leaves no trace, video or
       # screenshot to upload. Only lock-file packages run here, after the registry log-in: CI type-checks the test
@@ -241,6 +264,17 @@ jobs:
         with:
           name: bundle-test-${{ matrix.arch }}
           path: out/${{ matrix.arch }}/platform-test.tar
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload the system update test's appliance and bundle
+        if: inputs.bundle-test-key && inputs.system-update-from != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: system-update-${{ matrix.arch }}
+          path: |
+            out/${{ matrix.arch }}/system-update.tar
+            out/${{ matrix.arch }}/previous/
           if-no-files-found: error
           retention-days: 3
 

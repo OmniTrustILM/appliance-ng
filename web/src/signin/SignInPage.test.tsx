@@ -12,10 +12,11 @@ afterEach(() => {
   setCsrfToken(undefined);
 });
 
-function renderPage() {
+function renderPage(returnTo?: string) {
   return render(
-    <MemoryRouter initialEntries={['/signin']}>
+    <MemoryRouter initialEntries={[{ pathname: '/signin', state: returnTo ? { returnTo } : null }]}>
       <Routes>
+        <Route path="/updates" element={<p>updates page</p>} />
         <Route path="/signin" element={<SignInPage />} />
         <Route path="/" element={<p>console page</p>} />
         <Route path="/wizard/" element={<p>wizard page</p>} />
@@ -114,6 +115,20 @@ describe('SignInPage', () => {
     renderPage();
     await fill();
     expect(await screen.findByText('console page')).toBeInTheDocument();
+  });
+
+  it('opens the page whose session ended again, unless setup or a restore needs another', async () => {
+    for (const [setup, page] of [['complete', 'updates page'], ['part2', 'wizard page']]) {
+      stubApi({
+        'POST /appliance/api/v1/session': [200, { csrfToken: 'token-1' }],
+        'GET /appliance/api/v1/status': [200, { setup, conditions: [], versions: {}, rebootRequired: false }],
+        'GET /appliance/api/v1/recovery-kit': [200, { issued: true, confirmed: true }],
+      });
+      const { unmount } = renderPage('/updates');
+      await fill();
+      expect(await screen.findByText(page)).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('opens the status page when the status cannot be read', async () => {

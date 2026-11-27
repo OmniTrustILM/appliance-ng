@@ -102,7 +102,8 @@ func (c *Client) pushImage(ctx context.Context, ref name.Digest, img v1.Image, r
 }
 
 // splitRef splits an image reference as release.yaml writes it, [<host>/]<path>[:<tag>][@<digest>], into the repository
-// and the tag. The repository is the name in the registry, as containerd resolves it (release.Repository).
+// and the tag. The repository is the name in the registry, as containerd resolves it (release.Repository), under the
+// registry host's mirror path.
 func splitRef(ref string) (repo, tag string, err error) {
 	repo, _, _ = strings.Cut(ref, "@")
 	if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
@@ -115,7 +116,7 @@ func splitRef(ref string) (repo, tag string, err error) {
 	if host == "" || path == "" || strings.HasSuffix(path, "/") {
 		return "", "", fmt.Errorf("the image reference %q has no repository", ref)
 	}
-	return repo, tag, nil
+	return release.MirrorPath(host) + "/" + path, tag, nil
 }
 
 // TagImages tags each image the registry holds by its digest under its upstream name with the tag of its reference,

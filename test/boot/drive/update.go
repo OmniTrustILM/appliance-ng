@@ -16,9 +16,16 @@ const (
 	// updateTimeout bounds a platform update after its bundle is loaded, and a rollback: the backup, the images, the
 	// ILM operator and ILM moving to the new version, or the reinstall and the restore.
 	updateTimeout = 45 * time.Minute
-	kindPlatform  = "platform"
-	kindRollback  = "rollback"
+	// systemUpdateTimeout bounds a system update after its bundle is loaded: the backup, the images, the manager, the
+	// Talos install and its reboot, the health gate of up to 20 minutes, Kubernetes and the add-ons.
+	systemUpdateTimeout = 90 * time.Minute
+	kindPlatform        = "platform"
+	kindSystem          = "system"
+	kindRollback        = "rollback"
 )
+
+// versionsTimeout bounds the wait for the status to show the versions of an update once it is done.
+var versionsTimeout = waitTimeout
 
 // updateState is the latest update and whether the last platform update can be rolled back, as GET /updates shows
 // them.
@@ -30,8 +37,8 @@ type updateState struct {
 	}
 }
 
-// platformUpdate signs in, loads the platform bundle in o.bundleFile, installs it and waits until the appliance runs
-// the bundle's ILM version.
+// platformUpdate signs in, loads the bundle in o.bundleFile, installs it and waits until the appliance runs the
+// bundle's versions.
 func platformUpdate(ctx context.Context, o options) error {
 	c, err := managerClient(ctx, o)
 	if err != nil {
@@ -43,8 +50,9 @@ func platformUpdate(ctx context.Context, o options) error {
 	return c.update(ctx, o)
 }
 
-// update uploads the platform bundle in o.bundleFile, waits until it is loaded, starts the update to it and waits
-// until it is done and the status shows the bundle's ILM version.
+// update uploads the bundle of kind o.kind in o.bundleFile, waits until it is loaded, starts the update to it and
+// waits until it is done and the status shows the bundle's ILM version, or for a system bundle its version and the
+// Talos and Kubernetes versions o names.
 func (c *client) update(ctx context.Context, o options) error {
 	f, err := os.Open(o.bundleFile)
 	if err != nil {
@@ -63,6 +71,9 @@ func (c *client) update(ctx context.Context, o options) error {
 	if load.State != loadLoaded {
 		return fmt.Errorf("the bundle was %s (%s), want loaded", load.State, load.Reason)
 	}
+	if o.kind == kindSystem {
+		return c.systemUpdate(ctx, o, load.Version)
+	}
 	ilm, err := c.loadedILM(ctx, load.Version)
 	if err != nil {
 		return err
@@ -76,6 +87,43 @@ func (c *client) update(ctx context.Context, o options) error {
 		return err
 	}
 	return c.waitILM(ctx, o, ilm)
+}
+
+// systemUpdate starts the update to the loaded system bundle version and waits until it is done and the status shows
+// the appliance version, and the Talos and Kubernetes versions o names. The console is gone while the manager is
+// replaced and the node reboots.
+func (c *client) systemUpdate(ctx context.Context, o options, version string) error {
+	step("install the system bundle")
+	start := map[string]any{"version": version, "confirm": true}
+	if err := c.call(ctx, http.MethodPost, updatesPath+"/system", start, nil); err != nil {
+		return err
+	}
+	if err := c.waitUpdate(ctx, o, kindSystem, nil, ""); err != nil {
+		return err
+	}
+	return c.waitVersions(ctx, o, version)
+}
+
+// waitVersions waits until the status shows that the appliance runs version, Talos o.talosVersion and Kubernetes
+// o.kubernetesVersion.
+func (c *client) waitVersions(ctx context.Context, o options, version string) error {
+	step("versions")
+	return waitUntil(ctx, versionsTimeout, func() error {
+		var st struct {
+			Versions struct{ Appliance, Talos, Kubernetes string }
+		}
+		if err := c.call(ctx, http.MethodGet, "/appliance/api/v1/status", nil, &st); err != nil {
+			c.reconnect(ctx, o, err)
+			return err
+		}
+		v := st.Versions
+		if v.Appliance != version || v.Talos != o.talosVersion || v.Kubernetes != o.kubernetesVersion {
+			return fmt.Errorf("the appliance runs %q, Talos %s, Kubernetes %s, want %s, %s, %s",
+				v.Appliance, v.Talos, v.Kubernetes, version, o.talosVersion, o.kubernetesVersion)
+		}
+		fmt.Printf("drive: the appliance runs appliance %s, Talos %s, Kubernetes %s\n", v.Appliance, v.Talos, v.Kubernetes)
+		return nil
+	})
 }
 
 // loadedILM is the ILM version of the loaded platform bundle version.
@@ -147,7 +195,11 @@ func (c *client) waitUpdate(ctx context.Context, o options, kind string, kit []b
 	step("wait for the " + kind)
 	last := ""
 	var failed *failure
-	err := waitUntil(ctx, updateTimeout, func() error {
+	timeout := updateTimeout
+	if kind == kindSystem {
+		timeout = systemUpdateTimeout
+	}
+	err := waitUntil(ctx, timeout, func() error {
 		var st updateState
 		if err := c.call(ctx, http.MethodGet, updatesPath, nil, &st); err != nil {
 			c.reconnect(ctx, o, err)

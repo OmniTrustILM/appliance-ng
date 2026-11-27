@@ -633,8 +633,8 @@ func TestSplitRef(t *testing.T) {
 		{"ghcr.io/project-zot/zot-minimal:v2.1.0", "ghcr.io/project-zot/zot-minimal", "v2.1.0"},
 		{"quay.io/cilium/cilium:v1.18.0@sha256:" + strings.Repeat("a", 64), "quay.io/cilium/cilium", "v1.18.0"},
 		{"registry.k8s.io/pause@sha256:" + strings.Repeat("b", 64), "registry.k8s.io/pause", ""},
-		{"localhost:5000/app:v1", "localhost:5000/app", "v1"},
-		{"localhost:5000/app", "localhost:5000/app", ""},
+		{"localhost:5000/app:v1", "localhost_5000/app", "v1"},
+		{"localhost:5000/app", "localhost_5000/app", ""},
 		{"rabbitmq:4.3.1-management", "docker.io/library/rabbitmq", "4.3.1-management"},
 		{"rancher/local-path-provisioner:v0.0.33", "docker.io/rancher/local-path-provisioner", "v0.0.33"},
 		{"docker.io/traefik:v3.7.17", "docker.io/library/traefik", "v3.7.17"},
@@ -708,5 +708,25 @@ func TestTagImagesRefusesAMissingImage(t *testing.T) {
 	}
 	if err := c.TagImages(t.Context(), []bundle.ImageRef{{Ref: "ghcr.io/present:v1", Digest: "bad"}}); err == nil {
 		t.Error("TagImages of a bad digest: want an error")
+	}
+}
+
+func TestImagesOfAHostWithAPortAreKeptUnderAValidName(t *testing.T) {
+	c, _ := newClient(t)
+	const ref = "localhost:5005/manager:x"
+	img := newImage(t)
+	b := newBundle(t, map[string]v1.Image{ref: img})
+	if err := c.PushBundle(t.Context(), b, b.metadata("1.2.3"), nil); err != nil {
+		t.Fatal(err)
+	}
+	digest := digestOf(t, img)
+	if !exists(t, c, "localhost_5005/manager@"+digest) {
+		t.Fatal("the image is not in zot under localhost_5005/manager")
+	}
+	if err := c.TagImages(t.Context(), []bundle.ImageRef{b.images[0].Ref}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(t, c, "localhost_5005/manager:x") {
+		t.Error("the image is not tagged x under localhost_5005/manager")
 	}
 }

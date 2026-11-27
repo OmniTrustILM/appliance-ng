@@ -81,6 +81,8 @@ type env struct {
 	// spaceChecks records the sizes the free space check was asked about.
 	spaceChecks []uint64
 	rel         *release.Manifest
+	// upstreams are the mirrored registries the loader is given, the release's own when empty.
+	upstreams []string
 }
 
 // sourceHost names the registry the bundle images and the online bundles come from. Image references with a port
@@ -196,6 +198,7 @@ func (e *env) loaderWith(online update.Online) *update.Loader {
 		Audit:     e.audit,
 		Log:       slog.New(slog.NewTextHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Release:   e.rel,
+		Upstreams: e.upstreams,
 		Dir:       e.dir,
 		Uploads:   e.uploads,
 		Online:    online,

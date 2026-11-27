@@ -15,6 +15,7 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/container"
 	k8sconfig "github.com/siderolabs/talos/pkg/machinery/config/types/k8s"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/network"
+	runtimeconfig "github.com/siderolabs/talos/pkg/machinery/config/types/runtime"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/runtime/extensions"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/v1alpha1"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
@@ -394,5 +395,123 @@ func TestReplaceDocumentsFailures(t *testing.T) {
 	}
 	if fake.applyCalls != 0 {
 		t.Error("a configuration was applied after a failure")
+	}
+}
+
+// imagesState holds a running machine configuration with an image document for each Kubernetes component.
+func imagesState(t *testing.T) state.State {
+	t.Helper()
+	apiServer := k8sconfig.NewKubeAPIServerConfigV1Alpha1()
+	apiServer.PodImage = "registry.local/kube-apiserver:v1.37.1"
+	controllerManager := k8sconfig.NewKubeControllerManagerConfigV1Alpha1()
+	controllerManager.PodImage = "registry.local/kube-controller-manager:v1.37.1"
+	scheduler := k8sconfig.NewKubeSchedulerConfigV1Alpha1()
+	scheduler.PodImage = "registry.local/kube-scheduler:v1.37.1"
+	kubelet := k8sconfig.NewKubeletConfigV1Alpha1()
+	kubelet.KubeletImage = kubeletRef
+	cfg, err := container.New(
+		&v1alpha1.Config{ConfigVersion: "v1alpha1", MachineConfig: &v1alpha1.MachineConfig{MachineType: "controlplane"}},
+		apiServer, controllerManager, scheduler, kubelet,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := newState(t)
+	if err := st.Create(context.Background(), config.NewMachineConfig(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+func kubernetesImages(cfg coreconfig.Provider) map[string]string {
+	return map[string]string{
+		"apiServer":         cfg.K8sAPIServerConfig().Image(),
+		"controllerManager": cfg.K8sControllerManagerConfig().Image(),
+		"scheduler":         cfg.K8sSchedulerConfig().Image(),
+		"kubelet":           cfg.K8sKubeletConfig().Image(),
+	}
+}
+
+func TestSetKubernetesImages(t *testing.T) {
+	const next = "registry.local/component:v1.37.2"
+	for _, component := range []string{"apiServer", "controllerManager", "scheduler", "kubelet"} {
+		t.Run(component, func(t *testing.T) {
+			fake := &fakeMachine{}
+			n := dialFake(t, fake)
+			n.st = imagesState(t)
+			if err := n.SetKubernetesImages(context.Background(), component, next); err != nil {
+				t.Fatalf("SetKubernetesImages: %v", err)
+			}
+			if fake.applyMode != machineapi.ApplyConfigurationRequest_NO_REBOOT {
+				t.Fatalf("mode %v, want NO_REBOOT", fake.applyMode)
+			}
+			want := map[string]string{
+				"apiServer":         "registry.local/kube-apiserver:v1.37.1",
+				"controllerManager": "registry.local/kube-controller-manager:v1.37.1",
+				"scheduler":         "registry.local/kube-scheduler:v1.37.1",
+				"kubelet":           kubeletRef,
+			}
+			want[component] = next
+			got := kubernetesImages(appliedConfig(t, fake))
+			for name, image := range want {
+				if got[name] != image {
+					t.Errorf("%s image %q, want %q", name, got[name], image)
+				}
+			}
+		})
+	}
+}
+
+func TestSetKubernetesImagesRejectsBadInput(t *testing.T) {
+	for name, tc := range map[string]struct{ component, image string }{
+		"unknown component": {"etcd", "registry.local/etcd:v1"},
+		"empty image":       {"kubelet", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeMachine{}
+			n := dialFake(t, fake)
+			n.st = imagesState(t)
+			if err := n.SetKubernetesImages(context.Background(), tc.component, tc.image); err == nil {
+				t.Fatal("want an error")
+			}
+			if fake.applyCalls != 0 {
+				t.Errorf("applied %d times, want none", fake.applyCalls)
+			}
+		})
+	}
+}
+
+func TestSetInstallerImage(t *testing.T) {
+	install := runtimeconfig.NewUnattendedInstallConfigV1Alpha1()
+	install.Installer.Image = "localhost:5005/installer:0.1.0-arm64"
+	cfg, err := container.New(
+		&v1alpha1.Config{ConfigVersion: "v1alpha1", MachineConfig: &v1alpha1.MachineConfig{MachineType: "controlplane"}},
+		install,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := newState(t)
+	if err := st.Create(context.Background(), config.NewMachineConfig(cfg)); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeMachine{}
+	n := dialFake(t, fake)
+	n.st = st
+	const next = "localhost:5005/installer:0.1.1-arm64"
+	if err := n.SetInstallerImage(context.Background(), next); err != nil {
+		t.Fatalf("SetInstallerImage: %v", err)
+	}
+	if fake.applyMode != machineapi.ApplyConfigurationRequest_NO_REBOOT {
+		t.Errorf("mode %v, want NO_REBOOT", fake.applyMode)
+	}
+	var got string
+	for _, doc := range appliedConfig(t, fake).Documents() {
+		if d, ok := doc.(*runtimeconfig.UnattendedInstallConfigV1Alpha1); ok {
+			got = d.Installer.Image
+		}
+	}
+	if got != next {
+		t.Errorf("installer image %q, want %q", got, next)
 	}
 }

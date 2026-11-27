@@ -292,7 +292,7 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonFailed, messageAddonsFailed)
 		return ctrl.Result{}, err
 	}
-	progress, err := r.addonsProgress(ctx, a)
+	progress, updateHeld, err := r.addonsProgress(ctx, a)
 	if errors.Is(err, errBundleMissing) {
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonBundleMissing, messageBundleMissing)
 		return ctrl.Result{}, err
@@ -306,7 +306,7 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionFalse, reasonProgressing, progress.Step+": "+progress.Message)
 		return ctrl.Result{RequeueAfter: addonsRequeue}, nil
 	}
-	setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionTrue, reasonReady, "all add-ons are ready")
+	setAddonsReady(a, updateHeld)
 	if a.Spec.Platform == nil {
 		return requeue(certificate), nil
 	}
@@ -381,33 +381,53 @@ func requeue(certificate time.Duration) ctrl.Result {
 	return ctrl.Result{RequeueAfter: resync}
 }
 
+// setAddonsReady reports the add-ons ready; while a system update holds the add-on pass, they were only checked.
+func setAddonsReady(a *v1alpha1.Appliance, updateHeld bool) {
+	if updateHeld {
+		setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionTrue, v1alpha1.ReasonUpdateHeld,
+			"all add-ons are ready; a system update holds the add-on pass")
+		return
+	}
+	setCondition(a, v1alpha1.ConditionAddonsReady, metav1.ConditionTrue, reasonReady, "all add-ons are ready")
+}
+
 // addonsProgress runs the full add-on pass, which applies every step, on the first reconcile, when the
 // Appliance's generation changed since the last complete pass and when resync has elapsed since then. Other
 // reconciles, woken by Platform, Connector and Secret events, only check that the steps are still ready. A pass
-// that did not complete is not recorded, so the next reconcile applies again.
-func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Appliance) (addons.Progress, error) {
+// that did not complete is not recorded, so the next reconcile applies again. While a system update holds the pass,
+// which updateHeld tells, every reconcile only checks the steps that were applied and the next one after it applies
+// them all.
+func (r *ApplianceReconciler) addonsProgress(ctx context.Context, a *v1alpha1.Appliance) (progress addons.Progress, updateHeld bool, err error) {
 	if r.now == nil {
 		r.now = time.Now
 	}
-	held, err := r.holdsOperator(ctx)
+	live, err := r.liveStatus(ctx)
 	if err != nil {
-		return addons.Progress{}, err
+		return addons.Progress{}, false, err
 	}
+	if live.Update.HoldsAddonsFor(r.Version) {
+		// The steps are those of the release being installed: one it adds was never applied and is pending.
+		r.passed = false
+		progress, err = addons.CheckApplied(ctx, r.Cluster, r.Steps)
+		return progress, true, err
+	}
+	held := live.Restore.HoldsOperator()
 	files, operator, err := r.operatorAddons(a)
 	if err != nil {
-		return addons.Progress{}, err
+		return addons.Progress{}, false, err
 	}
 	if r.passed && a.Generation == r.passedGen && held == r.passedHeld && operator == r.passedOperator &&
 		r.now().Sub(r.passedAt) < resync {
-		return addons.Check(ctx, r.Cluster, r.Steps)
+		progress, err = addons.Check(ctx, r.Cluster, r.Steps)
+		return progress, false, err
 	}
-	progress, err := addons.Pass(ctx, r.Cluster, r.Steps, files, operatorHold{r})
+	progress, err = addons.Pass(ctx, r.Cluster, r.Steps, files, operatorHold{r})
 	r.passed = err == nil && progress.Done
 	if r.passed {
 		r.passedAt, r.passedGen, r.passedHeld, r.passedOperator = r.now(), a.Generation, held, operator
 		keepKnown(&a.Status.Versions.Operator, operator)
 	}
-	return progress, err
+	return progress, false, err
 }
 
 // errBundleMissing is the installed platform bundle whose files are not on the data volume.
@@ -447,11 +467,20 @@ func bundleMissing(err error) error {
 // holdsOperator tells whether a restore needs the ILM operator stopped, from the Appliance as the API server has it:
 // the cached one may not show yet the step that stopped the operator.
 func (r *ApplianceReconciler) holdsOperator(ctx context.Context) (bool, error) {
+	live, err := r.liveStatus(ctx)
+	if err != nil {
+		return false, err
+	}
+	return live.Restore.HoldsOperator(), nil
+}
+
+// liveStatus is the status of the Appliance as the API server has it.
+func (r *ApplianceReconciler) liveStatus(ctx context.Context) (*v1alpha1.ApplianceStatus, error) {
 	live := &v1alpha1.Appliance{}
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: v1alpha1.ApplianceName}, live); err != nil {
-		return false, fmt.Errorf("read the restore status: %w", err)
+		return nil, fmt.Errorf("read the restore and update status: %w", err)
 	}
-	return live.Status.Restore.HoldsOperator(), nil
+	return &live.Status, nil
 }
 
 // operatorHold holds the operator lock while a step is applied and reads the restore's hold under it, so that a pass

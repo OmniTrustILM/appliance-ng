@@ -35,11 +35,14 @@ func NewServer(log *slog.Logger, listen string, handler http.Handler, cert *Cert
 	}
 }
 
+// healthPath is the console's health check.
+const healthPath = "/healthz"
+
 // Routes serves the health check, api under auth.BasePath/api/ and the console under auth.BasePath; every other
 // path is sent there. Wizard part 1 is over once the manager serves, so its pages send the browser to sign-in.
 func Routes(api http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	toSignIn := http.RedirectHandler(auth.BasePath+"/signin", http.StatusFound)

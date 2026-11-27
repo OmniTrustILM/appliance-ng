@@ -1437,6 +1437,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/updates/system": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install a system bundle
+         * @description Installs the loaded system bundle `version` for the appliance's architecture in the background: a backup to
+         *     every target first, then the bundle's images and manager, Talos and Kubernetes. The
+         *     manager restarts and the node reboots once, so the API and the console are gone for about 10 minutes.
+         *     `update` in GET /updates shows its progress. Needs `confirm` set to true; otherwise it is answered with 400.
+         *     Refused with 409: `update_running`, `backup_running`, `restore_running`, `bundle_loading`, `busy` while another
+         *     operation is being admitted, `upgrade_in_progress` while the ILM operator upgrades the platform,
+         *     `last_update_failed` while the last platform update failed past its point of no return and can be rolled back,
+         *     `not_installed` while the platform is not installed, `blocked` when the bundle cannot be installed on what
+         *     runs, `bundle_unavailable` when the bundle's files are no longer on the appliance, `invalid_bundle` when the
+         *     bundle carries no installer, manager or etcd image, `kubernetes_older_than_running` when the bundle's Kubernetes is
+         *     older than the one that runs, which is never downgraded, `kubernetes_minor_skip` when it is more than one minor
+         *     version above the one that runs, and `no_space` when the data volume has less than
+         *     twice the bundle's size free; with 404 `not_found` when the bundle is not loaded. A system update that failed
+         *     past its point of no return runs again from the step it failed at, in the manager of its version.
+         */
+        post: operations["postUpdatesSystem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/updates/rollback": {
         parameters: {
             query?: never;
@@ -1544,6 +1577,12 @@ export interface components {
             /** @description Must be true; the way back from the update is a reinstall and a restore of the backup taken first. */
             confirm: boolean;
         };
+        SystemUpdateStart: {
+            /** @description The version of the system bundle, X.Y.Z. */
+            version: string;
+            /** @description Must be true; the manager restarts and the node reboots, which takes the appliance down for about 10 minutes. */
+            confirm: boolean;
+        };
         /** @description The latest update, while it runs and once it ended. */
         UpdateProgress: {
             /** @enum {string} */
@@ -1552,7 +1591,7 @@ export interface components {
             from: string;
             /** @description The version being installed. */
             to: string;
-            /** @description The step the update is at: `backup`, `images`, `operator`, `version`, `wait`, and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore. */
+            /** @description The step the update is at: `backup`, `images`, `operator`, `version`, `wait` for a platform update; `backup`, `images`, `manager`, `talos`, `health`, `kubernetes`, `addons` for a system update, which ends at `rolledBack` when it undid Talos; and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore. */
             step?: string;
             /** @description Why the update failed at its step, a fixed reason; absent while it runs and once it completed. A failed rollback has the restore's `message`. */
             message?: string;
@@ -1560,7 +1599,7 @@ export interface components {
             backup?: string;
             /** Format: date-time */
             startedAt: string;
-            /** @description Set once the update has asked for the new ILM version; from then on only a rollback undoes it. */
+            /** @description Set once the update has asked for the new ILM version, or the health check of a system update passed; from then on only a rollback, or a restore onto a fresh appliance, undoes it. */
             pointOfNoReturn: boolean;
         };
         UpdateBundle: {
@@ -1823,7 +1862,7 @@ export interface components {
             /** @description The signed-in user, or the existing account a sign-in attempt named; `system:manager` for what the manager did on its own, an expired kubeconfig revoked or a backup it started; empty otherwise. */
             user: string;
             /** @enum {string} */
-            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore" | "update-check" | "update-upload" | "update-fetch" | "bundle-loaded" | "platform-update-start" | "platform-update" | "platform-rollback-start";
+            action: "sign-in" | "sign-out" | "wizard-platform" | "admin-credential" | "admin-password-shown" | "admin-password-reset" | "node-settings" | "reboot" | "shutdown" | "certificate-upload" | "certificate-csr" | "certificate-signed" | "certificate-builtin" | "certificate-acme" | "trust-add" | "trust-remove" | "registry-set" | "registry-remove" | "platform-settings" | "dependency-test" | "mail-settings" | "mail-remove" | "mail-test" | "kubeconfig-issue" | "kubeconfig-revoke" | "talosconfig-issue" | "recovery-kit-issue" | "recovery-kit-reissue" | "recovery-kit-replace" | "recovery-kit-confirm" | "backup" | "backup-download" | "backup-target-set" | "backup-target-remove" | "backup-target-test" | "backup-host-key-scan" | "restore-upload" | "restore-fetch" | "restore-inspect" | "restore-start" | "restore-resume" | "restore-abandon" | "restore" | "update-check" | "update-upload" | "update-fetch" | "bundle-loaded" | "platform-update-start" | "platform-update" | "platform-rollback-start" | "system-update-start" | "system-update";
             /**
              * @description `denied` when the request had a missing or wrong CSRF token or its session expired mid-request, `failure` when it was refused for another reason.
              * @enum {string}
@@ -4647,6 +4686,34 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["PlatformUpdateStart"];
+            };
+        };
+        responses: {
+            /** @description The update is started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["UpdatesUnavailable"];
+        };
+    };
+    postUpdatesSystem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SystemUpdateStart"];
             };
         };
         responses: {

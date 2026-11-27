@@ -155,6 +155,8 @@ const (
 	AuditEntryActionShutdown              AuditEntryAction = "shutdown"
 	AuditEntryActionSignIn                AuditEntryAction = "sign-in"
 	AuditEntryActionSignOut               AuditEntryAction = "sign-out"
+	AuditEntryActionSystemUpdate          AuditEntryAction = "system-update"
+	AuditEntryActionSystemUpdateStart     AuditEntryAction = "system-update-start"
 	AuditEntryActionTalosconfigIssue      AuditEntryAction = "talosconfig-issue"
 	AuditEntryActionTrustAdd              AuditEntryAction = "trust-add"
 	AuditEntryActionTrustRemove           AuditEntryAction = "trust-remove"
@@ -252,6 +254,10 @@ func (e AuditEntryAction) Valid() bool {
 	case AuditEntryActionSignIn:
 		return true
 	case AuditEntryActionSignOut:
+		return true
+	case AuditEntryActionSystemUpdate:
+		return true
+	case AuditEntryActionSystemUpdateStart:
 		return true
 	case AuditEntryActionTalosconfigIssue:
 		return true
@@ -2171,6 +2177,15 @@ type StatusCertificate struct {
 	NotAfter time.Time `json:"notAfter"`
 }
 
+// SystemUpdateStart defines model for SystemUpdateStart.
+type SystemUpdateStart struct {
+	// Confirm Must be true; the manager restarts and the node reboots, which takes the appliance down for about 10 minutes.
+	Confirm bool `json:"confirm"`
+
+	// Version The version of the system bundle, X.Y.Z.
+	Version string `json:"version"`
+}
+
 // TalosconfigRequest defines model for TalosconfigRequest.
 type TalosconfigRequest struct {
 	Hours int                    `json:"hours"`
@@ -2259,11 +2274,11 @@ type UpdateProgress struct {
 	// Message Why the update failed at its step, a fixed reason; absent while it runs and once it completed. A failed rollback has the restore's `message`.
 	Message *string `json:"message,omitempty"`
 
-	// PointOfNoReturn Set once the update has asked for the new ILM version; from then on only a rollback undoes it.
+	// PointOfNoReturn Set once the update has asked for the new ILM version, or the health check of a system update passed; from then on only a rollback, or a restore onto a fresh appliance, undoes it.
 	PointOfNoReturn bool      `json:"pointOfNoReturn"`
 	StartedAt       time.Time `json:"startedAt"`
 
-	// Step The step the update is at: `backup`, `images`, `operator`, `version`, `wait`, and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore.
+	// Step The step the update is at: `backup`, `images`, `operator`, `version`, `wait` for a platform update; `backup`, `images`, `manager`, `talos`, `health`, `kubernetes`, `addons` for a system update, which ends at `rolledBack` when it undid Talos; and `done` once it completed. A rollback is at the step of the restore that does it, as `step` in GET /restore.
 	Step *string `json:"step,omitempty"`
 
 	// To The version being installed.
@@ -2502,6 +2517,9 @@ type PostUpdatesPlatformJSONRequestBody = PlatformUpdateStart
 
 // PostUpdatesRollbackMultipartRequestBody defines body for PostUpdatesRollback for multipart/form-data ContentType.
 type PostUpdatesRollbackMultipartRequestBody = RollbackStart
+
+// PostUpdatesSystemJSONRequestBody defines body for PostUpdatesSystem for application/json ContentType.
+type PostUpdatesSystemJSONRequestBody = SystemUpdateStart
 
 // PutWizardPlatformJSONRequestBody defines body for PutWizardPlatform for application/json ContentType.
 type PutWizardPlatformJSONRequestBody = PlatformSettings
@@ -2800,6 +2818,9 @@ type ServerInterface interface {
 	// PostUpdatesRollback Roll the last platform update back
 	// (POST /updates/rollback)
 	PostUpdatesRollback(w http.ResponseWriter, r *http.Request)
+	// PostUpdatesSystem Install a system bundle
+	// (POST /updates/system)
+	PostUpdatesSystem(w http.ResponseWriter, r *http.Request)
 	// PutUpdatesUpload Upload a bundle file and load it
 	// (PUT /updates/upload)
 	PutUpdatesUpload(w http.ResponseWriter, r *http.Request, params PutUpdatesUploadParams)
@@ -4069,6 +4090,20 @@ func (siw *ServerInterfaceWrapper) PostUpdatesRollback(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// PostUpdatesSystem operation middleware
+func (siw *ServerInterfaceWrapper) PostUpdatesSystem(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUpdatesSystem(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PutUpdatesUpload operation middleware
 func (siw *ServerInterfaceWrapper) PutUpdatesUpload(w http.ResponseWriter, r *http.Request) {
 
@@ -4304,6 +4339,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/updates/upload", wrapper.PutUpdatesUpload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/fetch", wrapper.PostUpdatesFetch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/platform", wrapper.PostUpdatesPlatform)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/system", wrapper.PostUpdatesSystem)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/updates/rollback", wrapper.PostUpdatesRollback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/updates/notes/{kind}/{version}", wrapper.GetUpdateNotes)
 
@@ -9067,6 +9103,106 @@ func (response PostUpdatesRollback503JSONResponse) VisitPostUpdatesRollbackRespo
 	return err
 }
 
+type PostUpdatesSystemRequestObject struct {
+	Body *PostUpdatesSystemJSONRequestBody
+}
+
+type PostUpdatesSystemResponseObject interface {
+	VisitPostUpdatesSystemResponse(w http.ResponseWriter) error
+}
+
+type PostUpdatesSystem202Response struct {
+}
+
+func (response PostUpdatesSystem202Response) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type PostUpdatesSystem400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response PostUpdatesSystem400JSONResponse) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesSystem401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response PostUpdatesSystem401JSONResponse) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesSystem403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response PostUpdatesSystem403JSONResponse) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesSystem404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response PostUpdatesSystem404JSONResponse) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesSystem409JSONResponse struct{ ConflictJSONResponse }
+
+func (response PostUpdatesSystem409JSONResponse) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostUpdatesSystem503JSONResponse struct{ UpdatesUnavailableJSONResponse }
+
+func (response PostUpdatesSystem503JSONResponse) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutUpdatesUploadRequestObject struct {
 	Params PutUpdatesUploadParams
 	Body   io.Reader
@@ -9432,6 +9568,9 @@ type StrictServerInterface interface {
 	// PostUpdatesRollback Roll the last platform update back
 	// (POST /updates/rollback)
 	PostUpdatesRollback(ctx context.Context, request PostUpdatesRollbackRequestObject) (PostUpdatesRollbackResponseObject, error)
+	// PostUpdatesSystem Install a system bundle
+	// (POST /updates/system)
+	PostUpdatesSystem(ctx context.Context, request PostUpdatesSystemRequestObject) (PostUpdatesSystemResponseObject, error)
 	// PutUpdatesUpload Upload a bundle file and load it
 	// (PUT /updates/upload)
 	PutUpdatesUpload(ctx context.Context, request PutUpdatesUploadRequestObject) (PutUpdatesUploadResponseObject, error)
@@ -11368,6 +11507,37 @@ func (sh *strictHandler) PostUpdatesRollback(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PostUpdatesRollbackResponseObject); ok {
 		if err := validResponse.VisitPostUpdatesRollbackResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostUpdatesSystem operation middleware
+func (sh *strictHandler) PostUpdatesSystem(w http.ResponseWriter, r *http.Request) {
+	var request PostUpdatesSystemRequestObject
+
+	var body PostUpdatesSystemJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostUpdatesSystem(ctx, request.(PostUpdatesSystemRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostUpdatesSystem")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostUpdatesSystemResponseObject); ok {
+		if err := validResponse.VisitPostUpdatesSystemResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

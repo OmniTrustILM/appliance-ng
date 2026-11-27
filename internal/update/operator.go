@@ -78,17 +78,23 @@ func loadedPlatform(loaded []v1alpha1.BundleInfo, version string) *bundle.Metada
 // InstalledPlatform returns the metadata of the installed platform bundle version for arch, stored under dir when it
 // was loaded; nil when version is empty, as while no platform bundle is installed.
 func InstalledPlatform(dir, version, arch string) (*bundle.Metadata, error) {
+	return installed(dir, release.BundlePlatform, version, arch)
+}
+
+// installed returns the metadata of the loaded bundle of kind and version for arch, stored under dir; nil when version
+// is empty.
+func installed(dir, kind, version, arch string) (*bundle.Metadata, error) {
 	if version == "" {
 		return nil, nil
 	}
-	path := filepath.Join(dir, release.BundlePlatform, tag(version, arch), bundle.MetadataFile)
+	path := filepath.Join(dir, kind, tag(version, arch), bundle.MetadataFile)
 	data, err := os.ReadFile(path) //nolint:gosec // built from the version the status records
 	if err != nil {
-		return nil, fmt.Errorf("read platform bundle %s: %w", version, err)
+		return nil, fmt.Errorf("read %s bundle %s: %w", kind, version, err)
 	}
 	md := &bundle.Metadata{}
 	if err := json.Unmarshal(data, md); err != nil {
-		return nil, fmt.Errorf("read platform bundle %s: %w", version, err)
+		return nil, fmt.Errorf("read %s bundle %s: %w", kind, version, err)
 	}
 	return md, nil
 }

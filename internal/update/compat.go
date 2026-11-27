@@ -119,6 +119,17 @@ func older(version, than string) bool {
 	return errV == nil && errT == nil && v.LessThan(t)
 }
 
+// skipsMinor reports whether version is more than one minor version above running; what does not parse is not
+// judged.
+func skipsMinor(version, running string) bool {
+	v, errV := semver.NewVersion(version)
+	r, errR := semver.NewVersion(running)
+	if errV != nil || errR != nil {
+		return false
+	}
+	return v.Major() > r.Major() || v.Major() == r.Major() && v.Minor() > r.Minor()+1
+}
+
 // inRange reports whether version satisfies the range; an empty or unparsable range or version is not judged.
 func inRange(rng, version string) bool {
 	c, errC := semver.NewConstraint(rng)

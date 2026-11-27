@@ -252,6 +252,20 @@ type jobEnv struct {
 	wait time.Duration
 	// jobClient, when set, is the client of the jobs instead of c.
 	jobClient client.Client
+	// version is the manager's own version, fromBundle when empty; talos, applier and console are the Talos API, the
+	// applier of the manager's manifest and the console check of a system update, which gives up its health check
+	// after health.
+	version string
+	talos   update.TalosNode
+	// talosErr fails the access to the Talos API.
+	talosErr error
+	applier  update.Applier
+	console  func(context.Context) error
+	health   time.Duration
+	// rebootRetry is how long the node may keep its boot before it is rebooted again; the default when zero.
+	rebootRetry time.Duration
+	// releaseILM is the ILM version the running release embeds, oldILM when empty.
+	releaseILM string
 
 	mu sync.Mutex
 	// applyOperator lets the add-on pass apply the bundle's operator; reject makes the operator refuse ILM 2.20.0.
@@ -442,16 +456,23 @@ func (e *jobEnv) newJobsWithRestorer(backups update.JobBackups, restorer update.
 		Log:      slog.New(slog.NewTextHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Release: &release.Manifest{
 			Version:       fromBundle,
-			Platform:      release.PlatformDefaults{ILMVersion: oldILM},
+			Platform:      release.PlatformDefaults{ILMVersion: cmp.Or(e.releaseILM, oldILM)},
 			Compatibility: release.Compatibility{Operator: ">=1.0.0 <2.0.0", MinAppliance: "1.0.0"},
 			Addons:        []release.AddonFile{{Name: "ilm-operator", File: "ilm-operator.yaml", Version: shippedOperator}},
 		},
-		Dir:             e.dir,
-		Arch:            testArch,
-		Space:           e.space,
-		Poll:            5 * time.Millisecond,
-		OperatorTimeout: 10 * time.Second,
-		WaitTimeout:     e.wait,
+		Dir:              e.dir,
+		Arch:             testArch,
+		Space:            e.space,
+		Poll:             5 * time.Millisecond,
+		OperatorTimeout:  10 * time.Second,
+		WaitTimeout:      e.wait,
+		Version:          cmp.Or(e.version, fromBundle),
+		Talos:            func(context.Context) (update.TalosNode, error) { return e.talos, e.talosErr },
+		Manifests:        e.applier,
+		Console:          e.console,
+		HealthTimeout:    e.health,
+		ComponentTimeout: 10 * time.Second,
+		RebootRetry:      e.rebootRetry,
 	})
 }
 
@@ -1035,7 +1056,7 @@ func (r runnerBackups) Unpin(kind, keep string) error { return r.fake.Unpin(kind
 // TestUpdateAdmission refuses an update while another long operation runs, and every other long operation while
 // an update runs; a scheduled backup waits for the update to end.
 func TestUpdateAdmission(t *testing.T) {
-	e := newJobEnv(t, newerOperator)
+	e := newSystemEnv(t).jobEnv
 	runner := backup.NewRunner(backup.RunnerDeps{
 		Client: e.c, Reader: e.c, Audit: e.audit, Dir: t.TempDir(), Version: fromBundle,
 		Log: slog.New(slog.NewTextHandler(e.logs, nil)),
@@ -1048,6 +1069,9 @@ func TestUpdateAdmission(t *testing.T) {
 		if update.Reason(err) != reason || err.Error() == "" {
 			t.Errorf("start while %s: %v, want %s", what, err, reason)
 		}
+		if err := jobs.StartSystem(t.Context(), systemTo, "admin"); update.Reason(err) != reason {
+			t.Errorf("system update while %s: %v, want %s", what, err, reason)
+		}
 	}
 
 	release, err := runner.Hold()
@@ -1058,6 +1082,9 @@ func TestUpdateAdmission(t *testing.T) {
 	release()
 	if err := e.newJobsWith(&busyBackups{}).StartPlatform(t.Context(), toBundle, "admin"); update.Reason(err) != update.BackupRunning {
 		t.Errorf("start while a backup runs: %v", err)
+	}
+	if err := e.newJobsWith(&busyBackups{}).StartSystem(t.Context(), systemTo, "admin"); update.Reason(err) != update.BackupRunning {
+		t.Errorf("system update while a backup runs: %v", err)
 	}
 	e.updateStatus(func(st *v1alpha1.ApplianceStatus) {
 		st.Restore = &v1alpha1.RestoreStatus{Backup: "b", Step: v1alpha1.RestoreStepDatabase, StartedAt: metav1.Now()}
@@ -1075,8 +1102,13 @@ func TestUpdateAdmission(t *testing.T) {
 	if err := e.newJobsWith(&admittingBackups{}).StartPlatform(t.Context(), toBundle, "admin"); update.Reason(err) != update.Busy {
 		t.Errorf("start while another operation is admitted: %v", err)
 	}
+	if err := e.newJobsWith(&admittingBackups{}).StartSystem(t.Context(), systemTo, "admin"); update.Reason(err) != update.Busy {
+		t.Errorf("system update while another operation is admitted: %v", err)
+	}
 	e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Updates.Loaded[0].SizeBytes = 0 })
-	refused("the bundle's size is unknown", update.InvalidMetadata)
+	if err := jobs.StartPlatform(t.Context(), toBundle, "admin"); update.Reason(err) != update.InvalidMetadata {
+		t.Errorf("start while the bundle's size is unknown: %v", err)
+	}
 	e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Updates.Loaded[0].SizeBytes = 1000 })
 	if err := jobs.StartPlatform(t.Context(), "9.9.9", "admin"); update.Reason(err) != update.NotFound {
 		t.Errorf("start of an unknown bundle: %v", err)
@@ -1091,6 +1123,9 @@ func TestUpdateAdmission(t *testing.T) {
 	refused("an update runs", update.UpdateRunning)
 	if err := e.newJobsWith(backups).StartPlatform(t.Context(), toBundle, "admin"); update.Reason(err) != update.UpdateRunning {
 		t.Errorf("start from another Jobs while an update runs: %v", err)
+	}
+	if err := e.newJobsWith(backups).StartSystem(t.Context(), systemTo, "admin"); update.Reason(err) != update.UpdateRunning {
+		t.Errorf("system update from another Jobs while an update runs: %v", err)
 	}
 	if _, err := runner.Hold(); !errors.Is(err, backup.ErrHeld) {
 		t.Errorf("a bundle load while an update runs: %v", err)
