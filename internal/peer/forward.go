@@ -74,6 +74,9 @@ type Router struct {
 	// Leader returns the leader's address, or ErrNoLeader.
 	Leader  func(context.Context) (string, error)
 	Forward func(leaderAddr string) http.Handler
+	// Recheck is how often a forwarded request asks for the leader again; the request is cancelled once the manager it
+	// was sent to no longer leads. Zero never asks again.
+	Recheck time.Duration
 	Log     *slog.Logger
 }
 
@@ -96,7 +99,45 @@ func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetReadDeadline(time.Time{})
 	_ = rc.SetWriteDeadline(time.Time{})
-	rt.Forward(addr).ServeHTTP(w, r)
+	ctx, cancel := context.WithCancel(r.Context())
+	watched := make(chan struct{})
+	go func() {
+		defer close(watched)
+		rt.watchLeader(ctx, cancel, addr, r)
+	}()
+	defer func() {
+		cancel()
+		<-watched
+	}()
+	rt.Forward(addr).ServeHTTP(w, r.WithContext(ctx))
+}
+
+// watchLeader asks for the leader every Recheck until ctx ends and cancels the request r forwarded to addr once
+// another manager leads or none does. Without a timeout on the leader's answer, a request to a paused leader would
+// otherwise wait for it forever. A failure to read the leader leaves the request running.
+func (rt *Router) watchLeader(ctx context.Context, cancel context.CancelFunc, addr string, r *http.Request) {
+	if rt.Recheck <= 0 {
+		return
+	}
+	ticker := time.NewTicker(rt.Recheck)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		now, err := rt.Leader(ctx)
+		if err != nil && !errors.Is(err, ErrNoLeader) {
+			continue
+		}
+		if now != addr {
+			rt.Log.Warn("the leader changed; cancelling the request forwarded to the previous one", "leader", addr,
+				"method", r.Method, "path", r.URL.Path)
+			cancel()
+			return
+		}
+	}
 }
 
 // Accept returns the peer listener's handler: it serves api under the API's path while leading reports that this

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -243,4 +244,90 @@ func TestForwardToPausedLeader(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the follower waits for a paused leader")
 	}
+}
+
+// TestForwardCancelledWhenLeaderChanges: a leader that completes the handshake and then pauses never answers; the
+// follower ends the forwarded request once another manager leads or none does.
+func TestForwardCancelledWhenLeaderChanges(t *testing.T) {
+	for name, after := range map[string]func(context.Context) (string, error){
+		"another leader": func(context.Context) (string, error) { return "127.0.0.2", nil },
+		"no leader":      func(context.Context) (string, error) { return "", ErrNoLeader },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ca := newCA(t)
+			arrived := make(chan struct{})
+			_, port := leaderServer(t, ca, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				close(arrived)
+				<-r.Context().Done()
+			}), always)
+			var changed atomic.Bool
+			leader := func(ctx context.Context) (string, error) {
+				if changed.Load() {
+					return after(ctx)
+				}
+				return onLoopback(ctx)
+			}
+			routes := watchingFollower(t, ca, port, leader)
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				rec := httptest.NewRecorder()
+				routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/appliance/api/v1/status", nil))
+				done <- rec
+			}()
+			<-arrived
+			select {
+			case <-done:
+				t.Fatal("the request ended while the leader still led")
+			case <-time.After(5 * recheck):
+			}
+			changed.Store(true)
+			select {
+			case rec := <-done:
+				assertUnavailable(t, rec)
+			case <-time.After(5 * time.Second):
+				t.Fatal("the follower waits for a leader that no longer leads")
+			}
+		})
+	}
+}
+
+// TestForwardToSlowLeader: a leader that keeps leading answers late, even while the follower cannot read the leader
+// for a moment, and its answer reaches the browser intact.
+func TestForwardToSlowLeader(t *testing.T) {
+	ca := newCA(t)
+	_, port := leaderServer(t, ca, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(5 * recheck)
+		_, _ = w.Write([]byte("slow"))
+		_ = http.NewResponseController(w).Flush()
+		time.Sleep(5 * recheck)
+		_, _ = w.Write([]byte(" answer"))
+	}), always)
+	var calls atomic.Int32
+	leader := func(ctx context.Context) (string, error) {
+		if calls.Add(1)%2 == 0 {
+			return "", errors.New("the API server is not reachable")
+		}
+		return onLoopback(ctx)
+	}
+	rec := httptest.NewRecorder()
+	watchingFollower(t, ca, port, leader).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/appliance/api/v1/status", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "slow answer" {
+		t.Errorf("answer %d %q", rec.Code, rec.Body.String())
+	}
+	if calls.Load() < 3 {
+		t.Errorf("the follower asked for the leader %d times", calls.Load())
+	}
+}
+
+const recheck = 20 * time.Millisecond
+
+// watchingFollower returns the console routes of a follower that asks for the leader every recheck while it
+// forwards a request.
+func watchingFollower(t *testing.T, ca *testCA, port int, leader func(context.Context) (string, error)) http.Handler {
+	t.Helper()
+	id := identity(t, followerNode, ca.secret(t, followerNode, CommonName, "127.0.0.1"))
+	return console.Routes(&Router{
+		API: http.NotFoundHandler(), Leading: never, Leader: leader, Recheck: recheck, Log: quiet,
+		Forward: forwarder(id, port).Forward,
+	})
 }

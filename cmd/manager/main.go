@@ -284,7 +284,8 @@ func addConsole(mgr crmanager.Manager, log *slog.Logger, addrs listeners, handle
 	node, reader := os.Getenv(kube.NodeNameEnv), mgr.GetAPIReader()
 	id := peer.NewIdentity(log, reader, node)
 	router := &peer.Router{
-		API: handler, Leading: lease.Leading, Leader: peer.LeaderAddress(reader, node), Forward: peer.NewForwarder(log, id).Forward, Log: log,
+		API: handler, Leading: lease.Leading, Leader: peer.LeaderAddress(reader, node), Forward: peer.NewForwarder(log, id).Forward,
+		Recheck: manager.RetryPeriod, Log: log,
 	}
 	peerServer := console.NewPeerServer(log, addrs.peer, peer.Accept(handler, lease.Leading), id.ServerConfig(peer.VotingAddresses(reader)))
 	for name, run := range map[string]func(context.Context) error{
