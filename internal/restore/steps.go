@@ -269,14 +269,9 @@ func (e *Engine) mergeAccounts(ctx context.Context, j *job, secrets []corev1.Sec
 	case users < 0 || key < 0:
 		return nil, fmt.Errorf("the backup holds only one of %s and %s", auth.UsersSecret, auth.UsersKeySecret)
 	}
-	current, err := e.liveSecret(ctx, kube.SystemNamespace, auth.UsersSecret)
+	current, err := e.currentAccounts(ctx, j)
 	if err != nil {
 		return nil, err
-	}
-	if current != nil && j.status.InPlace {
-		if current, err = auth.OnlyUsers(current, j.status.StartedBy); err != nil {
-			return nil, fmt.Errorf("read the console accounts: %w", err)
-		}
 	}
 	currentKey, err := e.liveSecret(ctx, kube.SystemNamespace, auth.UsersKeySecret)
 	if err != nil {
@@ -291,6 +286,20 @@ func (e *Engine) mergeAccounts(ctx context.Context, j *job, secrets []corev1.Sec
 		secrets = slices.Delete(secrets, key, key+1)
 	}
 	return secrets, nil
+}
+
+// currentAccounts returns the current accounts Secret, for a restore in place with only the account that started it,
+// or nil when there is none.
+func (e *Engine) currentAccounts(ctx context.Context, j *job) (*corev1.Secret, error) {
+	current, err := e.liveSecret(ctx, kube.SystemNamespace, auth.UsersSecret)
+	if err != nil || current == nil || !j.status.InPlace {
+		return current, err
+	}
+	only, err := auth.OnlyUsers(current, j.status.StartedBy)
+	if err != nil {
+		return nil, fmt.Errorf("read the console accounts: %w", err)
+	}
+	return only, nil
 }
 
 // liveSecret returns the Secret in the cluster, or nil when it does not exist.

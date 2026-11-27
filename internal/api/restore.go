@@ -457,13 +457,8 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 	}
 	opts := restore.Options{InPlace: in.local, ILMHostName: host, User: requestFrom(ctx).user}
 	if !in.local {
-		if answer := s.ilmAvailable(a, in.summary.Manifest.ILM); answer.status != 0 {
+		if answer := s.freshRestoreBundle(a, in, &opts); answer.status != 0 {
 			return answer, nil
-		}
-		loaded := loadedBundles(a)
-		opts.PlatformBundle = update.PlatformBundleFor(s.deps.Release, loaded, in.summary.Manifest.ILM)
-		if update.OperatorDowngrade(s.deps.Release, loaded, a.Status.Versions, opts.PlatformBundle) {
-			return answerOperatorDowngrade, nil
 		}
 	}
 	s.credentialsMu.Lock()
@@ -490,6 +485,20 @@ func (s *Server) startRestore(ctx context.Context, in *inspection, body *Restore
 	s.forgetInspection()
 	s.deps.Log.Info("restore started from the console", "backup", in.name, "inPlace", in.local, "user", opts.User)
 	return restoreAnswer{status: http.StatusAccepted}, nil
+}
+
+// freshRestoreBundle sets on opts the platform bundle a fresh restore of in installs, or returns the answer that
+// refuses the restore.
+func (s *Server) freshRestoreBundle(a *v1alpha1.Appliance, in *inspection, opts *restore.Options) restoreAnswer {
+	if answer := s.ilmAvailable(a, in.summary.Manifest.ILM); answer.status != 0 {
+		return answer
+	}
+	loaded := loadedBundles(a)
+	opts.PlatformBundle = update.PlatformBundleFor(s.deps.Release, loaded, in.summary.Manifest.ILM)
+	if update.OperatorDowngrade(s.deps.Release, loaded, a.Status.Versions, opts.PlatformBundle) {
+		return answerOperatorDowngrade
+	}
+	return restoreAnswer{}
 }
 
 // ilmAvailable refuses a fresh restore of a backup of ILM version ilm that neither the release nor a loaded platform
