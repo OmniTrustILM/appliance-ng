@@ -314,16 +314,16 @@ func (r *ApplianceReconciler) reconcile(ctx context.Context, a *v1alpha1.Applian
 	// does not hold up the platform.
 	cbomErr := r.reconcileCBOM(ctx, a)
 	setCBOMCondition(a, cbomErr)
-	result, err := r.reconcileOperated(ctx, a, certificate)
+	result, err := r.reconcileOperated(ctx, a, certificate, updateHeld)
 	if err = errors.Join(err, cbomErr); err != nil {
 		return ctrl.Result{}, err
 	}
 	return result, nil
 }
 
-// reconcileOperated applies what the ILM operator runs, unless a restore pauses it, and reports the platform's
-// readiness.
-func (r *ApplianceReconciler) reconcileOperated(ctx context.Context, a *v1alpha1.Appliance, certificate time.Duration) (ctrl.Result, error) {
+// reconcileOperated applies what the ILM operator runs, unless a restore pauses it or a system update holds the add-on
+// pass, and reports the platform's readiness.
+func (r *ApplianceReconciler) reconcileOperated(ctx context.Context, a *v1alpha1.Appliance, certificate time.Duration, updateHeld bool) (ctrl.Result, error) {
 	if a.Status.Restore.PausesPlatform() {
 		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonRestoring, "a restore has stopped the ILM operator")
 		return ctrl.Result{RequeueAfter: addonsRequeue}, nil
@@ -335,7 +335,11 @@ func (r *ApplianceReconciler) reconcileOperated(ctx context.Context, a *v1alpha1
 
 	// The operator's status updates of the owned Platform wake the reconciler; the periodic requeue repeats the
 	// full add-on pass.
-	ready, message, err := r.reconcilePlatform(ctx, a)
+	reconcile := r.reconcilePlatform
+	if updateHeld {
+		reconcile = r.observePlatform
+	}
+	ready, message, err := reconcile(ctx, a)
 	switch {
 	case err != nil:
 		setCondition(a, v1alpha1.ConditionPlatformReady, metav1.ConditionFalse, reasonFailed, messagePlatformFailed)
@@ -581,6 +585,21 @@ func (r *ApplianceReconciler) reconcilePlatform(ctx context.Context, a *v1alpha1
 	states = withRegistrations(states, outcome)
 	setConnectorsCondition(a, states, outcome.Awaiting)
 	a.Status.Connectors = waitingStates(states, outcome.Awaiting)
+	return ready, message, nil
+}
+
+// observePlatform reports whether the Platform is ready without applying it or its Connectors, while a system update
+// holds the add-on pass: what this manager's release would apply is not the release the node is updated to, or runs.
+func (r *ApplianceReconciler) observePlatform(ctx context.Context, _ *v1alpha1.Appliance) (bool, string, error) {
+	current := &otilm.Platform{}
+	err := r.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, current)
+	switch {
+	case apierrors.IsNotFound(err):
+		return false, "the Platform is not applied while a system update holds the add-on pass", nil
+	case err != nil:
+		return false, "", fmt.Errorf("read the Platform: %w", err)
+	}
+	ready, message := platformReady(current)
 	return ready, message, nil
 }
 

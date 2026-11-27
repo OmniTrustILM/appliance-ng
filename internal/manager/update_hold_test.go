@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	otilm "github.com/OmniTrustILM/operator/api/v1alpha1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
 func setUpdate(t *testing.T, u *v1alpha1.UpdateStatus) {
@@ -152,5 +155,35 @@ func TestRunningPassStopsOnceAnUpdateHoldsIt(t *testing.T) {
 	}
 	if c := condition(t, getAppliance(t), v1alpha1.ConditionAddonsReady); c.Reason != v1alpha1.ReasonUpdateHeld {
 		t.Errorf("AddonsReady = %+v, want held", c)
+	}
+}
+
+// TestHeldPassOnlyObservesThePlatform reports the Platform's readiness without applying it while a system update holds
+// the add-on pass, and applies it again once the hold is released.
+func TestHeldPassOnlyObservesThePlatform(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Platform: platformSpec()})
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+	key := client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}
+	if err := testClient.Delete(context.Background(), &otilm.Platform{ObjectMeta: metav1.ObjectMeta{Namespace: key.Namespace, Name: key.Name}}); err != nil {
+		t.Fatal(err)
+	}
+	held := &v1alpha1.UpdateStatus{
+		Kind: v1alpha1.UpdateKindSystem, From: "1.0.0", To: "1.1.0", Step: "health", StartedAt: metav1.Now(),
+	}
+	setUpdate(t, held)
+	runReconcile(t, r)
+	if err := testClient.Get(context.Background(), key, &otilm.Platform{}); !apierrors.IsNotFound(err) {
+		t.Errorf("the Platform was applied while the add-on pass is held: %v", err)
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionPlatformReady); c.Status != metav1.ConditionFalse {
+		t.Errorf("PlatformReady = %+v, want not ready", c)
+	}
+	held.Step = v1alpha1.UpdateStepDone
+	setUpdate(t, held)
+	runReconcile(t, r)
+	if err := testClient.Get(context.Background(), key, &otilm.Platform{}); err != nil {
+		t.Errorf("the Platform was not applied once the hold was released: %v", err)
 	}
 }
