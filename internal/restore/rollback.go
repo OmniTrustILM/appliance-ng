@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
@@ -127,19 +128,28 @@ func (e *Engine) uninstall(ctx context.Context, j *job) error {
 // be gone.
 func (e *Engine) deletePlatform(ctx context.Context) error {
 	p := &otilm.Platform{}
-	err := e.deps.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, p)
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read the Platform: %w", err)
-	}
-	if slices.Contains(p.Finalizers, platformFinalizer) {
+	gone := false
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		err := e.deps.Client.Get(ctx, client.ObjectKey{Namespace: platform.Namespace, Name: platform.Name}, p)
+		if apierrors.IsNotFound(err) {
+			gone = true
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read the Platform: %w", err)
+		}
+		if !slices.Contains(p.Finalizers, platformFinalizer) {
+			return nil
+		}
 		patch := client.MergeFromWithOptions(p.DeepCopy(), client.MergeFromWithOptimisticLock{})
 		p.Finalizers = slices.DeleteFunc(p.Finalizers, func(f string) bool { return f == platformFinalizer })
 		if err := e.deps.Client.Patch(ctx, p, patch, client.FieldOwner(kube.ManagerFieldManager)); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("remove the finalizer of the Platform: %w", err)
 		}
+		return nil
+	})
+	if err != nil || gone {
+		return err
 	}
 	// Foreground deletion keeps the Platform until the garbage collector has deleted what it owns.
 	if err := e.deps.Client.Delete(ctx, p, client.PropagationPolicy(metav1.DeletePropagationForeground)); client.IgnoreNotFound(err) != nil {
