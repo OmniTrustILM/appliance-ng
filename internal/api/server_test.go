@@ -31,6 +31,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/audit"
 	"github.com/OmniTrustILM/appliance-ng/internal/auth"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
+	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
@@ -51,6 +52,8 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	// The node the manager runs on, as the Downward API names it.
+	_ = os.Setenv(kube.NodeNameEnv, "ilm")
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		println("KUBEBUILDER_ASSETS is not set; run the tests with make test")
 		return 1
@@ -189,7 +192,7 @@ func createAppliance(t *testing.T, setup string) *v1alpha1.Appliance {
 	ctx := context.Background()
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
-		Spec:       v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "appliance.example.com"}},
+		Spec:       v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com"}}}},
 	}
 	if err := testClient.Create(ctx, a); err != nil {
 		t.Fatal(err)

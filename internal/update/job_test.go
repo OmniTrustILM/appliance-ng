@@ -326,7 +326,7 @@ func (e *jobEnv) createAppliance() {
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
 		Spec: v1alpha1.ApplianceSpec{
-			Node:     v1alpha1.NodeSpec{HostName: "appliance.example.com"},
+			Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com"}}},
 			Platform: &v1alpha1.PlatformSpec{ILMVersion: oldILM, HostName: ilmHost},
 			Backup: &v1alpha1.BackupSpec{Targets: []v1alpha1.BackupTarget{{
 				Name: "nas", Type: "nfs", Retention: 3, NFS: &v1alpha1.NFSTarget{Server: "nas.example.com", Export: "/backups"},

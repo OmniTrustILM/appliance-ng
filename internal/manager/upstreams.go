@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	managerDeployment = "appliance-manager"
-	managerContainer  = "manager"
+	managerDaemonSet = "appliance-manager"
+	managerContainer = "manager"
 )
 
 // MirrorUpstreams returns the registries the registry mirror serves: the release's and the registry the manager's own
@@ -21,12 +21,12 @@ const (
 // read, the release's registries alone are returned.
 func MirrorUpstreams(ctx context.Context, reader client.Reader, rel *release.Manifest, log *slog.Logger) []string {
 	hosts := rel.RegistryHosts()
-	deploy := &appsv1.Deployment{}
-	if err := reader.Get(ctx, client.ObjectKey{Namespace: SystemNamespace, Name: managerDeployment}, deploy); err != nil {
+	manager := &appsv1.DaemonSet{}
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: SystemNamespace, Name: managerDaemonSet}, manager); err != nil {
 		log.WarnContext(ctx, "read the manager's image; mirroring the release's registries only", "error", err)
 		return hosts
 	}
-	for _, c := range deploy.Spec.Template.Spec.Containers {
+	for _, c := range manager.Spec.Template.Spec.Containers {
 		if c.Name != managerContainer {
 			continue
 		}

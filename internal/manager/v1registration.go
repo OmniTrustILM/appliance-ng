@@ -143,7 +143,7 @@ func (r *ApplianceReconciler) registerV1(ctx context.Context, c *ilmclient.Clien
 // is not chosen any more. Other connectors, those of an administrator and the v2 ones, stay.
 func (r *ApplianceReconciler) removeV1Registrations(ctx context.Context, a *v1alpha1.Appliance, c *ilmclient.Client, registered []ilmclient.Connector) {
 	for _, rc := range r.Release.Connectors {
-		if !rc.V1Only() || slices.Contains(a.Spec.Platform.Components, rc.Name) {
+		if !rc.V1Only() || slices.Contains(a.Spec.Platform.ComponentNames(), rc.Name) {
 			continue
 		}
 		for _, l := range registered {

@@ -62,6 +62,8 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	// The node the manager runs on, as the Downward API names it.
+	_ = os.Setenv(kube.NodeNameEnv, "talos-node")
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		println("KUBEBUILDER_ASSETS is not set; run the tests with make test")
 		return 1
@@ -228,8 +230,8 @@ func (a *fakeAudit) Write(e audit.Entry) error {
 func createAppliance(t *testing.T, spec v1alpha1.ApplianceSpec) {
 	t.Helper()
 	ctx := context.Background()
-	if spec.Node.HostName == "" {
-		spec.Node.HostName = "ilm.example.com"
+	if spec.FirstNode() == nil {
+		spec.Cluster.Nodes = []v1alpha1.ClusterNode{{HostName: "ilm.example.com"}}
 	}
 	a := &v1alpha1.Appliance{ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName}, Spec: spec}
 	if err := testClient.Create(ctx, a); err != nil {
@@ -283,7 +285,11 @@ func getPlatform(t *testing.T) *otilm.Platform {
 }
 
 func platformSpec(components ...string) *v1alpha1.PlatformSpec {
-	return &v1alpha1.PlatformSpec{Components: components}
+	p := &v1alpha1.PlatformSpec{}
+	for _, name := range components {
+		p.Components = append(p.Components, v1alpha1.ComponentSpec{Name: name})
+	}
+	return p
 }
 
 func TestReconcileRemovesExpiredAccess(t *testing.T) {
@@ -350,7 +356,7 @@ func TestReconcileWaitsForAddons(t *testing.T) {
 
 func TestReconcileNoPlatformUntilPart2(t *testing.T) {
 	cleanCertificates(t)
-	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}})
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com", Address: "192.0.2.10/24"}}}})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	runReconcile(t, r)
 	issue(t)
@@ -542,7 +548,7 @@ func TestReconcileCompletesSetupOnce(t *testing.T) {
 	if err := testClient.Create(context.Background(), setupCert); err != nil {
 		t.Fatal(err)
 	}
-	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}, Platform: platformSpec()})
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com", Address: "192.0.2.10/24"}}}, Platform: platformSpec()})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	runReconcile(t, r)
 	issue(t)
@@ -939,7 +945,7 @@ func TestReconcileDeletesRemovedConnectors(t *testing.T) {
 	runReconcile(t, r)
 
 	a := getAppliance(t)
-	a.Spec.Platform.Components = []string{"x509-compliance-provider"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "x509-compliance-provider"}}
 	if err := testClient.Update(ctx, a); err != nil {
 		t.Fatal(err)
 	}
@@ -991,7 +997,7 @@ func TestReconcileSchedulesTheBackupTargets(t *testing.T) {
 
 func TestReconcileRemovesTheSetupCertificateOfACompleteSetup(t *testing.T) {
 	cleanCertificates(t)
-	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}})
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com", Address: "192.0.2.10/24"}}}})
 	a := getAppliance(t)
 	a.Status.Setup = v1alpha1.SetupComplete
 	if err := testClient.Status().Update(context.Background(), a); err != nil {
@@ -1062,7 +1068,7 @@ func TestReconcileReportsWhyAConnectorsPodFails(t *testing.T) {
 
 func TestReconcileRepeatsSoonWhileAConnectorIsWaiting(t *testing.T) {
 	cleanCertificates(t)
-	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{Address: "192.0.2.10/24"}, Platform: platformSpec("software-cryptography-provider")})
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com", Address: "192.0.2.10/24"}}}, Platform: platformSpec("software-cryptography-provider")})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	runReconcile(t, r)
 	issue(t)

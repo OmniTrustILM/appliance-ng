@@ -473,6 +473,24 @@ func (e CertificateInfoSource) Valid() bool {
 	}
 }
 
+// Defines values for ClusterNodeRole.
+const (
+	Voting ClusterNodeRole = "voting"
+	Worker ClusterNodeRole = "worker"
+)
+
+// Valid indicates whether the value is a known member of the ClusterNodeRole enum.
+func (e ClusterNodeRole) Valid() bool {
+	switch e {
+	case Voting:
+		return true
+	case Worker:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConditionStatus.
 const (
 	False   ConditionStatus = "False"
@@ -1145,14 +1163,10 @@ type AdminPassword struct {
 
 // ApplianceSettings defines model for ApplianceSettings.
 type ApplianceSettings struct {
-	Dns  []string      `json:"dns"`
-	Mail *MailSettings `json:"mail,omitempty"`
-	Node struct {
-		Address  *string `json:"address,omitempty"`
-		Gateway  *string `json:"gateway,omitempty"`
-		HostName string  `json:"hostName"`
-	} `json:"node"`
-	Ntp      []string `json:"ntp"`
+	Cluster  ClusterSettings `json:"cluster"`
+	Dns      []string        `json:"dns"`
+	Mail     *MailSettings   `json:"mail,omitempty"`
+	Ntp      []string        `json:"ntp"`
 	Platform *struct {
 		Components []string `json:"components"`
 		HostName   *string  `json:"hostName,omitempty"`
@@ -1434,6 +1448,38 @@ type CertificateUpload struct {
 
 	// Key The certificate's private key in PEM, unencrypted.
 	Key openapi_types.File `json:"key"`
+}
+
+// ClusterAddress The address the cluster is reached at; neither set is the address of the first node.
+type ClusterAddress struct {
+	// External A DNS name that resolves to the nodes.
+	External *string `json:"external,omitempty"`
+
+	// Virtual A virtual IPv4 address the nodes share.
+	Virtual *string `json:"virtual,omitempty"`
+}
+
+// ClusterNode defines model for ClusterNode.
+type ClusterNode struct {
+	// Address The node address in CIDR notation; unset with DHCP.
+	Address     *string          `json:"address,omitempty"`
+	Gateway     *string          `json:"gateway,omitempty"`
+	HostName    string           `json:"hostName"`
+	Maintenance bool             `json:"maintenance"`
+	Role        *ClusterNodeRole `json:"role,omitempty"`
+	Tags        []string         `json:"tags"`
+}
+
+// ClusterNodeRole defines model for ClusterNode.Role.
+type ClusterNodeRole string
+
+// ClusterSettings defines model for ClusterSettings.
+type ClusterSettings struct {
+	// Address The address the cluster is reached at; neither set is the address of the first node.
+	Address *ClusterAddress `json:"address,omitempty"`
+
+	// Nodes The nodes of the cluster, the first node first.
+	Nodes []ClusterNode `json:"nodes"`
 }
 
 // Condition defines model for Condition.

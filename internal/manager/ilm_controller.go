@@ -431,5 +431,5 @@ func ilmHostName(a *v1alpha1.Appliance) string {
 	if p := a.Spec.Platform; p != nil && p.HostName != "" {
 		return p.HostName
 	}
-	return a.Spec.Node.HostName
+	return a.Spec.HostName()
 }

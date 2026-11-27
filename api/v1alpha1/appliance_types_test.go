@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,7 +51,9 @@ func TestMain(m *testing.M) {
 func newAppliance(name string) *v1alpha1.Appliance {
 	return &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "ilm.example.com"}},
+		Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{
+			Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com", Role: v1alpha1.NodeRoleVoting}},
+		}},
 	}
 }
 
@@ -78,44 +81,120 @@ func TestApplianceRejectsOtherName(t *testing.T) {
 	}
 }
 
-func TestApplianceAddressImmutable(t *testing.T) {
-	a := newAppliance(v1alpha1.ApplianceName)
-	a.Spec.Node.Address = "10.0.2.15/24"
-	if err := create(t, a); err != nil {
-		t.Fatal(err)
-	}
-	a.Spec.Node.Address = "10.0.2.16/24"
-	wantInvalid(t, testClient.Update(context.Background(), a))
-	a.Spec.Node.Address = ""
-	wantInvalid(t, testClient.Update(context.Background(), a))
-}
-
-func TestApplianceAddressMayBeSetOnce(t *testing.T) {
+func TestNodeEntryImmutable(t *testing.T) {
+	ctx := context.Background()
 	a := newAppliance(v1alpha1.ApplianceName)
 	if err := create(t, a); err != nil {
 		t.Fatal(err)
 	}
-	a.Spec.Node.Address = "10.0.2.15/24"
-	if err := testClient.Update(context.Background(), a); err != nil {
-		t.Fatalf("setting an empty address must be accepted: %v", err)
+	a.Spec.FirstNode().Address = "10.0.2.15/24"
+	if err := testClient.Update(ctx, a); err != nil {
+		t.Fatalf("setting an address once must be accepted: %v", err)
 	}
-	a.Spec.Node.Gateway = "10.0.2.1"
-	if err := testClient.Update(context.Background(), a); err != nil {
+	a.Spec.FirstNode().Gateway = "10.0.2.1"
+	a.Spec.FirstNode().Tags = []string{"hsm"}
+	a.Spec.FirstNode().Maintenance = true
+	if err := testClient.Update(ctx, a); err != nil {
 		t.Fatalf("an unchanged address must be accepted: %v", err)
 	}
+	a.Spec.Cluster.Nodes = append(a.Spec.Cluster.Nodes, v1alpha1.ClusterNode{HostName: "node2.example.com", Address: "10.0.2.16/24", Role: v1alpha1.NodeRoleVoting})
+	if err := testClient.Update(ctx, a); err != nil {
+		t.Fatalf("a second node must be accepted: %v", err)
+	}
+	for _, address := range []string{"10.0.2.17/24", ""} {
+		a.Spec.NodeNamed("node2.example.com").Address = address
+		wantInvalid(t, testClient.Update(ctx, a))
+	}
+	a.Spec.NodeNamed("node2.example.com").Address = "10.0.2.16/24"
+	a.Spec.FirstNode().Address = "10.0.2.18/24"
+	wantInvalid(t, testClient.Update(ctx, a))
 }
 
-func TestApplianceHostNameImmutable(t *testing.T) {
+func TestNodeEntryHostNamesUnique(t *testing.T) {
 	a := newAppliance(v1alpha1.ApplianceName)
-	if err := create(t, a); err != nil {
-		t.Fatal(err)
+	a.Spec.Cluster.Nodes = append(a.Spec.Cluster.Nodes, *a.Spec.FirstNode())
+	wantInvalid(t, create(t, a))
+}
+
+func TestClusterAddressOneOf(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		address v1alpha1.ClusterAddress
+		ok      bool
+	}{
+		{name: "none", ok: true},
+		{name: "virtual", address: v1alpha1.ClusterAddress{Virtual: "10.0.2.100"}, ok: true},
+		{name: "external", address: v1alpha1.ClusterAddress{External: "ilm.example.com"}, ok: true},
+		{name: "both", address: v1alpha1.ClusterAddress{Virtual: "10.0.2.100", External: "ilm.example.com"}},
+		{name: "virtual CIDR", address: v1alpha1.ClusterAddress{Virtual: "10.0.2.100/24"}},
+		{name: "virtual IPv6", address: v1alpha1.ClusterAddress{Virtual: "fd00::1"}},
+		{name: "external not a name", address: v1alpha1.ClusterAddress{External: "ilm_example"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			a.Spec.Cluster.Address = tc.address
+			err := create(t, a)
+			if tc.ok && err != nil || !tc.ok && !apierrors.IsInvalid(err) {
+				t.Errorf("create: %v, want accepted %v", err, tc.ok)
+			}
+		})
 	}
-	a.Spec.Node.HostName = "pki.example.com"
-	wantInvalid(t, testClient.Update(context.Background(), a))
-	a.Spec.Node.HostName = "ilm.example.com"
-	a.Spec.Node.Gateway = "10.0.2.1"
-	if err := testClient.Update(context.Background(), a); err != nil {
-		t.Fatalf("an unchanged host name must be accepted: %v", err)
+}
+
+func TestTagPattern(t *testing.T) {
+	for tag, ok := range map[string]bool{
+		"hsm": true, "site-a": true, "0": true, strings.Repeat("a", 31): true,
+		strings.Repeat("a", 32): false, "HSM": false, "-hsm": false, "site.a": false,
+	} {
+		t.Run("node "+tag, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			a.Spec.FirstNode().Tags = []string{tag}
+			if err := create(t, a); ok && err != nil || !ok && !apierrors.IsInvalid(err) {
+				t.Errorf("create: %v, want accepted %v", err, ok)
+			}
+		})
+		t.Run("component "+tag, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			a.Spec.Platform = &v1alpha1.PlatformSpec{Components: []v1alpha1.ComponentSpec{{Name: "software-cryptography-provider", NodeTag: tag}}}
+			if err := create(t, a); ok && err != nil || !ok && !apierrors.IsInvalid(err) {
+				t.Errorf("create: %v, want accepted %v", err, ok)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		tags []string
+		ok   bool
+	}{
+		{name: "eight", tags: []string{"a", "b", "c", "d", "e", "f", "g", "h"}, ok: true},
+		{name: "nine", tags: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}},
+		{name: "duplicate", tags: []string{"hsm", "hsm"}},
+		{name: "empty", tags: []string{""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newAppliance(v1alpha1.ApplianceName)
+			a.Spec.FirstNode().Tags = tc.tags
+			if err := create(t, a); tc.ok && err != nil || !tc.ok && !apierrors.IsInvalid(err) {
+				t.Errorf("create: %v, want accepted %v", err, tc.ok)
+			}
+		})
+	}
+}
+
+func TestFirstAndNamedNode(t *testing.T) {
+	var spec v1alpha1.ApplianceSpec
+	if spec.FirstNode() != nil || spec.NodeNamed("a.example.com") != nil || spec.HostName() != "" {
+		t.Fatal("an Appliance without nodes has no first or named node")
+	}
+	spec.Cluster.Nodes = []v1alpha1.ClusterNode{{HostName: "a.example.com"}, {HostName: "b.example.com"}}
+	if n := spec.FirstNode(); n != &spec.Cluster.Nodes[0] || spec.HostName() != "a.example.com" {
+		t.Errorf("first node %+v", n)
+	}
+	if n := spec.NodeNamed("b.example.com"); n != &spec.Cluster.Nodes[1] {
+		t.Errorf("named node %+v", n)
+	}
+	if spec.NodeNamed("c.example.com") != nil {
+		t.Error("an unknown host name names a node")
 	}
 }
 
@@ -131,11 +210,11 @@ func TestApplianceTLSSecretNeedsRef(t *testing.T) {
 
 func TestApplianceHostNameMustBeFQDN(t *testing.T) {
 	a := newAppliance(v1alpha1.ApplianceName)
-	a.Spec.Node.HostName = "ilm"
+	a.Spec.FirstNode().HostName = "ilm"
 	wantInvalid(t, create(t, a))
-	a.Spec.Node.HostName = strings.Repeat("a", 64) + ".example.com"
+	a.Spec.FirstNode().HostName = strings.Repeat("a", 64) + ".example.com"
 	wantInvalid(t, create(t, a))
-	a.Spec.Node.HostName = strings.Repeat("a", 63) + ".example.com"
+	a.Spec.FirstNode().HostName = strings.Repeat("a", 63) + ".example.com"
 	if err := create(t, a); err != nil {
 		t.Fatalf("an FQDN with 63-character labels must be accepted: %v", err)
 	}
@@ -153,9 +232,9 @@ func TestApplianceMailPortRange(t *testing.T) {
 
 func TestApplianceComponentsMustBeUnique(t *testing.T) {
 	a := newAppliance(v1alpha1.ApplianceName)
-	a.Spec.Platform = &v1alpha1.PlatformSpec{Components: []string{"software-cryptography-provider", "software-cryptography-provider"}}
+	a.Spec.Platform = &v1alpha1.PlatformSpec{Components: []v1alpha1.ComponentSpec{{Name: "software-cryptography-provider"}, {Name: "software-cryptography-provider"}}}
 	wantInvalid(t, create(t, a))
-	a.Spec.Platform.Components = []string{"software-cryptography-provider", "x509-compliance-provider"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "software-cryptography-provider"}, {Name: "x509-compliance-provider"}}
 	if err := create(t, a); err != nil {
 		t.Fatalf("distinct components must be accepted: %v", err)
 	}
@@ -181,12 +260,12 @@ func TestApplianceNetworkFormat(t *testing.T) {
 		valid bool
 	}{
 		{"default first boot", func(*v1alpha1.Appliance) {}, true},
-		{"IPv4 CIDR", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "10.0.2.15/24" }, true},
-		{"address without prefix", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "10.0.2.15" }, false},
-		{"address octet out of range", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "10.0.2.300/24" }, false},
-		{"IPv6 address", func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "fd00::1/64" }, false},
-		{"IPv4 gateway", func(a *v1alpha1.Appliance) { a.Spec.Node.Gateway = "10.0.2.2" }, true},
-		{"gateway not an IP", func(a *v1alpha1.Appliance) { a.Spec.Node.Gateway = "gw" }, false},
+		{"IPv4 CIDR", func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Address = "10.0.2.15/24" }, true},
+		{"address without prefix", func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Address = "10.0.2.15" }, false},
+		{"address octet out of range", func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Address = "10.0.2.300/24" }, false},
+		{"IPv6 address", func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Address = "fd00::1/64" }, false},
+		{"IPv4 gateway", func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Gateway = "10.0.2.2" }, true},
+		{"gateway not an IP", func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Gateway = "gw" }, false},
 		{"DNS IP", func(a *v1alpha1.Appliance) { a.Spec.DNS.Servers = []string{"1.1.1.1"} }, true},
 		{"DNS host name", func(a *v1alpha1.Appliance) { a.Spec.DNS.Servers = []string{"dns.example"} }, false},
 		{"NTP host name", func(a *v1alpha1.Appliance) { a.Spec.NTP.Servers = []string{"pool.ntp.org"} }, true},
@@ -428,5 +507,12 @@ func TestUpdateStatusRoundTrip(t *testing.T) {
 	}
 	if s := got.Status.Update; s.To != "1.3.0" || s.Backup != "pre-update" || !s.PointOfNoReturn || s.StartedAt.IsZero() {
 		t.Fatalf("update lost: %+v", s)
+	}
+}
+
+func TestComponentNames(t *testing.T) {
+	p := v1alpha1.PlatformSpec{Components: []v1alpha1.ComponentSpec{{Name: "b"}, {Name: "a", NodeTag: "hsm"}}}
+	if got := p.ComponentNames(); !slices.Equal(got, []string{"b", "a"}) {
+		t.Errorf("ComponentNames() = %v", got)
 	}
 }

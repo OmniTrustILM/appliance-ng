@@ -20,6 +20,9 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/update"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
@@ -143,8 +146,14 @@ func TestManagerManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasSuffix(data, crd) {
-		t.Error("manager.yaml does not end with the generated Appliance CRD; run make manifests")
+	if !bytes.HasPrefix(data, crd) {
+		t.Error("manager.yaml does not start with the generated Appliance CRD; run make manifests")
+	}
+	// The first-boot service applies manager.yaml only while the DaemonSet is missing, so the DaemonSet must be
+	// applied last: its presence means the whole manifest was applied.
+	all := docs(t, "manager.yaml")
+	if last := all[len(all)-1]; last["kind"] != "DaemonSet" {
+		t.Errorf("manager.yaml ends with a %v, want the DaemonSet", last["kind"])
 	}
 
 	var images []string
@@ -178,6 +187,81 @@ func TestManagerManifest(t *testing.T) {
 	}
 	if len(images) != 1 || images[0] != m.ManagerImage {
 		t.Errorf("manager.yaml images = %v, want only the placeholder %q", images, m.ManagerImage)
+	}
+}
+
+// TestManagerIsDaemonSetOnVotingNodes runs one manager on every voting node, replaced one node at a time, with the
+// permissions leader election and node actions need.
+func TestManagerIsDaemonSetOnVotingNodes(t *testing.T) {
+	var daemonSet *appsv1.DaemonSet
+	var rules []rbacv1.PolicyRule
+	var leaseRules []rbacv1.PolicyRule
+	for _, doc := range docs(t, "manager.yaml") {
+		data, err := yaml.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch doc["kind"] {
+		case "Deployment":
+			t.Errorf("manager.yaml has a Deployment %v", doc["metadata"])
+		case "DaemonSet":
+			daemonSet = &appsv1.DaemonSet{}
+			if err := yaml.Unmarshal(data, daemonSet); err != nil {
+				t.Fatal(err)
+			}
+		case "ClusterRole", "Role":
+			role := &rbacv1.Role{}
+			if err := yaml.Unmarshal(data, role); err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case role.Name == "appliance-manager" && doc["kind"] == "ClusterRole":
+				rules = role.Rules
+			case role.Name == "appliance-manager" && role.Namespace == kube.SystemNamespace:
+				leaseRules = role.Rules
+			}
+		}
+	}
+	if daemonSet == nil || daemonSet.Namespace != kube.SystemNamespace || daemonSet.Name != "appliance-manager" {
+		t.Fatalf("manager.yaml has no DaemonSet %s/appliance-manager", kube.SystemNamespace)
+	}
+	pod := daemonSet.Spec.Template.Spec
+	if len(pod.NodeSelector) != 1 || pod.NodeSelector["node-role.kubernetes.io/control-plane"] != "" {
+		t.Errorf("node selector %v, want the control-plane nodes", pod.NodeSelector)
+	}
+	if u := daemonSet.Spec.UpdateStrategy; u.Type != appsv1.RollingUpdateDaemonSetStrategyType || u.RollingUpdate == nil ||
+		u.RollingUpdate.MaxUnavailable == nil || u.RollingUpdate.MaxUnavailable.IntValue() != 1 {
+		t.Errorf("update strategy %+v, want a rolling update of one node at a time", u)
+	}
+	if !pod.HostNetwork || len(pod.Tolerations) != 2 {
+		t.Errorf("host network %v, tolerations %v", pod.HostNetwork, pod.Tolerations)
+	}
+	if ports := pod.Containers[0].Ports; !slices.ContainsFunc(ports, func(p corev1.ContainerPort) bool {
+		return p.Name == "peer" && p.ContainerPort == 8445
+	}) {
+		t.Errorf("ports %v, want the peer port 8445", ports)
+	}
+	if !slices.ContainsFunc(pod.Volumes, func(v corev1.Volume) bool {
+		return v.HostPath != nil && v.HostPath.Path == "/var/mnt/data/appliance"
+	}) {
+		t.Error("the manager keeps no data on the node")
+	}
+	grants := func(rules []rbacv1.PolicyRule, group, resource, verb string) bool {
+		return slices.ContainsFunc(rules, func(r rbacv1.PolicyRule) bool {
+			return len(r.ResourceNames) == 0 && slices.Contains(r.APIGroups, group) && slices.Contains(r.Resources, resource) &&
+				slices.Contains(r.Verbs, verb)
+		})
+	}
+	for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete"} {
+		if !grants(leaseRules, "coordination.k8s.io", "leases", verb) {
+			t.Errorf("the manager cannot %s leases in %s", verb, kube.SystemNamespace)
+		}
+	}
+	if grants(rules, "coordination.k8s.io", "leases", "update") {
+		t.Error("the manager may update leases outside its namespace")
+	}
+	if !grants(rules, "", "pods/eviction", "create") || !grants(rules, "", "nodes", "patch") {
+		t.Error("the manager cannot evict pods or cordon nodes")
 	}
 }
 

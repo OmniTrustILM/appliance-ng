@@ -44,6 +44,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/backup"
 	"github.com/OmniTrustILM/appliance-ng/internal/bundle"
 	"github.com/OmniTrustILM/appliance-ng/internal/bundle/bundletest"
+	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/storage"
@@ -53,7 +54,7 @@ import (
 const (
 	testArch     = "amd64"
 	testOperator = "v1.1.0"
-	managerYAML  = "kind: Deployment\n"
+	managerYAML  = "kind: DaemonSet\n"
 	operatorYAML = "kind: Deployment\nmetadata: {name: ilm-operator}\n"
 )
 
@@ -92,6 +93,8 @@ const sourceHost = "example.com"
 
 // TestMain serves the source registry for every test.
 func TestMain(m *testing.M) {
+	// The node the manager runs on, as the Downward API names it.
+	_ = os.Setenv(kube.NodeNameEnv, nodeName)
 	src := httptest.NewTLSServer(ggcr.New(ggcr.Logger(log.New(io.Discard, "", 0))))
 	sourcePool = x509.NewCertPool()
 	sourceCert = src.Certificate()

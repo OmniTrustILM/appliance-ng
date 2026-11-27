@@ -12,7 +12,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 
 	"github.com/OmniTrustILM/appliance-ng/internal/recovery"
 )
@@ -123,24 +122,24 @@ func TestNodeBack(t *testing.T) {
 }
 
 func TestRunsImage(t *testing.T) {
-	deployment := func(image string, available int32) *appsv1.Deployment {
-		return &appsv1.Deployment{
+	daemonSet := func(image string, available int32) *appsv1.DaemonSet {
+		return &appsv1.DaemonSet{
 			ObjectMeta: metav1.ObjectMeta{Generation: 2},
-			Spec: appsv1.DeploymentSpec{Replicas: ptr.To[int32](1), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Spec: appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{Name: managerContainer, Image: image}},
 			}}},
-			Status: appsv1.DeploymentStatus{ObservedGeneration: 2, Replicas: 1, UpdatedReplicas: 1, AvailableReplicas: available},
+			Status: appsv1.DaemonSetStatus{ObservedGeneration: 2, DesiredNumberScheduled: 1, UpdatedNumberScheduled: 1, NumberAvailable: available},
 		}
 	}
 	for _, image := range []string{testManagerImage, testManagerImage + "@sha256:" + strings.Repeat("a", 64)} {
-		if err := runsImage(deployment(image, 1), testManagerImage); err != nil {
+		if err := runsImage(daemonSet(image, 1), testManagerImage); err != nil {
 			t.Errorf("runsImage(%s) = %v", image, err)
 		}
 	}
-	if err := runsImage(deployment("localhost:5005/manager:0.0.0-test-arm64", 1), testManagerImage); err == nil {
+	if err := runsImage(daemonSet("localhost:5005/manager:0.0.0-test-arm64", 1), testManagerImage); err == nil {
 		t.Error("the previous manager image passed")
 	}
-	if err := runsImage(deployment(testManagerImage, 0), testManagerImage); err == nil {
+	if err := runsImage(daemonSet(testManagerImage, 0), testManagerImage); err == nil {
 		t.Error("a manager that is not available passed")
 	}
 }

@@ -9,9 +9,11 @@ import (
 	"io/fs"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 
@@ -21,10 +23,19 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 )
 
-// managerFile is the add-on manifest of the Appliance Manager: its namespace, CRD, RBAC and Deployment.
-const managerFile = "manager.yaml"
+const (
+	// managerFile is the add-on manifest of the Appliance Manager: its namespace, CRD, RBAC and DaemonSet.
+	managerFile = "manager.yaml"
+	// managerDaemonSet is the Appliance Manager's DaemonSet in the system namespace.
+	managerDaemonSet = "appliance-manager"
+	// managerContainer is the Appliance Manager's container in its DaemonSet.
+	managerContainer = "manager"
+)
 
-var applianceResource = v1alpha1.GroupVersion.WithResource("appliances")
+var (
+	applianceResource = v1alpha1.GroupVersion.WithResource("appliances")
+	daemonSetResource = appsv1.SchemeGroupVersion.WithResource("daemonsets")
+)
 
 // Cluster is the Kubernetes API as the first-boot service uses it.
 type Cluster interface {
@@ -34,11 +45,17 @@ type Cluster interface {
 	Create(ctx context.Context, docs []byte) error
 	// Appliance reads the Appliance from the API server.
 	Appliance(ctx context.Context) (*v1alpha1.Appliance, error)
+	// ManagerExists reports whether the cluster has the Appliance Manager's DaemonSet. The DaemonSet is the
+	// manifest's last object, so its presence means the whole manifest was applied.
+	ManagerExists(ctx context.Context) (bool, error)
+	// SetManagerImage sets the image of the Appliance Manager's container in its DaemonSet.
+	SetManagerImage(ctx context.Context, image string) error
 }
 
 type localCluster struct {
 	kube.Cluster
 	appliances dynamic.ResourceInterface
+	daemonSets dynamic.ResourceInterface
 }
 
 // NewLocalCluster connects through KubePrism with the credentials of the given kubeconfig. It reads without a
@@ -56,7 +73,50 @@ func NewLocalCluster(kubeconfig []byte) (Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create dynamic client: %w", err)
 	}
-	return &localCluster{Cluster: applier, appliances: dyn.Resource(applianceResource)}, nil
+	return &localCluster{
+		Cluster:    applier,
+		appliances: dyn.Resource(applianceResource),
+		daemonSets: dyn.Resource(daemonSetResource).Namespace(kube.SystemNamespace),
+	}, nil
+}
+
+func (c *localCluster) ManagerExists(ctx context.Context) (bool, error) {
+	_, err := c.daemonSets.Get(ctx, managerDaemonSet, metav1.GetOptions{})
+	switch {
+	case err == nil:
+		return true, nil
+	case apierrors.IsNotFound(err):
+		return false, nil
+	}
+	return false, fmt.Errorf("read the Appliance Manager's DaemonSet: %w", err)
+}
+
+func (c *localCluster) SetManagerImage(ctx context.Context, image string) error {
+	ds, err := c.daemonSets.Get(ctx, managerDaemonSet, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read the Appliance Manager's DaemonSet: %w", err)
+	}
+	containers, _, err := unstructured.NestedSlice(ds.Object, "spec", "template", "spec", "containers")
+	if err != nil {
+		return fmt.Errorf("read the Appliance Manager's DaemonSet: %w", err)
+	}
+	found := false
+	for _, c := range containers {
+		if m, ok := c.(map[string]any); ok && m["name"] == managerContainer {
+			m["image"], found = image, true
+		}
+	}
+	if !found {
+		return errors.New("the Appliance Manager's DaemonSet has no manager container")
+	}
+	if err := unstructured.SetNestedSlice(ds.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+		return fmt.Errorf("set the Appliance Manager's image: %w", err)
+	}
+	// The update carries the read resourceVersion, so a DaemonSet changed in between is not overwritten.
+	if _, err := c.daemonSets.Update(ctx, ds, metav1.UpdateOptions{FieldManager: kube.ManagerFieldManager}); err != nil {
+		return fmt.Errorf("set the Appliance Manager's image: %w", err)
+	}
+	return nil
 }
 
 func (c *localCluster) Appliance(ctx context.Context) (*v1alpha1.Appliance, error) {
@@ -98,20 +158,33 @@ func defaultAppliance(hostName, ilmVersion string) ([]byte, error) {
 		"kind":       "Appliance",
 		"metadata":   map[string]any{"name": v1alpha1.ApplianceName},
 		"spec": v1alpha1.ApplianceSpec{
-			Node:     v1alpha1.NodeSpec{HostName: hostName},
+			Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+				{HostName: hostName, Role: v1alpha1.NodeRoleVoting},
+			}},
 			TLS:      v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
 			Platform: &v1alpha1.PlatformSpec{ILMVersion: ilmVersion, HostName: hostName},
 		},
 	})
 }
 
-// handover applies the Appliance Manager and hands the answers of wizard part 1 over to it. A node without a
-// hand-over file, set up before the wizard existed, gets the default Appliance unless one exists, which is left as
-// it is. Every step is safe to repeat, so every start of the service runs them.
+// handover applies the Appliance Manager unless the cluster has one and hands the answers of wizard part 1 over to
+// it. A running manager is left alone, as it may be newer than this release's after a Talos rollback or an older boot
+// during an update. Every step is safe to repeat, as every start of the service runs them.
 func (r *runner) handover(ctx context.Context, cluster Cluster) (bool, error) {
-	r.set(StateHandover, "", "applying the Appliance Manager")
-	if err := cluster.Apply(ctx, r.d.Manager); err != nil {
-		return false, fmt.Errorf("apply the Appliance Manager: %w", err)
+	r.set(StateHandover, "", "checking the Appliance Manager")
+	running, err := cluster.ManagerExists(ctx)
+	if err != nil {
+		return false, err
+	}
+	if running {
+		if err := r.runPreviousManager(ctx, cluster); err != nil {
+			return false, err
+		}
+	} else {
+		r.set(StateHandover, "", "applying the Appliance Manager")
+		if err := cluster.Apply(ctx, r.d.Manager); err != nil {
+			return false, fmt.Errorf("apply the Appliance Manager: %w", err)
+		}
 	}
 	file, err := r.handoverFile(ctx)
 	if err != nil {
@@ -134,6 +207,36 @@ func (r *runner) handover(ctx context.Context, cluster Cluster) (bool, error) {
 	}
 	r.d.Log.Info("setup handed over to the Appliance Manager")
 	return true, nil
+}
+
+// runPreviousManager runs the recorded previous manager again when a system update waits past its deadline for the new
+// release's manager, which may never have started once the rolling update stopped the previous one. A failed read is
+// retried.
+func (r *runner) runPreviousManager(ctx context.Context, cluster Cluster) error {
+	a, err := cluster.Appliance(ctx)
+	switch {
+	case apierrors.IsNotFound(err):
+		r.d.Log.Info("the Appliance Manager runs, leaving it as it is")
+		return nil
+	case err != nil:
+		return err
+	}
+	if !a.Status.Update.HandOverOverdue(time.Now()) {
+		r.d.Log.Info("the Appliance Manager runs, leaving it as it is")
+		return nil
+	}
+	return r.restorePreviousManager(ctx, cluster, a.Status.Update)
+}
+
+// restorePreviousManager runs the previous manager of the system update u again when u waits past its deadline for
+// the new manager. It is checked on every pass, as the deadline may pass long after the boot.
+func (r *runner) restorePreviousManager(ctx context.Context, cluster Cluster, u *v1alpha1.UpdateStatus) error {
+	if !u.HandOverOverdue(time.Now()) {
+		return nil
+	}
+	r.d.Log.Warn("the manager of the new release did not take the system update over in time; "+
+		"running the previous Appliance Manager again", "to", u.To, "deadline", u.Deadline, "image", u.PreviousManager)
+	return cluster.SetManagerImage(ctx, u.PreviousManager)
 }
 
 // handoverFile returns the hand-over file from the machine configuration, or nil when there is none. Talos mounts
@@ -250,7 +353,8 @@ func (r *runner) mirror(ctx context.Context, cluster Cluster) {
 	}
 }
 
-// mirrorPass reads the Appliance once and reports its state. The first time the Appliance is ready, the node is
+// mirrorPass reads the Appliance once, reports its state and runs the previous manager again when a system update
+// waits for the manager of the new release past its deadline. The first time the Appliance is ready, the node is
 // marked ready before the state says so.
 func (r *runner) mirrorPass(ctx context.Context, cluster Cluster) error {
 	a, err := cluster.Appliance(ctx)
@@ -261,7 +365,7 @@ func (r *runner) mirrorPass(ctx context.Context, cluster Cluster) error {
 	if err != nil {
 		return err
 	}
-	r.s.setHostName(a.Spec.Node.HostName)
+	r.s.setHostName(a.Spec.HostName())
 	state, message := applianceState(a)
 	if state == StateReady && !r.marked {
 		r.set(StatePlatform, "", message)
@@ -271,7 +375,7 @@ func (r *runner) mirrorPass(ctx context.Context, cluster Cluster) error {
 		r.marked, r.wasReady = true, true
 	}
 	r.set(state, "", message)
-	return nil
+	return r.restorePreviousManager(ctx, cluster, a.Status.Update)
 }
 
 // applianceState maps the Appliance conditions to the setup state: the hand-over while the import of the setup

@@ -73,7 +73,7 @@ func ilmHost(spec v1alpha1.ApplianceSpec) string {
 	if spec.Platform != nil && spec.Platform.HostName != "" {
 		return spec.Platform.HostName
 	}
-	return spec.Node.HostName
+	return spec.HostName()
 }
 
 // rehost moves the URLs of every client of the ILM realm from the host from to the host to and returns how many

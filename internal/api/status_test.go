@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -160,8 +161,11 @@ func TestGetAppliance(t *testing.T) {
 	h := newHarness(t)
 	s := h.signIn()
 	a := createAppliance(t, v1alpha1.SetupPart2)
-	a.Spec.Node.Address = "192.0.2.5/24"
-	a.Spec.Node.Gateway = "192.0.2.1"
+	a.Spec.FirstNode().Address = "192.0.2.5/24"
+	a.Spec.FirstNode().Gateway = "192.0.2.1"
+	a.Spec.FirstNode().Role = v1alpha1.NodeRoleVoting
+	a.Spec.FirstNode().Tags = []string{"hsm"}
+	a.Spec.Cluster.Address.Virtual = "192.0.2.100"
 	a.Spec.DNS.Servers = []string{"192.0.2.53"}
 	a.Spec.NTP.Servers = []string{"time.example.com"}
 	a.Spec.Proxy = &v1alpha1.ProxySpec{HTTPS: "http://proxy.example.com:3128"}
@@ -176,8 +180,10 @@ func TestGetAppliance(t *testing.T) {
 	wantStatus(t, rec, http.StatusOK)
 	var got ApplianceSettings
 	decode(t, rec, &got)
-	if got.Node.HostName != "appliance.example.com" || *got.Node.Address != "192.0.2.5/24" || *got.Node.Gateway != "192.0.2.1" {
-		t.Errorf("node = %+v", got.Node)
+	if n := got.Cluster.Nodes; len(n) != 1 || n[0].HostName != "appliance.example.com" || *n[0].Address != "192.0.2.5/24" || *n[0].Gateway != "192.0.2.1" ||
+		*n[0].Role != Voting || !slices.Equal(n[0].Tags, []string{"hsm"}) ||
+		got.Cluster.Address == nil || *got.Cluster.Address.Virtual != "192.0.2.100" || got.Cluster.Address.External != nil {
+		t.Errorf("cluster = %+v", got.Cluster)
 	}
 	if got.TlsSource != ApplianceSettingsTlsSourceBuiltin || !got.TrustSet || len(got.Dns) != 1 || len(got.Ntp) != 1 || got.Proxy == nil || *got.Proxy.Https == "" {
 		t.Errorf("settings = %+v", got)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +19,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/OmniTrustILM/appliance-ng/api/v1alpha1"
+	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/setup"
 	"github.com/OmniTrustILM/appliance-ng/internal/talos"
 )
@@ -65,7 +67,7 @@ func TestLocalClusterReadsTheAppliance(t *testing.T) {
 		"apiVersion": v1alpha1.GroupVersion.String(),
 		"kind":       "Appliance",
 		"metadata":   map[string]any{"name": v1alpha1.ApplianceName},
-		"spec":       map[string]any{"node": map[string]any{"hostName": testHostName}},
+		"spec":       map[string]any{"cluster": map[string]any{"nodes": []any{map[string]any{"hostName": testHostName}}}},
 		"status": map[string]any{"conditions": []any{map[string]any{
 			"type": v1alpha1.ConditionAddonsReady, "status": "True", "reason": "Ready", "message": "all add-ons are ready",
 			"lastTransitionTime": "2026-11-17T10:00:00Z",
@@ -79,7 +81,7 @@ func TestLocalClusterReadsTheAppliance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Spec.Node.HostName != testHostName || len(a.Status.Conditions) != 1 || a.Status.Conditions[0].Message != "all add-ons are ready" {
+	if a.Spec.FirstNode().HostName != testHostName || len(a.Status.Conditions) != 1 || a.Status.Conditions[0].Message != "all add-ons are ready" {
 		t.Errorf("read %+v, want the stored Appliance", a)
 	}
 }
@@ -330,4 +332,225 @@ func TestRunShowsTheApplianceHostName(t *testing.T) {
 
 	want := "https://" + existingHostName + " (node 10.0.2.15)\n"
 	eventually(t, "the Appliance host name on the console", func() bool { return strings.Contains(h.console.String(), want) })
+}
+
+// TestFirstBootDoesNotReplaceDaemonSet leaves the manager's DaemonSet alone at boot: it may run a newer manager than
+// the one this first boot carries, as during a rolling update or after a Talos rollback.
+func TestFirstBootDoesNotReplaceDaemonSet(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
+	cluster := newReadyCluster()
+	cluster.appliance, cluster.manager = existingAppliance(), true
+	h := newHarness(node, cluster)
+	h.start(t)
+	h.waitState(t, StateReady)
+	h.stop(t)
+	if applied, _, _ := cluster.snapshot(); len(applied) != 0 || cluster.managerImage() != "" {
+		t.Errorf("applied %q, set image %q over the running manager", applied, cluster.managerImage())
+	}
+}
+
+const previousManagerImage = "registry.example/manager:v0"
+
+// handOverWait is a system update waiting at step for the manager of the new release, with the hand-over deadline at
+// deadline.
+func handOverWait(step string, deadline time.Time) *v1alpha1.UpdateStatus {
+	d := metav1.NewTime(deadline)
+	return &v1alpha1.UpdateStatus{
+		Kind: v1alpha1.UpdateKindSystem, From: "1.0.0", To: "1.1.0", Step: step, StartedAt: metav1.Now(),
+		PreviousManager: previousManagerImage, Deadline: &d,
+	}
+}
+
+// runningManagerNode is a bootstrapped node whose cluster runs the manager and has the Appliance with update u.
+func runningManagerNode(u *v1alpha1.UpdateStatus) (*fakeNode, *fakeCluster) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
+	cluster := newReadyCluster()
+	cluster.appliance, cluster.manager = existingAppliance(), true
+	cluster.status.Update = u
+	return node, cluster
+}
+
+// TestFirstBootRunsThePreviousManagerPastTheHandOver runs the recorded previous manager again when the manager of
+// the new release did not take a system update over by its deadline, as no manager may run at all then; the previous
+// manager then fails the update.
+func TestFirstBootRunsThePreviousManagerPastTheHandOver(t *testing.T) {
+	past := time.Now().Add(-time.Minute)
+	for _, step := range []string{v1alpha1.UpdateStepManager, v1alpha1.UpdateStepTalos} {
+		t.Run(step, func(t *testing.T) {
+			node, cluster := runningManagerNode(handOverWait(step, past))
+			h := newHarness(node, cluster)
+			h.start(t)
+			eventually(t, "the previous manager set", func() bool { return cluster.managerImage() == previousManagerImage })
+			if applied, _, _ := cluster.snapshot(); len(applied) != 0 {
+				t.Errorf("applied %q", applied)
+			}
+			if !strings.Contains(h.log.String(), "running the previous Appliance Manager again") {
+				t.Errorf("the log does not say so:\n%s", h.log.String())
+			}
+		})
+	}
+}
+
+// TestFirstBootRunsThePreviousManagerWhenTheDeadlinePassesLater runs the previous manager again when the hand-over
+// deadline passes while the status is mirrored, long after the boot: the common case of an update without a reboot.
+func TestFirstBootRunsThePreviousManagerWhenTheDeadlinePassesLater(t *testing.T) {
+	node, cluster := runningManagerNode(handOverWait(v1alpha1.UpdateStepTalos, time.Now().Add(500*time.Millisecond)))
+	h := newHarness(node, cluster)
+	h.start(t)
+	h.waitState(t, StateReady)
+	if got := cluster.managerImage(); got != "" {
+		t.Fatalf("set image %q before the deadline", got)
+	}
+	eventually(t, "the previous manager set", func() bool { return cluster.managerImage() == previousManagerImage })
+	if applied, _, _ := cluster.snapshot(); len(applied) != 0 {
+		t.Errorf("applied %q", applied)
+	}
+}
+
+// TestFirstBootLeavesTheManagerOfAnUpdateAlone never touches the manager's DaemonSet for an update that does not wait
+// for the new manager past its deadline.
+func TestFirstBootLeavesTheManagerOfAnUpdateAlone(t *testing.T) {
+	future, past := time.Now().Add(time.Hour), time.Now().Add(-time.Minute)
+	booted := handOverWait(v1alpha1.UpdateStepTalos, past)
+	booted.BootID = "boot-1"
+	failed := handOverWait(v1alpha1.UpdateStepTalos, past)
+	failed.Message = "managerDidNotStart"
+	handedBack := handOverWait(v1alpha1.UpdateStepTalos, past)
+	handedBack.HandBack = "talosUpgradeRefused"
+	noPrevious := handOverWait(v1alpha1.UpdateStepManager, past)
+	noPrevious.PreviousManager = ""
+	noDeadline := handOverWait(v1alpha1.UpdateStepTalos, past)
+	noDeadline.Deadline = nil
+	platform := handOverWait(v1alpha1.UpdateStepManager, past)
+	platform.Kind = "platform"
+	for name, u := range map[string]*v1alpha1.UpdateStatus{
+		"no update":           nil,
+		"before the deadline": handOverWait(v1alpha1.UpdateStepTalos, future),
+		"boot recorded":       booted,
+		"failed":              failed,
+		"handed back":         handedBack,
+		"past the hand-over":  handOverWait("health", past),
+		"no previous manager": noPrevious,
+		"no deadline":         noDeadline,
+		"platform update":     platform,
+	} {
+		t.Run(name, func(t *testing.T) {
+			node, cluster := runningManagerNode(u)
+			h := newHarness(node, cluster)
+			h.start(t)
+			h.waitState(t, StateReady)
+			h.stop(t)
+			if applied, _, _ := cluster.snapshot(); len(applied) != 0 || cluster.managerImage() != "" {
+				t.Errorf("applied %q, set image %q", applied, cluster.managerImage())
+			}
+		})
+	}
+}
+
+// TestFirstBootRetriesASetManagerImage keeps trying to run the previous manager while the DaemonSet cannot be changed.
+func TestFirstBootRetriesASetManagerImage(t *testing.T) {
+	node, cluster := runningManagerNode(handOverWait(v1alpha1.UpdateStepTalos, time.Now().Add(-time.Minute)))
+	cluster.imageErr = errors.New("conflict")
+	h := newHarness(node, cluster)
+	h.start(t)
+	eventually(t, "the failure reported", func() bool { return strings.Contains(h.store.Get().Message, "conflict") })
+	cluster.mu.Lock()
+	cluster.imageErr = nil
+	cluster.mu.Unlock()
+	eventually(t, "the previous manager set", func() bool { return cluster.managerImage() == previousManagerImage })
+}
+
+func TestLocalClusterSetsTheManagerImage(t *testing.T) {
+	ds := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "DaemonSet",
+		"metadata": map[string]any{"name": managerDaemonSet, "namespace": kube.SystemNamespace},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
+			map[string]any{"name": "sidecar", "image": "sidecar:1"},
+			map[string]any{"name": managerContainer, "image": "registry.example/manager:v1"},
+		}}}},
+	}}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{daemonSetResource: "DaemonSetList"}, ds)
+	c := &localCluster{daemonSets: dyn.Resource(daemonSetResource).Namespace(kube.SystemNamespace)}
+	if err := c.SetManagerImage(context.Background(), previousManagerImage); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.daemonSets.Get(context.Background(), managerDaemonSet, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers, _, _ := unstructured.NestedSlice(got.Object, "spec", "template", "spec", "containers")
+	if img := containers[1].(map[string]any)["image"]; img != previousManagerImage {
+		t.Errorf("manager image %v, want %s", img, previousManagerImage)
+	}
+	if img := containers[0].(map[string]any)["image"]; img != "sidecar:1" {
+		t.Errorf("other container changed to %v", img)
+	}
+	empty := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "DaemonSet",
+		"metadata": map[string]any{"name": managerDaemonSet, "namespace": kube.SystemNamespace},
+	}}
+	dyn = dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{daemonSetResource: "DaemonSetList"}, empty)
+	c = &localCluster{daemonSets: dyn.Resource(daemonSetResource).Namespace(kube.SystemNamespace)}
+	if err := c.SetManagerImage(context.Background(), previousManagerImage); err == nil {
+		t.Error("set the image of a DaemonSet without the manager container")
+	}
+}
+
+func TestFirstBootAppliesWhenNoManager(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
+	cluster := newReadyCluster()
+	h := newHarness(node, cluster)
+	h.start(t)
+	h.waitState(t, StateReady)
+	h.stop(t)
+	if applied, _, _ := cluster.snapshot(); len(applied) != 1 || string(applied[0]) != testManager {
+		t.Errorf("applied %q, want the manager manifest once", applied)
+	}
+}
+
+func TestFirstBootRetriesAnUnreadableManager(t *testing.T) {
+	node := &fakeNode{stage: talos.StageRunning, bootstrapped: true, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
+	cluster := newReadyCluster()
+	cluster.managerErr = errors.New("connection refused")
+	h := newHarness(node, cluster)
+	h.start(t)
+	eventually(t, "the failed check reported", func() bool {
+		return strings.Contains(h.store.Get().Message, "connection refused")
+	})
+	if applied, _, _ := cluster.snapshot(); len(applied) != 0 {
+		t.Errorf("applied %q without knowing whether a manager runs", applied)
+	}
+	cluster.mu.Lock()
+	cluster.managerErr = nil
+	cluster.mu.Unlock()
+	h.waitState(t, StateReady)
+	if applied, _, _ := cluster.snapshot(); len(applied) != 1 {
+		t.Errorf("applied %d times, want once", len(applied))
+	}
+}
+
+func TestLocalClusterFindsTheManager(t *testing.T) {
+	ds := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "DaemonSet",
+		"metadata": map[string]any{"name": managerDaemonSet, "namespace": kube.SystemNamespace},
+	}}
+	lists := map[schema.GroupVersionResource]string{daemonSetResource: "DaemonSetList"}
+	for name, tt := range map[string]struct {
+		objs []runtime.Object
+		want bool
+	}{
+		"running": {[]runtime.Object{ds}, true},
+		"missing": {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), lists, tt.objs...)
+			c := &localCluster{daemonSets: dyn.Resource(daemonSetResource).Namespace(kube.SystemNamespace)}
+			got, err := c.ManagerExists(context.Background())
+			if err != nil || got != tt.want {
+				t.Errorf("ManagerExists = %v, %v, want %v", got, err, tt.want)
+			}
+		})
+	}
 }

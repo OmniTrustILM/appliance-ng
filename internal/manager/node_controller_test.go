@@ -111,7 +111,7 @@ func (f *fakeNodeConfig) document(t *testing.T, id string) configdoc.Document {
 // firstBootDocuments are the node documents first boot generates for spec, with its static address on testLink.
 func firstBootDocuments(t *testing.T, spec v1alpha1.ApplianceSpec) []configdoc.Document {
 	t.Helper()
-	link := nodeconfig.LinkConfig(testLink, netip.MustParsePrefix(spec.Node.Address), netip.MustParseAddr(spec.Node.Gateway))
+	link := nodeconfig.LinkConfig(testLink, netip.MustParsePrefix(spec.FirstNode().Address), netip.MustParseAddr(spec.FirstNode().Gateway))
 	docs, err := nodeconfig.Render(&v1alpha1.Appliance{Spec: spec}, nodeconfig.Node{IP: "192.0.2.10", Link: link}, nodeconfig.Secrets{})
 	if err != nil {
 		t.Fatal(err)
@@ -206,7 +206,7 @@ func TestNodeReconcilerPatchesOnlyChanged(t *testing.T) {
 	}
 	wantNodeConfigured(t, metav1.ConditionTrue, reasonApplied, false)
 
-	editSpec(t, func(s *v1alpha1.ApplianceSpec) { s.Node.Gateway = "192.0.2.254" })
+	editSpec(t, func(s *v1alpha1.ApplianceSpec) { s.FirstNode().Gateway = "192.0.2.254" })
 	mustReconcileNode(t, r)
 	if replaced, _ := node.lastCall(); !slices.Equal(replaced, []string{network.LinkKind + "/" + testLink}) {
 		t.Fatalf("replaced %v, want only the link", replaced)
@@ -396,7 +396,7 @@ func TestNodeIPPrefersTheStaticAddress(t *testing.T) {
 	if got := nodeIP(a, node); got != "192.0.2.10" {
 		t.Errorf("nodeIP = %q, want the static address", got)
 	}
-	a.Spec.Node.Address = ""
+	a.Spec.FirstNode().Address = ""
 	if got := nodeIP(a, node); got != "198.51.100.7" {
 		t.Errorf("nodeIP = %q, want the internal address with DHCP", got)
 	}

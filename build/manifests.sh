@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Writes addons/manager.yaml from addons/src/manager.yaml and the generated Appliance CRD, and pins its sha256 in
-# release.yaml.
+# Writes addons/manager.yaml from the generated Appliance CRD and addons/src/manager.yaml, and pins its sha256 in
+# release.yaml. The CRD comes first, so that the manager's DaemonSet is the last document.
 set -euo pipefail
 export LC_ALL=C
 
 cd "$(dirname "$0")/.."
 readonly release=release.yaml manifest=addons/manager.yaml
 
-cat addons/src/manager.yaml config/crd/appliance.otilm.com_appliances.yaml >"$manifest"
+cat config/crd/appliance.otilm.com_appliances.yaml addons/src/manager.yaml >"$manifest"
 
 if command -v sha256sum >/dev/null; then sum="$(sha256sum "$manifest")"; else sum="$(shasum -a 256 "$manifest")"; fi
 sum="${sum%% *}"

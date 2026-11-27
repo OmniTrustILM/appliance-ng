@@ -60,12 +60,13 @@ type RegistryAuth struct {
 // the address it runs with and only its route follows the gateway.
 func Render(a *v1alpha1.Appliance, node Node, secrets Secrets) ([]config.Document, error) {
 	spec := a.Spec
-	if spec.Node.HostName == "" {
+	first := spec.FirstNode()
+	if first == nil || first.HostName == "" {
 		return nil, errors.New("the Appliance has no host name")
 	}
-	docs := []config.Document{HostnameConfig(spec.Node.HostName)}
+	docs := []config.Document{HostnameConfig(first.HostName)}
 
-	link, err := gatewayLink(spec.Node.Gateway, node.Link)
+	link, err := gatewayLink(first.Gateway, node.Link)
 	if err != nil {
 		return nil, err
 	}

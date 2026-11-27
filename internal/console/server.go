@@ -23,10 +23,16 @@ const (
 // NewServer returns the HTTPS server of the console for the address listen; it serves handler with the
 // certificate cert.
 func NewServer(log *slog.Logger, listen string, handler http.Handler, cert *Certificate) *http.Server {
+	return NewPeerServer(log, listen, handler, &tls.Config{GetCertificate: cert.GetCertificate, MinVersion: tls.VersionTLS12})
+}
+
+// NewPeerServer returns the HTTPS server of the peer listener for the address listen, with the console's timeouts;
+// it serves handler with the TLS configuration tlsConfig.
+func NewPeerServer(log *slog.Logger, listen string, handler http.Handler, tlsConfig *tls.Config) *http.Server {
 	return &http.Server{
 		Addr:              listen,
 		Handler:           handler,
-		TLSConfig:         &tls.Config{GetCertificate: cert.GetCertificate, MinVersion: tls.VersionTLS12},
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

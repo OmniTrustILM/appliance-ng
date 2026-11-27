@@ -92,7 +92,7 @@
 // instead, installs it, which replaces the manager and reboots the node, and waits until it is done and the appliance
 // runs the bundle's version, Talos --talos-version and Kubernetes --kubernetes-version.
 // reboot signs in and power-cycles the node with the talosconfig of the kit in --kit, waits with the kit's kubeconfig
-// until the node is Ready with another boot ID, zot is available and the manager Deployment runs --manager-image, and
+// until the node is Ready with another boot ID, zot is available and the manager DaemonSet runs --manager-image, and
 // checks that the last update is a system update that is done without a failure. It prints boot IDs, images and
 // steps only.
 //
@@ -209,7 +209,7 @@ func main() {
 	fs.StringVar(&o.kind, "kind", kindPlatform, "kind of the bundle in --file, platform or system (update)")
 	fs.StringVar(&o.talosVersion, "talos-version", "", "Talos version the node runs once the system update is done (update --kind system)")
 	fs.StringVar(&o.kubernetesVersion, "kubernetes-version", "", "Kubernetes version the node runs once the system update is done (update --kind system)")
-	fs.StringVar(&o.managerImage, "manager-image", "", "image the manager Deployment runs after the reboot (reboot)")
+	fs.StringVar(&o.managerImage, "manager-image", "", "image the manager DaemonSet runs after the reboot (reboot)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {

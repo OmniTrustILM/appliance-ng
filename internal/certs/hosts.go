@@ -16,8 +16,8 @@ import (
 // Hosts returns the host names the appliance's certificate covers: the node host name and the ILM host name,
 // which defaults to it.
 func Hosts(a *v1alpha1.Appliance) []string {
-	hosts := []string{a.Spec.Node.HostName}
-	if p := a.Spec.Platform; p != nil && p.HostName != "" && p.HostName != a.Spec.Node.HostName {
+	hosts := []string{a.Spec.HostName()}
+	if p := a.Spec.Platform; p != nil && p.HostName != "" && p.HostName != hosts[0] {
 		hosts = append(hosts, p.HostName)
 	}
 	return hosts
@@ -45,7 +45,11 @@ func UncoveredHost(certPEM []byte, hosts []string) string {
 // NodeAddress returns the node address from the status, the spec, or with DHCP the internal address of the
 // manager's node; the certificate covers it as an IP address.
 func NodeAddress(ctx context.Context, c client.Reader, a *v1alpha1.Appliance) (netip.Addr, bool, error) {
-	for _, s := range []string{a.Status.NodeAddress, a.Spec.Node.Address} {
+	candidates := []string{a.Status.NodeAddress}
+	if first := a.Spec.FirstNode(); first != nil {
+		candidates = append(candidates, first.Address)
+	}
+	for _, s := range candidates {
 		if addr, ok := ParseAddress(s); ok {
 			return addr, true, nil
 		}

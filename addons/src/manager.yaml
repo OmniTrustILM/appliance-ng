@@ -1,6 +1,7 @@
 # The Appliance Manager. make manifests writes addons/manager.yaml from this file and the Appliance CRD.
 # The first-boot service applies it after bootstrap and replaces the image placeholder (managerImage in
-# release.yaml) with the manager image built with the appliance.
+# release.yaml) with the manager image built with the appliance. The DaemonSet stays the last document: the
+# first-boot service applies the file only while the DaemonSet is missing.
 ---
 apiVersion: v1
 kind: Namespace
@@ -104,9 +105,13 @@ rules:
   - apiGroups: [traefik.io]
     resources: [middlewares, tlsoptions, ingressroutes]
     verbs: [get, list, watch, create, update, patch]
+  # Draining a node cordons it and evicts its pods.
   - apiGroups: [""]
     resources: [nodes]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
   - apiGroups: ["", events.k8s.io]
     resources: [events]
     verbs: [get, list, watch, create, patch]
@@ -162,13 +167,17 @@ subjects:
 # replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
 # Failed pods, which pile up while the node shuts down. A backup of an external database runs pg_dump in a short-lived
 # pod it creates, execs into and deletes; an NFS backup target is written the same way, by a pod with a claim on the
-# target's volume. A system update applies the manager's own manifest, its Talos ServiceAccount included.
+# target's volume. A system update applies the manager's own manifest, its Talos ServiceAccount included. The managers
+# of the voting nodes elect their leader through a Lease.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: appliance-manager
   namespace: appliance-system
 rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [talos.dev]
     resources: [serviceaccounts]
     resourceNames: [appliance-manager]
@@ -453,17 +462,19 @@ spec:
   roles:
     - os:admin
 ---
+# One manager on every voting node, replaced one node at a time.
 apiVersion: apps/v1
-kind: Deployment
+kind: DaemonSet
 metadata:
   name: appliance-manager
   namespace: appliance-system
   labels:
     app.kubernetes.io/name: appliance-manager
 spec:
-  replicas: 1
-  strategy:
-    type: Recreate
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: appliance-manager
@@ -474,6 +485,8 @@ spec:
     spec:
       serviceAccountName: appliance-manager
       hostNetwork: true
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
       tolerations:
         - key: node.kubernetes.io/not-ready
           operator: Exists
@@ -528,6 +541,9 @@ spec:
           ports:
             - name: https
               containerPort: 8443
+            # The other managers forward the console's API requests to the leader on this port of its node address.
+            - name: peer
+              containerPort: 8445
           readinessProbe:
             httpGet:
               path: /healthz

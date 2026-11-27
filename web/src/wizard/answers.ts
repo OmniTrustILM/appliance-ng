@@ -44,9 +44,9 @@ export function mailRequest({ host, port, security, from, username, password }: 
 
 /** The answers the appliance holds; the host name defaults to the node's, the dependencies to managed ones. */
 export function answersOf(appliance: Appliance, dependencies: DependenciesAnswers = managedDependencies, utils = false): Answers {
-  const { mail, platform, node } = appliance;
+  const { mail, platform, cluster } = appliance;
   return {
-    hostName: platform?.hostName ?? node.hostName,
+    hostName: platform?.hostName ?? cluster.nodes[0]?.hostName ?? '',
     components: platform?.components ?? [],
     dependencies,
     utils,

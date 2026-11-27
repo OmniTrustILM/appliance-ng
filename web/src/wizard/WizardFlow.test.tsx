@@ -9,7 +9,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const part2 = { setup: 'part2', conditions: [], versions: {}, rebootRequired: false };
 const appliance = {
-  node: { hostName: 'node1.example.test' },
+  cluster: { nodes: [{ hostName: 'node1.example.test', tags: [], maintenance: false }] },
   dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [],
 };
 const catalogue = {

@@ -89,7 +89,7 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 	if err != nil {
 		return wizardClosed(err)
 	}
-	if ferr := s.componentsNeed(platform.Components, a.Spec.Registries, m != nil); ferr != nil {
+	if ferr := s.componentsNeed(platform.ComponentNames(), a.Spec.Registries, m != nil); ferr != nil {
 		return PutWizardPlatform400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
 	// Everything is checked before a Secret is written: the mail credentials refuse before they write.
@@ -144,7 +144,7 @@ func (s *Server) savePlatform(ctx context.Context, platform v1alpha1.PlatformSpe
 		return wizardClosed(err)
 	}
 	recordPaths(ctx, paths)
-	s.deps.Log.Info("platform settings saved", "hostName", platform.HostName, "components", platform.Components, "mail", m != nil, "paths", paths)
+	s.deps.Log.Info("platform settings saved", "hostName", platform.HostName, "components", platform.ComponentNames(), "mail", m != nil, "paths", paths)
 	return PutWizardPlatform202Response{}, nil
 }
 
@@ -189,13 +189,13 @@ func parsePlatform(hostName string, components []string, rel *release.Manifest) 
 	if components == nil {
 		return v1alpha1.PlatformSpec{}, &fieldError{fieldComponents, "Choose the components to install."}
 	}
-	chosen := make([]string, 0, len(components))
+	chosen := make([]v1alpha1.ComponentSpec, 0, len(components))
 	for _, name := range components {
 		if _, ok := catalogueEntry(rel, name); !ok {
 			return v1alpha1.PlatformSpec{}, &fieldError{fieldComponents, fmt.Sprintf("The component %q is not in the catalogue.", name)}
 		}
-		if !slices.Contains(chosen, name) {
-			chosen = append(chosen, name)
+		if !slices.ContainsFunc(chosen, func(c v1alpha1.ComponentSpec) bool { return c.Name == name }) {
+			chosen = append(chosen, v1alpha1.ComponentSpec{Name: name})
 		}
 	}
 	return v1alpha1.PlatformSpec{ILMVersion: rel.Platform.ILMVersion, HostName: host, Components: chosen}, nil

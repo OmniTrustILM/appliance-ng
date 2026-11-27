@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// managerPods selects the pods of the manager's Deployment and the dump and NFS target pods it starts, which
+// managerPods selects the pods of the manager's DaemonSet and the dump and NFS target pods it starts, which
 // Kubernetes fails when their deadline passes.
 var managerPods = client.MatchingLabelsSelector{Selector: labels.NewSelector().Add(
 	*mustRequirement("app.kubernetes.io/name", selection.In, "appliance-manager", "appliance-pgdump", "appliance-nfs"),

@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func testNode(name string) *corev1.Node {
-	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
+func testNode(name string, addresses ...corev1.NodeAddress) *corev1.Node {
+	return &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: corev1.NodeStatus{Addresses: addresses}}
 }
 
 func nodeName(n *corev1.Node) string {
@@ -23,6 +23,31 @@ func nodeName(n *corev1.Node) string {
 	return n.Name
 }
 
+func failingGet() client.WithWatch {
+	return fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return errors.New("boom")
+		},
+	}).Build()
+}
+
+func TestNodeByName(t *testing.T) {
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithObjects(testNode("ilm"), testNode("ilm2")).Build()
+	if n, err := NodeByName(ctx, c, "ilm2"); err != nil || nodeName(n) != "ilm2" {
+		t.Errorf("NodeByName(ilm2) = %q, %v; want ilm2", nodeName(n), err)
+	}
+	if n, err := NodeByName(ctx, c, "missing"); err != nil || n != nil {
+		t.Errorf("NodeByName of a missing node = %q, %v; want none", nodeName(n), err)
+	}
+	if _, err := NodeByName(ctx, c, ""); err == nil {
+		t.Error("an empty name was not reported")
+	}
+	if _, err := NodeByName(ctx, failingGet(), "ilm"); err == nil {
+		t.Error("a get error was not reported")
+	}
+}
+
 func TestOwnNodeReadsTheNamedNode(t *testing.T) {
 	ctx := context.Background()
 	c := fake.NewClientBuilder().WithObjects(testNode("aaa-stale"), testNode("ilm")).Build()
@@ -30,38 +55,29 @@ func TestOwnNodeReadsTheNamedNode(t *testing.T) {
 	if n, err := OwnNode(ctx, c); err != nil || nodeName(n) != "ilm" {
 		t.Errorf("OwnNode = %q, %v; want ilm", nodeName(n), err)
 	}
-	t.Setenv(NodeNameEnv, "missing")
-	if n, err := OwnNode(ctx, c); err != nil || n != nil {
-		t.Errorf("OwnNode of a missing node = %q, %v; want none", nodeName(n), err)
-	}
-	failing := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
-			return errors.New("boom")
-		},
-	}).Build()
-	if _, err := OwnNode(ctx, failing); err == nil {
-		t.Error("a get error was not reported")
+	t.Setenv(NodeNameEnv, "")
+	if _, err := OwnNode(ctx, fake.NewClientBuilder().WithObjects(testNode("ilm")).Build()); err == nil {
+		t.Errorf("OwnNode without %s was not reported", NodeNameEnv)
 	}
 }
 
-func TestOwnNodeWithoutANameUsesTheOnlyNode(t *testing.T) {
+func TestInternalAddress(t *testing.T) {
 	ctx := context.Background()
-	t.Setenv(NodeNameEnv, "")
-	if n, err := OwnNode(ctx, fake.NewClientBuilder().Build()); err != nil || n != nil {
-		t.Errorf("OwnNode without nodes = %q, %v; want none", nodeName(n), err)
+	c := fake.NewClientBuilder().WithObjects(
+		testNode("ilm2",
+			corev1.NodeAddress{Type: corev1.NodeHostName, Address: "ilm2"},
+			corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: "10.0.1.12"}),
+		testNode("bare"),
+	).Build()
+	if a, err := InternalAddress(ctx, c, "ilm2"); err != nil || a != "10.0.1.12" {
+		t.Errorf("InternalAddress(ilm2) = %q, %v; want 10.0.1.12", a, err)
 	}
-	if n, err := OwnNode(ctx, fake.NewClientBuilder().WithObjects(testNode("ilm")).Build()); err != nil || nodeName(n) != "ilm" {
-		t.Errorf("OwnNode = %q, %v; want ilm", nodeName(n), err)
+	for _, name := range []string{"bare", "missing"} {
+		if a, err := InternalAddress(ctx, c, name); err == nil {
+			t.Errorf("InternalAddress(%s) = %q; want an error", name, a)
+		}
 	}
-	if _, err := OwnNode(ctx, fake.NewClientBuilder().WithObjects(testNode("a"), testNode("b")).Build()); err == nil {
-		t.Error("two nodes without a name were not reported")
-	}
-	failing := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
-			return errors.New("boom")
-		},
-	}).Build()
-	if _, err := OwnNode(ctx, failing); err == nil {
-		t.Error("a list error was not reported")
+	if _, err := InternalAddress(ctx, failingGet(), "ilm2"); err == nil {
+		t.Error("a get error was not reported")
 	}
 }

@@ -358,7 +358,7 @@ func TestServedSecretName(t *testing.T) {
 			if tc.secret != nil {
 				b = b.WithObjects(tc.secret)
 			}
-			a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{TLS: tc.tls, Node: v1alpha1.NodeSpec{HostName: acmeHosts[0]},
+			a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{TLS: tc.tls, Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: acmeHosts[0]}}},
 				Platform: &v1alpha1.PlatformSpec{HostName: cmp.Or(tc.host, acmeHosts[1])}}}
 			got, err := ServedSecretName(context.Background(), b.Build(), a)
 			if err != nil || got != tc.want {

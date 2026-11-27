@@ -386,9 +386,9 @@ func (e *Engine) deleteRequests(ctx context.Context, namespace, certificate stri
 	return nil
 }
 
-// restoreAppliance replaces the spec with the backup's, except the node section, which belongs to this appliance,
-// and with the ILM host name chosen for the restore. A restore in place keeps the current dependencies; a fresh one
-// takes those it chooses anew.
+// restoreAppliance replaces the spec with the backup's, except the cluster section, which this appliance keeps as its
+// own, and the ILM host name, which is the one chosen for the restore. A restore in place keeps the current
+// dependencies, and a fresh one takes those it chooses anew.
 func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 	members, err := readMembers(ctx, j, func(name string) bool { return name == applianceMember })
 	if err != nil {
@@ -409,7 +409,7 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 			return err
 		}
 		spec := *restored.DeepCopy()
-		spec.Node = a.Spec.Node
+		spec.Cluster = a.Spec.Cluster
 		if spec.Platform == nil {
 			spec.Platform = &v1alpha1.PlatformSpec{}
 		}

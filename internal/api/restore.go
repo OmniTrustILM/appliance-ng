@@ -291,7 +291,7 @@ func (s *Server) inspect(ctx context.Context, name string, local bool, parts map
 	in := &inspection{ref: rand.Text(), token: requestFrom(ctx).token, name: name, file: file, local: local, summary: summary, id: kit.BackupKey}
 	s.keepInspection(in)
 	s.deps.Log.Info("backup checked for a restore", "backup", name, "local", local, "ilm", summary.Manifest.ILM)
-	return restoreAnswer{status: http.StatusOK, body: summaryOf(in, a.Spec.Node.HostName)}, nil
+	return restoreAnswer{status: http.StatusOK, body: summaryOf(in, a.Spec.HostName())}, nil
 }
 
 // orField is the refusal of the request field of ferr, or no answer without one.

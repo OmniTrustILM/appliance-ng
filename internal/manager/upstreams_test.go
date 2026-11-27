@@ -19,10 +19,10 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
-func deploymentWithImage(image string) *appsv1.Deployment {
-	return &appsv1.Deployment{
+func daemonSetWithImage(image string) *appsv1.DaemonSet {
+	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Namespace: SystemNamespace, Name: "appliance-manager"},
-		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Spec: appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "sidecar", Image: "quay.io/x/side:1"}, {Name: "manager", Image: image}},
 		}}},
 	}
@@ -43,12 +43,12 @@ func TestMirrorUpstreams(t *testing.T) {
 		funcs interceptor.Funcs
 		want  []string
 	}{
-		{"own registry joins the release's", []client.Object{deploymentWithImage("localhost:5005/manager:x")},
+		{"own registry joins the release's", []client.Object{daemonSetWithImage("localhost:5005/manager:x")},
 			interceptor.Funcs{}, []string{"docker.io", "ghcr.io", "localhost:5005"}},
-		{"own registry already listed", []client.Object{deploymentWithImage("ghcr.io/omnitrustilm/manager:1")},
+		{"own registry already listed", []client.Object{daemonSetWithImage("ghcr.io/omnitrustilm/manager:1")},
 			interceptor.Funcs{}, []string{"docker.io", "ghcr.io"}},
-		{"no deployment", nil, interceptor.Funcs{}, []string{"docker.io", "ghcr.io"}},
-		{"unreadable", []client.Object{deploymentWithImage("localhost:5005/manager:x")}, failing, []string{"docker.io", "ghcr.io"}},
+		{"no DaemonSet", nil, interceptor.Funcs{}, []string{"docker.io", "ghcr.io"}},
+		{"unreadable", []client.Object{daemonSetWithImage("localhost:5005/manager:x")}, failing, []string{"docker.io", "ghcr.io"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

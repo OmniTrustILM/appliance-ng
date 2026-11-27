@@ -176,6 +176,97 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                 type: object
+              cluster:
+                description: ClusterSpec describes the nodes of the appliance and
+                  the address the cluster is reached at.
+                properties:
+                  address:
+                    description: |-
+                      ClusterAddress is the address the cluster is reached at: a virtual IPv4 address the nodes share, or a DNS name
+                      that resolves to the nodes. Neither set is the address of the first node.
+                    properties:
+                      external:
+                        maxLength: 253
+                        pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+)?$
+                        type: string
+                      virtual:
+                        maxLength: 15
+                        type: string
+                        x-kubernetes-validations:
+                        - message: cluster.address.virtual must be an IPv4 address
+                          rule: self == '' || (isIP(self) && ip(self).family() ==
+                            4)
+                    type: object
+                    x-kubernetes-validations:
+                    - message: cluster.address takes virtual or external, not both
+                      rule: '!has(self.virtual) || size(self.virtual) == 0 || !has(self.external)
+                        || size(self.external) == 0'
+                  nodes:
+                    description: Nodes are the nodes of the cluster, the first node
+                      first.
+                    items:
+                      description: |-
+                        ClusterNode is the network identity, role and placement tags of one node. The host name names the entry; the
+                        address is fixed once set.
+                      properties:
+                        address:
+                          description: Address is the node address in CIDR notation;
+                            empty means DHCP.
+                          maxLength: 49
+                          type: string
+                          x-kubernetes-validations:
+                          - message: node address must be empty or an IPv4 CIDR
+                            rule: self == '' || (isCIDR(self) && cidr(self).ip().family()
+                              == 4)
+                        gateway:
+                          maxLength: 45
+                          type: string
+                          x-kubernetes-validations:
+                          - message: node gateway must be empty or an IPv4 address
+                            rule: self == '' || (isIP(self) && ip(self).family() ==
+                              4)
+                        hostName:
+                          description: |-
+                            HostName is the fully qualified host name of the node. Talos registers the node in Kubernetes under the
+                            first label of this name.
+                          maxLength: 253
+                          pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$
+                          type: string
+                        maintenance:
+                          description: Maintenance marks the node as taken out of
+                            service by the administrator.
+                          type: boolean
+                        role:
+                          description: Role is set by the manager when the node joins.
+                          enum:
+                          - voting
+                          - worker
+                          type: string
+                        tags:
+                          description: Tags are short names that place connectors
+                            on the node.
+                          items:
+                            pattern: ^[a-z0-9][a-z0-9-]{0,30}$
+                            type: string
+                          maxItems: 8
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - hostName
+                      type: object
+                      x-kubernetes-validations:
+                      - message: a node's address cannot be changed once set
+                        rule: '!has(oldSelf.address) || size(oldSelf.address) == 0
+                          || (has(self.address) && self.address == oldSelf.address)'
+                    maxItems: 7
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - hostName
+                    x-kubernetes-list-type: map
+                required:
+                - nodes
+                type: object
               dns:
                 description: DNSSpec lists the DNS servers.
                 properties:
@@ -217,41 +308,6 @@ spec:
                 - port
                 - security
                 type: object
-              node:
-                description: NodeSpec is the network identity of the node.
-                properties:
-                  address:
-                    description: Address is the node address in CIDR notation; empty
-                      means DHCP.
-                    maxLength: 49
-                    type: string
-                    x-kubernetes-validations:
-                    - message: node.address must be empty or an IPv4 CIDR
-                      rule: self == '' || (isCIDR(self) && cidr(self).ip().family()
-                        == 4)
-                  gateway:
-                    maxLength: 45
-                    type: string
-                    x-kubernetes-validations:
-                    - message: node.gateway must be empty or an IPv4 address
-                      rule: self == '' || (isIP(self) && ip(self).family() == 4)
-                  hostName:
-                    description: |-
-                      HostName is the fully qualified host name of the appliance. It is the Kubernetes node name, so it is fixed
-                      once set.
-                    maxLength: 253
-                    pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: node.hostName cannot be changed once set
-                      rule: self == oldSelf
-                required:
-                - hostName
-                type: object
-                x-kubernetes-validations:
-                - message: node.address cannot be changed once set
-                  rule: '!has(oldSelf.address) || size(oldSelf.address) == 0 || (has(self.address)
-                    && self.address == oldSelf.address)'
               ntp:
                 description: NTPSpec lists the NTP servers.
                 properties:
@@ -320,9 +376,23 @@ spec:
                         || size(self.credentialsRef) == 0)'
                   components:
                     items:
-                      type: string
+                      description: ComponentSpec is a platform component the administrator
+                        chose.
+                      properties:
+                        name:
+                          type: string
+                        nodeTag:
+                          description: NodeTag places a connector on the nodes with
+                            this tag; empty runs it on any node.
+                          pattern: ^[a-z0-9][a-z0-9-]{0,30}$
+                          type: string
+                      required:
+                      - name
+                      type: object
                     type: array
-                    x-kubernetes-list-type: set
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   database:
                     description: Database is the external database ILM uses; unset
                       is the managed one.
@@ -623,7 +693,7 @@ spec:
                 - name
                 type: object
             required:
-            - node
+            - cluster
             type: object
           status:
             description: ApplianceStatus is the observed state of the appliance.
@@ -726,6 +796,83 @@ spec:
                     type: array
                     x-kubernetes-list-map-keys:
                     - name
+                    x-kubernetes-list-type: map
+                type: object
+              cluster:
+                description: Cluster is the observed state of the nodes; unset until
+                  the manager first reads it.
+                properties:
+                  addressHolder:
+                    description: AddressHolder is the node that holds the virtual
+                      address.
+                    type: string
+                  databasePrimary:
+                    description: DatabasePrimary is the node that runs the PostgreSQL
+                      primary.
+                    type: string
+                  leader:
+                    description: Leader is the node that runs the leading manager.
+                    type: string
+                  nodes:
+                    items:
+                      description: NodeStatus is the observed state of one node.
+                      properties:
+                        address:
+                          type: string
+                        cpus:
+                          format: int32
+                          type: integer
+                        dataVolume:
+                          description: DataVolume is the size and free space of the
+                            node's data volume; unset while it cannot be read.
+                          properties:
+                            freeBytes:
+                              format: int64
+                              type: integer
+                            lowSpace:
+                              description: LowSpace is set while less than a fifth
+                                of the volume is free, judged on the exact free space.
+                              type: boolean
+                            sizeBytes:
+                              format: int64
+                              type: integer
+                          required:
+                          - freeBytes
+                          - sizeBytes
+                          type: object
+                        etcdHealthy:
+                          description: EtcdHealthy tells whether the node's etcd member
+                            is healthy; a worker has none.
+                          type: boolean
+                        hostName:
+                          type: string
+                        kubernetes:
+                          type: string
+                        memoryBytes:
+                          format: int64
+                          type: integer
+                        ready:
+                          description: Ready is the node's Kubernetes Ready condition.
+                          type: boolean
+                        role:
+                          description: NodeRole is the part a node plays in the cluster.
+                          enum:
+                          - voting
+                          - worker
+                          type: string
+                        tags:
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: set
+                        talos:
+                          type: string
+                      required:
+                      - hostName
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - hostName
                     x-kubernetes-list-type: map
                 type: object
               conditions:

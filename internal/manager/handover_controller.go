@@ -211,10 +211,12 @@ func importedAppliance(n *wizard.NodeAnswers) *v1alpha1.Appliance {
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
 		Spec: v1alpha1.ApplianceSpec{
-			Node: v1alpha1.NodeSpec{HostName: n.HostName, Address: n.Address, Gateway: n.Gateway},
-			DNS:  v1alpha1.DNSSpec{Servers: n.DNS},
-			NTP:  v1alpha1.NTPSpec{Servers: n.NTP},
-			TLS:  v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
+			Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+				{HostName: n.HostName, Address: n.Address, Gateway: n.Gateway, Role: v1alpha1.NodeRoleVoting},
+			}},
+			DNS: v1alpha1.DNSSpec{Servers: n.DNS},
+			NTP: v1alpha1.NTPSpec{Servers: n.NTP},
+			TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
 		},
 	}
 	if p := n.Proxy; p != nil {

@@ -24,10 +24,8 @@ func (s *Server) GetAppliance(ctx context.Context, _ GetApplianceRequestObject) 
 		TlsSource:  ApplianceSettingsTlsSourceBuiltin,
 		TrustSet:   spec.Trust != nil,
 		Registries: make([]Registry, len(spec.Registries)),
+		Cluster:    clusterSettings(spec.Cluster),
 	}
-	out.Node.HostName = spec.Node.HostName
-	out.Node.Address = optional(spec.Node.Address)
-	out.Node.Gateway = optional(spec.Node.Gateway)
 	if spec.TLS.Source != "" {
 		out.TlsSource = ApplianceSettingsTlsSource(spec.TLS.Source)
 	}
@@ -45,9 +43,28 @@ func (s *Server) GetAppliance(ctx context.Context, _ GetApplianceRequestObject) 
 			Components []string `json:"components"`
 			HostName   *string  `json:"hostName,omitempty"`
 			IlmVersion *string  `json:"ilmVersion,omitempty"`
-		}{Components: orEmpty(p.Components), HostName: optional(p.HostName), IlmVersion: optional(p.ILMVersion)}
+		}{Components: orEmpty(p.ComponentNames()), HostName: optional(p.HostName), IlmVersion: optional(p.ILMVersion)}
 	}
 	return GetAppliance200JSONResponse(out), nil
+}
+
+// clusterSettings describes the address and the nodes of c.
+func clusterSettings(c v1alpha1.ClusterSpec) ClusterSettings {
+	out := ClusterSettings{Nodes: make([]ClusterNode, len(c.Nodes))}
+	if c.Address.Virtual != "" || c.Address.External != "" {
+		out.Address = &ClusterAddress{Virtual: optional(c.Address.Virtual), External: optional(c.Address.External)}
+	}
+	for i, n := range c.Nodes {
+		out.Nodes[i] = ClusterNode{
+			HostName: n.HostName, Address: optional(n.Address), Gateway: optional(n.Gateway),
+			Tags: orEmpty(n.Tags), Maintenance: n.Maintenance,
+		}
+		if n.Role != "" {
+			role := ClusterNodeRole(n.Role)
+			out.Nodes[i].Role = &role
+		}
+	}
+	return out
 }
 
 // mailSettings describes the mail server m, nil for none, with the user name of its credentials; the password only

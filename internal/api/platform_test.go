@@ -24,7 +24,11 @@ func installedAppliance(t *testing.T, components ...string) {
 	t.Helper()
 	createAppliance(t, v1alpha1.SetupComplete)
 	a := getAppliance(t)
-	a.Spec.Platform = &v1alpha1.PlatformSpec{ILMVersion: "2.19.0", HostName: "ilm.example.com", Components: components}
+	chosen := make([]v1alpha1.ComponentSpec, len(components))
+	for i, name := range components {
+		chosen[i] = v1alpha1.ComponentSpec{Name: name}
+	}
+	a.Spec.Platform = &v1alpha1.PlatformSpec{ILMVersion: "2.19.0", HostName: "ilm.example.com", Components: chosen}
 	if err := testClient.Update(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +144,7 @@ func TestPlatformPrivateNeedsCredentials(t *testing.T) {
 
 	wantStatus(t, h.request(http.MethodPut, pathTestRegistry, RegistryCredentialsUpdate{Username: "robot", Password: ptr(registryPassword)}, s), http.StatusAccepted)
 	wantStatus(t, h.request(http.MethodPut, pathPlatform, body, s), http.StatusAccepted)
-	if got := getAppliance(t).Spec.Platform.Components; !slices.Equal(got, body.Components) {
+	if got := getAppliance(t).Spec.Platform.ComponentNames(); !slices.Equal(got, body.Components) {
 		t.Errorf("components %v, want %v", got, body.Components)
 	}
 	entries := h.entries()
@@ -252,7 +256,7 @@ func TestWizardAcceptsComponentsWithWhatTheyNeed(t *testing.T) {
 	wantStatus(t, h.request(http.MethodPut, pathTestRegistry, RegistryCredentialsUpdate{Username: "robot", Password: ptr(registryPassword)}, s), http.StatusAccepted)
 	body := PlatformSettings{HostName: "ilm.example.com", Components: []string{privateComponent, testMailComponent}, Mail: validMail()}
 	wantStatus(t, h.request(http.MethodPut, "/appliance/api/v1/wizard/platform", body, s), http.StatusAccepted)
-	if got := getAppliance(t).Spec.Platform.Components; !slices.Equal(got, body.Components) {
+	if got := getAppliance(t).Spec.Platform.ComponentNames(); !slices.Equal(got, body.Components) {
 		t.Errorf("components %v", got)
 	}
 }

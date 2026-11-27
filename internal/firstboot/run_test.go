@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	configdoc "github.com/siderolabs/talos/pkg/machinery/config/config"
+	"github.com/siderolabs/talos/pkg/machinery/config/types/k8s"
+	"github.com/siderolabs/talos/pkg/machinery/config/types/meta"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -34,7 +37,7 @@ const (
 	testHostName  = "ilm.appliance.internal"
 	// testILMVersion and testManager stand for the release defaults and the Appliance Manager manifest.
 	testILMVersion = "2.20.0"
-	testManager    = "kind: Deployment\nmetadata: {name: appliance-manager}\n"
+	testManager    = "kind: DaemonSet\nmetadata: {name: appliance-manager}\n"
 )
 
 var (
@@ -72,6 +75,10 @@ type fakeNode struct {
 	networkErr   error
 	handover     []byte // the hand-over file in the machine configuration
 	handoverErr  error
+	joinRequest  []byte // the join request in the machine configuration
+	joinErr      error
+	endpoint     string // the cluster endpoint of the machine configuration; empty is the node's own address
+	docsErr      error
 	disks        []talos.Disk
 	disksErr     error
 	// installSelector is the install disk selector of the last disk list.
@@ -153,8 +160,26 @@ var errNotUsed = errors.New("not used by the first-boot service")
 
 func (*fakeNode) PatchConfig(context.Context, []byte) error                   { return errNotUsed }
 func (*fakeNode) RemoveExtensionConfig(context.Context, string, string) error { return errNotUsed }
-func (*fakeNode) Documents(context.Context, ...string) ([]configdoc.Document, error) {
-	return nil, errNotUsed
+func (n *fakeNode) Documents(_ context.Context, kinds ...string) ([]configdoc.Document, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !slices.Equal(kinds, []string{k8s.KubeClusterConfig}) {
+		return nil, errNotUsed
+	}
+	endpoint := n.endpoint
+	if endpoint == "" {
+		endpoint = "https://10.0.2.15:6443"
+	}
+	doc := k8s.NewKubeClusterConfigV1Alpha1()
+	doc.ClusterNameConfig, doc.ClusterEndpointConfig = "ilm", meta.URL{URL: must(url.Parse(endpoint))}
+	return []configdoc.Document{doc}, n.docsErr
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 func (*fakeNode) ReplaceDocuments(context.Context, []configdoc.Document, []string) error {
 	return errNotUsed
@@ -163,10 +188,15 @@ func (*fakeNode) ReplaceDocuments(context.Context, []configdoc.Document, []strin
 func (n *fakeNode) ExtensionConfigFile(_ context.Context, name, file string) ([]byte, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if name != machineconfig.HandoverService || file != machineconfig.HandoverPath {
+	switch {
+	case name != machineconfig.HandoverService:
 		return nil, nil
+	case file == machineconfig.HandoverPath:
+		return n.handover, n.handoverErr
+	case file == machineconfig.JoinPath:
+		return n.joinRequest, n.joinErr
 	}
-	return n.handover, n.handoverErr
+	return nil, nil
 }
 func (*fakeNode) Versions(context.Context) (string, string, error) { return "", "", errNotUsed }
 func (*fakeNode) Reboot(context.Context) error                     { return errNotUsed }
@@ -302,8 +332,13 @@ func (n *fakeNode) snapshot() fakeNode {
 type fakeCluster struct {
 	mu sync.Mutex
 
-	applied   [][]byte
-	created   [][]byte
+	applied    [][]byte
+	created    [][]byte
+	manager    bool // the manager's DaemonSet exists
+	managerErr error
+	// image is the manager image the first-boot service set in the DaemonSet, empty while it set none.
+	image     string
+	imageErr  error
 	appliance *v1alpha1.Appliance // the spec as created or as it existed before
 	status    v1alpha1.ApplianceStatus
 	secrets   []*corev1.Secret // the Secrets created
@@ -331,7 +366,30 @@ func (c *fakeCluster) Apply(_ context.Context, docs []byte) error {
 		return err
 	}
 	c.applied = append(c.applied, docs)
+	c.manager = true
 	return nil
+}
+
+func (c *fakeCluster) SetManagerImage(_ context.Context, image string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.imageErr != nil {
+		return c.imageErr
+	}
+	c.image = image
+	return nil
+}
+
+func (c *fakeCluster) managerImage() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.image
+}
+
+func (c *fakeCluster) ManagerExists(context.Context) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.manager, c.managerErr
 }
 
 func (c *fakeCluster) Create(_ context.Context, docs []byte) error {
@@ -692,7 +750,7 @@ func TestRunResumesFromEveryStage(t *testing.T) {
 			if handedOver := len(applied) == 1 && len(created) == 1; handedOver != tt.wantHandover {
 				t.Errorf("applied %d and created %d times, want the hand-over %v", len(applied), len(created), tt.wantHandover)
 			}
-			if tt.handedOver && cluster.appliance.Spec.Node.HostName != existingHostName {
+			if tt.handedOver && cluster.appliance.Spec.FirstNode().HostName != existingHostName {
 				t.Errorf("the existing Appliance was changed: %+v", cluster.appliance.Spec)
 			}
 			if !tt.wantHandover && s.kubeCalls != 0 {
@@ -717,12 +775,12 @@ const existingHostName = "pki.example.com"
 func existingAppliance() *v1alpha1.Appliance {
 	return &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
-		Spec:       v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: existingHostName, Address: "192.0.2.10/24"}},
+		Spec:       v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: existingHostName, Address: "192.0.2.10/24"}}}},
 	}
 }
 
 func TestRunHandsOverAfterBootstrap(t *testing.T) {
-	node := &fakeNode{stage: talos.StageRunning, kubeconfig: []byte("kubeconfig")}
+	node := &fakeNode{stage: talos.StageRunning, addrs: [][]netip.Prefix{globalAddr}, kubeconfig: []byte("kubeconfig")}
 	cluster := &fakeCluster{}
 	h := newHarness(node, cluster)
 	h.start(t)
@@ -747,7 +805,7 @@ func TestRunHandsOverAfterBootstrap(t *testing.T) {
 	}
 	a := cluster.appliance
 	want := v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: testHostName},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: testHostName, Role: v1alpha1.NodeRoleVoting}}},
 		TLS:      v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
 		Platform: &v1alpha1.PlatformSpec{ILMVersion: testILMVersion, HostName: testHostName},
 	}
@@ -1265,6 +1323,122 @@ func TestRunIsNotReadyUntilTheMarkerIsWritten(t *testing.T) {
 			}
 			if !strings.Contains(h.log.String(), "META full") {
 				t.Errorf("log does not record the failed marker:\n%s", h.log.String())
+			}
+		})
+	}
+}
+
+// joiningNode is a configured node, not bootstrapped, that carries the join request: another node bootstrapped its
+// cluster.
+func joiningNode() *fakeNode {
+	return &fakeNode{
+		stage: talos.StageBooting, configured: true, addrs: [][]netip.Prefix{globalAddr},
+		kubeconfig: []byte("kubeconfig"), joinRequest: []byte(`{"version":1}`),
+	}
+}
+
+// waitNeverBootstraps runs the service on node for several passes and checks that it waits for etcd without
+// bootstrapping it or reaching for Kubernetes.
+func waitNeverBootstraps(t *testing.T, h *harness) {
+	t.Helper()
+	h.start(t)
+	eventually(t, "several passes", func() bool { return h.node.snapshot().stageCalls >= 5 })
+	s := h.node.snapshot()
+	if s.bootstrapCalls != 0 || s.kubeCalls != 0 {
+		t.Errorf("Bootstrap called %d and Kubeconfig %d times, want neither", s.bootstrapCalls, s.kubeCalls)
+	}
+	if st := h.store.Get(); st.State != StateBootstrapping {
+		t.Errorf("status %+v, want waiting in the bootstrap", st)
+	}
+}
+
+// TestJoinedNodeNeverBootstraps waits on a node that carries the join request until etcd joined the cluster, and
+// then hands over without applying the manager over the cluster's own.
+func TestJoinedNodeNeverBootstraps(t *testing.T) {
+	node := joiningNode()
+	cluster := newReadyCluster()
+	cluster.appliance, cluster.manager = existingAppliance(), true
+	h := newHarness(node, cluster)
+	waitNeverBootstraps(t, h)
+	if st := h.store.Get(); st.Message != "waiting for etcd to join the cluster" {
+		t.Errorf("status %+v, want waiting for etcd to join", st)
+	}
+
+	node.mu.Lock()
+	node.bootstrapped = true
+	node.mu.Unlock()
+	h.waitState(t, StateReady)
+	h.stop(t)
+	if got := node.snapshot().bootstrapCalls; got != 0 {
+		t.Errorf("Bootstrap called %d times, want 0", got)
+	}
+	if applied, _, _ := cluster.snapshot(); len(applied) != 0 {
+		t.Errorf("applied %q on a joined node", applied)
+	}
+}
+
+// TestNodeOfAnotherEndpointNeverBootstraps never bootstraps a node whose cluster endpoint is not its own address,
+// even without the join request: a joining configuration always names the cluster's endpoint.
+func TestNodeOfAnotherEndpointNeverBootstraps(t *testing.T) {
+	for name, endpoint := range map[string]string{
+		"shared address": "https://10.0.2.100:6443",
+		"external name":  "https://ilm-cluster.example.com:6443",
+	} {
+		t.Run(name, func(t *testing.T) {
+			node := joiningNode()
+			node.joinRequest, node.endpoint = nil, endpoint
+			waitNeverBootstraps(t, newHarness(node, newReadyCluster()))
+		})
+	}
+}
+
+// TestBootstrappedNodeBehindASharedAddressHandsOver runs on the first node once the cluster has a shared address:
+// its endpoint is no longer its own address, but it is bootstrapped, so there is nothing to wait for.
+func TestBootstrappedNodeBehindASharedAddressHandsOver(t *testing.T) {
+	node := joiningNode()
+	node.joinRequest, node.endpoint, node.bootstrapped = nil, "https://10.0.2.100:6443", true
+	cluster := newReadyCluster()
+	cluster.appliance, cluster.manager = existingAppliance(), true
+	h := newHarness(node, cluster)
+	h.start(t)
+	h.waitState(t, StateReady)
+	if got := node.snapshot().bootstrapCalls; got != 0 {
+		t.Errorf("Bootstrap called %d times, want 0", got)
+	}
+}
+
+// TestNodeWithoutItsAddressWaitsToBootstrap bootstraps the first node only once it holds the address its endpoint
+// names.
+func TestNodeWithoutItsAddressWaitsToBootstrap(t *testing.T) {
+	node := joiningNode()
+	node.joinRequest, node.addrs = nil, [][]netip.Prefix{linkLocal, linkLocal, linkLocal, linkLocal, globalAddr}
+	h := newHarness(node, newReadyCluster())
+	h.start(t)
+	h.waitState(t, StateReady)
+	if s := node.snapshot(); s.bootstrapCalls != 1 || s.addrCalls < 5 {
+		t.Errorf("Bootstrap called %d times after %d address reads, want once after the address", s.bootstrapCalls, s.addrCalls)
+	}
+}
+
+// TestUnreadableJoinStateNeverBootstraps never bootstraps a node while it cannot tell whether the node joins a
+// cluster, and reports why without quoting the configuration.
+func TestUnreadableJoinStateNeverBootstraps(t *testing.T) {
+	for name, set := range map[string]func(n *fakeNode){
+		"join request":  func(n *fakeNode) { n.joinErr = status.Error(codes.Unavailable, "cannot parse SEED-MARKER") },
+		"configuration": func(n *fakeNode) { n.docsErr = status.Error(codes.Unavailable, "cannot parse SEED-MARKER") },
+		"no endpoint":   func(n *fakeNode) { n.endpoint = "https://" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			node := joiningNode()
+			node.joinRequest = nil
+			set(node)
+			h := newHarness(node, newReadyCluster())
+			waitNeverBootstraps(t, h)
+			if st := h.store.Get(); st.Message == "" || strings.Contains(st.Message, "SEED-MARKER") {
+				t.Errorf("status %+v, want the failure without the configuration", st)
+			}
+			if strings.Contains(h.log.String(), "SEED-MARKER") {
+				t.Errorf("log quotes the configuration:\n%s", h.log.String())
 			}
 		})
 	}

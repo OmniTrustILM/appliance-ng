@@ -87,7 +87,7 @@ func TestManagerStartsBeforeTheOperatorIsInstalled(t *testing.T) {
 
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
-		Spec:       v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "ilm.example.com"}, Platform: platformSpec()},
+		Spec:       v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com"}}}, Platform: platformSpec()},
 	}
 	if err := c.Create(ctx, a); err != nil {
 		t.Fatal(err)

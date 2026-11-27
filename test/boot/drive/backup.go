@@ -323,7 +323,7 @@ func applianceHostName(data []byte, k recovery.Kit) (string, error) {
 	if err := yaml.Unmarshal(found, &appliance); err != nil {
 		return "", errors.New("the backup's " + memberAppl + " is not an Appliance")
 	}
-	return appliance.Spec.Node.HostName, nil
+	return appliance.Spec.HostName(), nil
 }
 
 // backupNames returns the sorted names of the backup files in dir.

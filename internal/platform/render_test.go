@@ -26,7 +26,7 @@ func loadManifest(t *testing.T) *release.Manifest {
 
 func defaultAppliance() *v1alpha1.Appliance {
 	return &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "ilm.appliance.internal"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.appliance.internal"}}},
 		TLS:      v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
 		Platform: &v1alpha1.PlatformSpec{ILMVersion: "2.20.0", HostName: "ilm.appliance.internal"},
 	}}
@@ -67,7 +67,7 @@ func TestRenderDefaultMatchesAddonsPlatform(t *testing.T) {
 func TestRenderFallsBackToNodeAndManifestDefaults(t *testing.T) {
 	a := defaultAppliance()
 	a.Spec.Platform = nil
-	a.Spec.Node.HostName = "ilm.example.com"
+	a.Spec.FirstNode().HostName = "ilm.example.com"
 
 	m := loadManifest(t)
 
@@ -136,7 +136,7 @@ func TestRenderSecretTLSNeedsSecret(t *testing.T) {
 
 func TestRenderComponents(t *testing.T) {
 	a := defaultAppliance()
-	a.Spec.Platform.Components = []string{"x509-compliance-provider", "ejbca-ng-connector"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "x509-compliance-provider"}, {Name: "ejbca-ng-connector"}}
 
 	_, connectors, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 
@@ -222,7 +222,7 @@ const internalNoProxy = "localhost,127.0.0.1,192.0.2.10,10.244.0.0/16,10.96.0.0/
 
 func TestRenderWithoutProxySettings(t *testing.T) {
 	a := defaultAppliance()
-	a.Spec.Platform.Components = []string{"ejbca-ng-connector"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}}
 	a.Spec.Proxy = &v1alpha1.ProxySpec{}
 	p, connectors, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 	if err != nil {
@@ -238,7 +238,7 @@ func TestRenderWithoutProxySettings(t *testing.T) {
 
 func TestRenderConnectorSettings(t *testing.T) {
 	a := defaultAppliance()
-	a.Spec.Platform.Components = []string{"ejbca-ng-connector", "hashicorp-vault-connector", "software-cryptography-provider"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}, {Name: "hashicorp-vault-connector"}, {Name: "software-cryptography-provider"}}
 	a.Spec.Proxy = &v1alpha1.ProxySpec{HTTPS: "http://proxy:3128"}
 
 	_, connectors, err := Render(a, loadManifest(t), SecretNames{Trust: "ilm-trust"}, testNodeIP)
@@ -286,7 +286,7 @@ func TestRenderConnectorSettings(t *testing.T) {
 
 func TestRenderPrivateNeedsPullSecret(t *testing.T) {
 	a := defaultAppliance()
-	a.Spec.Platform.Components = []string{"x509-compliance-provider", "timestamp-formatting-connector"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "x509-compliance-provider"}, {Name: "timestamp-formatting-connector"}}
 
 	_, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
 
@@ -311,7 +311,7 @@ func TestRenderPrivateNeedsPullSecret(t *testing.T) {
 
 func TestRenderUnknownComponent(t *testing.T) {
 	a := defaultAppliance()
-	a.Spec.Platform.Components = []string{"no-such-connector"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "no-such-connector"}}
 
 	if _, _, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP); err == nil || !strings.Contains(err.Error(), "no-such-connector") {
 		t.Fatalf("want an error naming the component, got %v", err)
@@ -414,7 +414,7 @@ func TestEmailConnectorGetsMailSettings(t *testing.T) {
 	// Spring Boot binds it to the JavaMail property mail.smtp.ssl.enable: implicit TLS.
 	const sslEnableEnv = "SPRING_MAIL_PROPERTIES_MAIL_SMTP_SSL_ENABLE"
 	a := defaultAppliance()
-	a.Spec.Platform.Components = []string{email, "ejbca-ng-connector"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: email}, {Name: "ejbca-ng-connector"}}
 
 	// An Appliance that chose the connector without a mail server still renders, without mail settings.
 	_, connectors, err := Render(a, loadManifest(t), SecretNames{}, testNodeIP)
@@ -493,7 +493,7 @@ func externalAppliance() *v1alpha1.Appliance {
 
 func TestRenderExternalDatabase(t *testing.T) {
 	a := externalAppliance()
-	a.Spec.Platform.Components = []string{"ejbca-ng-connector", "pyadcs-connector"}
+	a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}, {Name: "pyadcs-connector"}}
 	m := loadManifest(t)
 
 	got, connectors, err := Render(a, m, SecretNames{Database: "ilm-database", Messaging: "ilm-messaging"}, testNodeIP)
@@ -598,7 +598,7 @@ func TestRenderDatabaseTLS(t *testing.T) {
 	} {
 		t.Run("mode "+tc.mode, func(t *testing.T) {
 			a := defaultAppliance()
-			a.Spec.Platform.Components = []string{"ejbca-ng-connector", "pyadcs-connector"}
+			a.Spec.Platform.Components = []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}, {Name: "pyadcs-connector"}}
 			a.Spec.Platform.Database = externalAppliance().Spec.Platform.Database
 			a.Spec.Platform.Database.TLSMode, a.Spec.Platform.Database.CA = tc.mode, tc.ca
 			secrets := SecretNames{Database: "ilm-database"}

@@ -295,8 +295,10 @@ func mirrorCA(running []configdoc.Document) ([]byte, bool) {
 // nodeIP returns the static address of the Appliance, or with DHCP the node's internal address, or "" when neither is
 // known.
 func nodeIP(a *v1alpha1.Appliance, node *corev1.Node) string {
-	if addr, ok := certs.ParseAddress(a.Spec.Node.Address); ok {
-		return addr.String()
+	if first := a.Spec.FirstNode(); first != nil {
+		if addr, ok := certs.ParseAddress(first.Address); ok {
+			return addr.String()
+		}
 	}
 	if addr, ok := certs.InternalAddress(node); ok {
 		return addr.String()

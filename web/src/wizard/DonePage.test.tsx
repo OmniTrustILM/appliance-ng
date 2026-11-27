@@ -7,7 +7,7 @@ import { stubApi } from '../setup/test-utils';
 import { DonePage } from './DonePage';
 
 const appliance = {
-  node: { hostName: 'n' }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [],
+  cluster: { nodes: [{ hostName: 'n', tags: [], maintenance: false }] }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [],
   platform: { hostName: 'ilm.example.test', components: [] },
 };
 const click = vi.fn();
