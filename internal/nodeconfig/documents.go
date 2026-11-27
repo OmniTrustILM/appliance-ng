@@ -17,6 +17,8 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/types/security"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	"github.com/siderolabs/talos/pkg/machinery/nethelpers"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
 // TrustedRootsName is the name of the document with the additional trusted CA certificates.
@@ -142,7 +144,7 @@ func RegistryMirrors(caPEM []byte, upstreams []string) []config.Document {
 		doc := cri.NewRegistryMirrorConfigV1Alpha1(host)
 		doc.RegistryEndpoints = []cri.RegistryEndpoint{{
 			// zot keeps each image under its upstream registry's name.
-			EndpointURL:          meta.URL{URL: &url.URL{Scheme: "https", Host: MirrorHost, Path: "/v2/" + host}},
+			EndpointURL:          meta.URL{URL: &url.URL{Scheme: "https", Host: MirrorHost, Path: "/v2/" + release.MirrorPath(host)}},
 			EndpointOverridePath: pointer.To(true),
 		}}
 		docs = append(docs, doc)

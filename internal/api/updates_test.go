@@ -417,6 +417,8 @@ const pathUpdatesPlatform = pathUpdates + "/platform"
 type fakePlatform struct {
 	err     error
 	started []string
+	// systemStarted are the system updates started.
+	systemStarted []string
 	// rollbackErr refuses a rollback; rollbackRefused is why one cannot start now.
 	rollbackErr     error
 	rollbackRefused string
@@ -428,6 +430,14 @@ func (f *fakePlatform) StartPlatform(_ context.Context, to, user string) error {
 		return f.err
 	}
 	f.started = append(f.started, to+" by "+user)
+	return nil
+}
+
+func (f *fakePlatform) StartSystem(_ context.Context, to, user string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.systemStarted = append(f.systemStarted, to+" by "+user)
 	return nil
 }
 
@@ -523,6 +533,101 @@ func TestPlatformUpdateUnavailable(t *testing.T) {
 	h.withUpdates()
 	s := h.signIn()
 	wantCode(t, h.request(http.MethodPost, pathUpdatesPlatform, PlatformUpdateStart{Version: "9.0.0", Confirm: true}, s),
+		http.StatusServiceUnavailable, codeUpdatesUnavailable)
+}
+
+const pathUpdatesSystem = pathUpdates + "/system"
+
+// TestSystemUpdateConfirmRequired refuses a system update that is not confirmed or names no version X.Y.Z, and
+// starts none.
+func TestSystemUpdateConfirmRequired(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	p := h.withPlatform()
+	s := h.signIn()
+	wantCode(t, h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "9.0.0"}, s), http.StatusBadRequest, codeInvalid)
+	wantCode(t, h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "../9", Confirm: true}, s), http.StatusBadRequest, codeInvalid)
+	if len(p.systemStarted) != 0 || len(p.started) != 0 {
+		t.Errorf("started %v %v", p.systemStarted, p.started)
+	}
+	if e := h.entry(update.AuditSystemUpdateStart); e.Details[detailRefused] != codeInvalid || e.Details[detailVersion] != "../9" {
+		t.Errorf("audit entry %+v", e)
+	}
+}
+
+// TestSystemUpdateStarts starts the system update by the signed-in user with 202 and leaves its audit entry to the job.
+func TestSystemUpdateStarts(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	p := h.withPlatform()
+	s := h.signIn()
+	wantStatus(t, h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "9.0.0", Confirm: true}, s), http.StatusAccepted)
+	if len(p.systemStarted) != 1 || p.systemStarted[0] != "9.0.0 by "+testUser || len(p.started) != 0 {
+		t.Errorf("started %v %v", p.systemStarted, p.started)
+	}
+	for _, e := range h.entries() {
+		if e.Action == update.AuditSystemUpdateStart {
+			t.Errorf("the API wrote the start's audit entry %+v", e)
+		}
+	}
+}
+
+// TestSystemUpdateRefusals answers each refusal of the job with its code and records it; a failure is answered
+// without its text.
+func TestSystemUpdateRefusals(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	p := h.withPlatform()
+	s := h.signIn()
+	for _, c := range []struct {
+		reason string
+		status int
+		code   string
+	}{
+		{update.UpdateRunning, http.StatusConflict, "update_running"},
+		{update.BackupRunning, http.StatusConflict, "backup_running"},
+		{update.RestoreRunning, http.StatusConflict, "restore_running"},
+		{update.BundleLoading, http.StatusConflict, codeBundleLoading},
+		{update.Busy, http.StatusConflict, codeUpdateBusy},
+		{update.PlatformUpgrading, http.StatusConflict, "upgrade_in_progress"},
+		{update.LastUpdateFailed, http.StatusConflict, "last_update_failed"},
+		{update.KubernetesOlderThanRunning, http.StatusConflict, "kubernetes_older_than_running"},
+		{update.NotFound, http.StatusNotFound, codeNotFound},
+		{update.NoSpace, http.StatusConflict, "no_space"},
+		{update.NotInstalled, http.StatusConflict, "not_installed"},
+		{update.BundleUnavailable, http.StatusConflict, "bundle_unavailable"},
+		{update.InvalidBundle, http.StatusConflict, "invalid_bundle"},
+		{update.KubernetesMinorSkip, http.StatusConflict, "kubernetes_minor_skip"},
+		{update.UnmirroredRegistry, http.StatusConflict, "unmirrored_registry"},
+		{update.SameVersion, http.StatusConflict, "blocked"},
+		{update.NeedsAppliance, http.StatusConflict, "blocked"},
+	} {
+		p.err = &update.Error{Reason: c.reason}
+		rec := h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "9.0.0", Confirm: true}, s)
+		wantCode(t, rec, c.status, c.code)
+		if e := h.entry(update.AuditSystemUpdateStart); e.Details[detailRefused] != c.code || e.Details[detailVersion] != "9.0.0" || e.User != testUser {
+			t.Errorf("%s: audit entry %+v", c.reason, e)
+		}
+	}
+	p.err = &update.Error{Reason: update.NotFound}
+	if rec := h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "9.0.0", Confirm: true}, s); strings.Contains(rec.Body.String(), "online") {
+		t.Errorf("a system bundle is never found online: %s", rec.Body)
+	}
+	p.err = fmt.Errorf("record the update: %w", errors.New("etcd says "+zotPassword))
+	rec := h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "9.0.0", Confirm: true}, s)
+	wantCode(t, rec, http.StatusInternalServerError, "internal")
+	if strings.Contains(rec.Body.String(), zotPassword) {
+		t.Errorf("the answer repeats the error: %s", rec.Body)
+	}
+}
+
+// TestSystemUpdateUnavailable answers 503 without the update jobs.
+func TestSystemUpdateUnavailable(t *testing.T) {
+	h := newHarness(t)
+	createAppliance(t, v1alpha1.SetupComplete)
+	h.withUpdates()
+	s := h.signIn()
+	wantCode(t, h.request(http.MethodPost, pathUpdatesSystem, SystemUpdateStart{Version: "9.0.0", Confirm: true}, s),
 		http.StatusServiceUnavailable, codeUpdatesUnavailable)
 }
 

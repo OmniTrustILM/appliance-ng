@@ -141,3 +141,17 @@ func TestRepository(t *testing.T) {
 		}
 	}
 }
+
+func TestMirrorPath(t *testing.T) {
+	for host, want := range map[string]string{
+		"ghcr.io":                   "ghcr.io",
+		"docker.io":                 "docker.io",
+		"GHCR.io":                   "ghcr.io",
+		"localhost:5005":            "localhost_5005",
+		"Registry.Example.com:5000": "registry.example.com_5000",
+	} {
+		if got := MirrorPath(host); got != want {
+			t.Errorf("MirrorPath(%q) = %q, want %q", host, got, want)
+		}
+	}
+}

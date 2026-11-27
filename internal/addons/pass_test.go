@@ -273,3 +273,43 @@ func TestPassHoldsAroundEachStep(t *testing.T) {
 		t.Errorf("err = %v, calls %v; want the pass to stop before applying", err, c.calls)
 	}
 }
+
+// TestCheckAppliedLeavesNewStepsPending checks the steps the other release applied and leaves a new step whose
+// objects do not exist pending, checking the steps after it still.
+func TestCheckAppliedLeavesNewStepsPending(t *testing.T) {
+	applied := []string{"cilium", "storage", "cnpg"}
+	c := &fakeCluster{unready: map[string]string{"cm": kube.NotFound}}
+	if p, err := CheckApplied(context.Background(), c, steps, applied); err != nil || p != (Progress{Step: "cnpg", Done: true}) {
+		t.Errorf("progress = %+v, %v, want done", p, err)
+	}
+	missing := Progress{Step: "cert-manager", Message: "waiting for Deployment cert-manager/cm: " + kube.NotFound, pending: true}
+	for _, applied := range [][]string{append(applied, "cert-manager"), nil} {
+		if p, err := CheckApplied(context.Background(), c, steps, applied); err != nil || p != missing {
+			t.Errorf("applied %v: progress = %+v, %v, want the missing object of an applied step not ready", applied, p, err)
+		}
+	}
+	c = &fakeCluster{unready: map[string]string{"cm": "0/1 available"}}
+	want := Progress{Step: "cert-manager", Message: "waiting for Deployment cert-manager/cm: 0/1 available"}
+	if p, err := CheckApplied(context.Background(), c, steps, applied); err != nil || p != want {
+		t.Errorf("progress = %+v, %v, want %+v", p, err, want)
+	}
+	if _, err := CheckApplied(context.Background(), &fakeCluster{readyErr: errors.New("boom")}, steps, applied); err == nil {
+		t.Error("a failed check passed")
+	}
+	if len(c.calls) != 0 {
+		t.Errorf("calls = %v, want none", c.calls)
+	}
+}
+
+// TestCheckAppliedChecksEveryWaitOfANewStep finds an unready wait of a new step after one whose object is missing.
+func TestCheckAppliedChecksEveryWaitOfANewStep(t *testing.T) {
+	step := kube.Step{Name: "new", Wait: []kube.WaitFor{
+		{Kind: "Deployment", Namespace: "n", Name: "first", For: "Available"},
+		{Kind: "Deployment", Namespace: "n", Name: "second", For: "Available"},
+	}}
+	c := &fakeCluster{unready: map[string]string{"first": kube.NotFound, "second": "0/1 available"}}
+	want := Progress{Step: "new", Message: "waiting for Deployment n/second: 0/1 available"}
+	if p, err := CheckApplied(context.Background(), c, []kube.Step{step}, []string{"other"}); err != nil || p != want {
+		t.Errorf("progress = %+v, %v, want %+v", p, err, want)
+	}
+}

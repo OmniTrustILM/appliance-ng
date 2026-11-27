@@ -264,6 +264,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle(route(http.MethodPost, updatesPath+"/check"), withWriteDeadline(update.CheckTimeout+update.RecordTimeout+answerMargin, change(AuditEntryActionUpdateCheck)))
 	mux.Handle(route(http.MethodPost, updatesPath+"/fetch"), change(AuditEntryActionUpdateFetch))
 	mux.Handle(route(http.MethodPost, updatesPath+"/platform"), change(AuditEntryActionPlatformUpdateStart))
+	mux.Handle(route(http.MethodPost, updatesPath+"/system"), change(AuditEntryActionSystemUpdateStart))
 	mux.Handle(route(http.MethodPost, updatesRollbackPath), withWriteDeadline(restoreWorkTimeout+answerMargin, change(AuditEntryActionPlatformRollbackStart)))
 	mux.Handle(auth.BasePath+"/api/", protected)
 	return withRequest(mux)

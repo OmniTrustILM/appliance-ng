@@ -162,13 +162,20 @@ subjects:
 # replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
 # Failed pods, which pile up while the node shuts down. A backup of an external database runs pg_dump in a short-lived
 # pod it creates, execs into and deletes; an NFS backup target is written the same way, by a pod with a claim on the
-# target's volume.
+# target's volume. A system update applies the manager's own manifest, its Talos ServiceAccount included.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: appliance-manager
   namespace: appliance-system
 rules:
+  - apiGroups: [talos.dev]
+    resources: [serviceaccounts]
+    resourceNames: [appliance-manager]
+    verbs: [get, patch]
+  - apiGroups: [talos.dev]
+    resources: [serviceaccounts]
+    verbs: [create]
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get, list, watch, create, update, delete]
@@ -187,6 +194,32 @@ kind: RoleBinding
 metadata:
   name: appliance-manager
   namespace: appliance-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A system update moves the control plane to a new Kubernetes version one component after the other and waits for each
+# static pod to run ready at its new image. Applying the manager's own manifest needs nothing beyond the ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: kube-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

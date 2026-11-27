@@ -171,6 +171,17 @@ func (n *fakeNode) ExtensionConfigFile(_ context.Context, name, file string) ([]
 func (*fakeNode) Versions(context.Context) (string, string, error) { return "", "", errNotUsed }
 func (*fakeNode) Reboot(context.Context) error                     { return errNotUsed }
 func (*fakeNode) Shutdown(context.Context) error                   { return errNotUsed }
+func (*fakeNode) Upgrade(context.Context, string) error            { return errNotUsed }
+func (*fakeNode) RebootPowercycle(context.Context) error           { return errNotUsed }
+func (*fakeNode) PullSystemImage(context.Context, string) error    { return errNotUsed }
+func (*fakeNode) SetInstallerImage(context.Context, string) error  { return errNotUsed }
+func (*fakeNode) Rollback(context.Context) error                   { return errNotUsed }
+func (*fakeNode) ExtensionVersion(context.Context, string) (string, error) {
+	return "", errNotUsed
+}
+func (*fakeNode) SetKubernetesImages(context.Context, string, string) error {
+	return errNotUsed
+}
 func (*fakeNode) ClientConfig(context.Context, []string, time.Duration) ([]byte, error) {
 	return nil, errNotUsed
 }

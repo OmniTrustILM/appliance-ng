@@ -2,6 +2,7 @@ import type { components } from '../../api/schema';
 import { Alert } from '../../components/Alert';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { basePath } from '../../base';
+import { SystemStatus } from './SystemUpdate';
 import { rollbackFailureText, rollbackStepText, stepText, updateFailureText } from './reasons';
 
 type Bundle = components['schemas']['UpdateBundle'];
@@ -60,6 +61,7 @@ function RollbackStatus({ update }: Readonly<{ update: Progress }>) {
 /** The latest update or rollback: the step it is at, how it completed, or why it failed. */
 export function UpdateStatus({ update }: Readonly<{ update: Progress }>) {
   if (update.kind === 'rollback') return <RollbackStatus update={update} />;
+  if (update.kind === 'system') return <SystemStatus update={update} />;
   const backup = update.backup ? ` The backup ${update.backup} was taken before it.` : '';
   if (update.step === 'done') return <Alert tone="success">The platform was updated to {update.to}.</Alert>;
   if (update.message) {

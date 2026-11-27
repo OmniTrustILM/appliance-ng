@@ -8,6 +8,7 @@
 # iso:  boots out/<arch>/ilm-appliance-<version>-<arch>.iso with a blank disk; the disk comes first in the boot
 #       order, so an installed disk boots before the CD.
 # disk: boots a copy of out/<arch>/ilm-appliance-<version>-<arch>.qcow2.
+# IMAGE, when set, names the ISO or qcow2 file to boot instead.
 # A disk already in <dir> is reused, so starting again resumes from it.
 #
 # Hosts: macOS on Apple silicon (arm64, HVF, edk2 from Homebrew's qemu); Linux with KVM (amd64 with OVMF from the
@@ -91,13 +92,13 @@ start() {
                 -device "virtio-blk-pci,drive=hd0,bootindex=0,serial=ilm-system")
   case "$mode" in
     iso)
-      local iso="$REPO/out/$arch/$name.iso"
+      local iso="${IMAGE:-$REPO/out/$arch/$name.iso}"
       [[ -f "$iso" ]] || die "$iso not found, run make images ARCH=$arch"
       [[ -f "$dir/disk.qcow2" ]] || qemu-img create -q -f qcow2 "$dir/disk.qcow2" "${DISK:-50G}"
       drives+=(-drive "if=none,id=cd0,file=$iso,media=cdrom,readonly=on"
                -device "virtio-scsi-pci,id=scsi0" -device "scsi-cd,drive=cd0,bootindex=1") ;;
     disk)
-      local image="$REPO/out/$arch/$name.qcow2"
+      local image="${IMAGE:-$REPO/out/$arch/$name.qcow2}"
       [[ -f "$image" ]] || die "$image not found, run make images ARCH=$arch"
       if [[ ! -f "$dir/disk.qcow2" ]]; then
         cp "$image" "$dir/disk.qcow2"

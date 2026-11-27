@@ -106,16 +106,25 @@ func newScheme() (*runtime.Scheme, error) {
 	return scheme, nil
 }
 
-func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, updateRepository string) error {
+// embedded reads what the manager is built with: its scheme, the release manifest and the add-on steps.
+func embedded() (*runtime.Scheme, *release.Manifest, []kube.Step, error) {
 	scheme, err := newScheme()
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	rel, err := release.Parse(appliance.ReleaseManifest, "release.yaml")
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	steps, err := kube.LoadSteps(addons.FS)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return scheme, rel, steps, nil
+}
+
+func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, updateRepository string) error {
+	scheme, rel, steps, err := embedded()
 	if err != nil {
 		return err
 	}
@@ -175,7 +184,8 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 	// One Talos client for the controllers and the API.
 	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
 		talosEndpoint, talos.DialAPI)
-	if err := setupNodeControllers(mgr, users, talosAccess, reconciler); err != nil {
+	upstreams := manager.MirrorUpstreams(ctx, mgr.GetAPIReader(), rel, log)
+	if err := setupNodeControllers(mgr, users, talosAccess, reconciler, upstreams); err != nil {
 		return err
 	}
 
@@ -188,7 +198,14 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 	if err != nil {
 		return err
 	}
-	s := services{mgr: mgr, direct: direct, audit: auditLog, log: log, external: backup.ExternalDumpers(direct, cfg, postgres)}
+	cert, err := console.NewCertificate(log, mgr.GetClient())
+	if err != nil {
+		return err
+	}
+	s := services{
+		mgr: mgr, direct: direct, audit: auditLog, log: log, upstreams: upstreams, external: backup.ExternalDumpers(direct, cfg, postgres),
+		talos: talosAccess, console: consoleCheck(direct, cert, listen),
+	}
 	ops, err := newOperations(ctx, s, rel, reconciler, data, updateRepository)
 	if err != nil {
 		return err
@@ -222,18 +239,14 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 		UpdatesDir: filepath.Join(data, updatesDir),
 		Platform:   ops.jobs,
 	})
-	if err := addConsole(mgr, log, listen, api.Handler()); err != nil {
+	if err := addConsole(mgr, log, listen, api.Handler(), cert); err != nil {
 		return err
 	}
 	return mgr.Start(ctx)
 }
 
-// addConsole adds the console on listen, serving the API's handler, with its certificate refresh to mgr.
-func addConsole(mgr crmanager.Manager, log *slog.Logger, listen string, handler http.Handler) error {
-	cert, err := console.NewCertificate(log, mgr.GetClient())
-	if err != nil {
-		return err
-	}
+// addConsole adds the console on listen, serving the API's handler, with the refresh of its certificate cert to mgr.
+func addConsole(mgr crmanager.Manager, log *slog.Logger, listen string, handler http.Handler, cert *console.Certificate) error {
 	return addRunnables(mgr, log, cert, console.NewServer(log, listen, console.Routes(handler), cert))
 }
 
@@ -251,14 +264,19 @@ func setupILMController(mgr crmanager.Manager, reconciler *manager.ApplianceReco
 	return identity, nil
 }
 
-// services are what the backup runner and the restore engine share.
+// services are what the long operations share.
 type services struct {
 	mgr crmanager.Manager
 	// direct reads and writes past the cache.
-	direct   client.Client
-	audit    *audit.Log
-	log      *slog.Logger
-	external func(v1alpha1.ExternalDatabase) backup.Dumper
+	direct client.Client
+	audit  *audit.Log
+	log    *slog.Logger
+	// upstreams are the registries the registry mirror serves.
+	upstreams []string
+	external  func(v1alpha1.ExternalDatabase) backup.Dumper
+	// talos reaches the node's Talos API; console checks that the console answers.
+	talos   func(context.Context) (talos.Node, error)
+	console func(context.Context) error
 }
 
 // operations are the long operations, which share the backup runner's admission.
@@ -281,7 +299,7 @@ func newOperations(ctx context.Context, s services, rel *release.Manifest, recon
 	if err != nil {
 		return operations{}, err
 	}
-	jobs, err := newJobs(s, rel, backups, restorer, loader, data)
+	jobs, err := newJobs(s, rel, backups, restorer, loader, reconciler, data)
 	if err != nil {
 		return operations{}, err
 	}
@@ -289,20 +307,32 @@ func newOperations(ctx context.Context, s services, rel *release.Manifest, recon
 }
 
 // newJobs returns the update jobs, which share the admission of backups, fetch a bundle not loaded with loader, tag
-// its images in zot and roll an update back with restorer. Once the manager runs, they resume the update a restart
-// cut off.
-func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer *restore.Engine, loader *update.Loader, data string) (*update.Jobs, error) {
+// its images in zot, roll an update back with restorer, apply the manager's manifest of a system bundle with the
+// reconciler's cluster, share its add-on lock and steps, and drive Talos. Once the manager runs, they resume the update
+// a restart cut off.
+func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer *restore.Engine, loader *update.Loader, reconciler *manager.ApplianceReconciler, data string) (*update.Jobs, error) {
+	steps := make([]string, 0, len(reconciler.Steps))
+	for _, step := range reconciler.Steps {
+		steps = append(steps, step.Name)
+	}
 	reader := s.mgr.GetAPIReader()
 	jobs := update.NewJobs(update.JobDeps{
-		Client:   s.direct,
-		Backups:  backups,
-		Restore:  restorer,
-		Registry: func(ctx context.Context) (update.ImageTagger, error) { return zotClient(ctx, reader) },
-		Fetcher:  loader,
-		Audit:    s.audit,
-		Log:      s.log,
-		Release:  rel,
-		Dir:      filepath.Join(data, bundlesDir),
+		Client:     s.direct,
+		Backups:    backups,
+		Restore:    restorer,
+		Registry:   func(ctx context.Context) (update.ImageTagger, error) { return zotClient(ctx, reader) },
+		Fetcher:    loader,
+		Audit:      s.audit,
+		Log:        s.log,
+		Release:    rel,
+		Dir:        filepath.Join(data, bundlesDir),
+		Version:    version,
+		Talos:      func(ctx context.Context) (update.TalosNode, error) { return s.talos(ctx) },
+		Manifests:  reconciler.Cluster,
+		Console:    s.console,
+		Upstreams:  s.upstreams,
+		AddonSteps: steps,
+		AddonLock:  reconciler.OperatorLock,
 	})
 	if err := s.mgr.Add(crmanager.RunnableFunc(jobs.KeepResuming)); err != nil {
 		return nil, fmt.Errorf("add the resumption of an interrupted update: %w", err)
@@ -345,6 +375,7 @@ func newUpdates(s services, rel *release.Manifest, backups *backup.Runner, data,
 		Audit:     s.audit,
 		Log:       s.log,
 		Release:   rel,
+		Upstreams: s.upstreams,
 		Dir:       filepath.Join(data, bundlesDir),
 		Uploads:   uploads,
 		Online:    online,
@@ -356,6 +387,30 @@ func newUpdates(s services, rel *release.Manifest, backups *backup.Runner, data,
 		return nil, nil, fmt.Errorf("add the daily check for updates: %w", err)
 	}
 	return loader, finder, nil
+}
+
+// consoleCheck checks the console as a browser reaches it: on the node's internal address at the port of listen,
+// trusting only the certificate the console serves.
+func consoleCheck(reader client.Reader, cert *console.Certificate, listen string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		_, port, err := net.SplitHostPort(listen)
+		if err != nil {
+			return fmt.Errorf("the console address %q: %w", listen, err)
+		}
+		node, err := kube.OwnNode(ctx, reader)
+		if err != nil {
+			return err
+		}
+		if node == nil {
+			return errors.New("the node is not registered")
+		}
+		for _, a := range node.Status.Addresses {
+			if a.Type == corev1.NodeInternalIP {
+				return cert.Check(ctx, net.JoinHostPort(a.Address, port))
+			}
+		}
+		return errors.New("the node reports no internal address")
+	}
 }
 
 // zotClient returns a client that pushes into zot on the node's loopback address, trusting the built-in CA.
@@ -377,8 +432,8 @@ func zotClient(ctx context.Context, reader client.Reader) (*registry.Client, err
 }
 
 // setupNodeControllers sets up the hand-over and the node controllers with mgr; the node controller tells from the
-// add-on steps of reconciler whether zot is ready.
-func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAccess func(context.Context) (talos.Node, error), reconciler *manager.ApplianceReconciler) error {
+// add-on steps of reconciler whether zot is ready and mirrors upstreams.
+func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAccess func(context.Context) (talos.Node, error), reconciler *manager.ApplianceReconciler, upstreams []string) error {
 	handover := &manager.HandoverReconciler{
 		Client: mgr.GetClient(), Users: users, Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess,
 	}
@@ -387,7 +442,7 @@ func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAcce
 	}
 	node := &manager.NodeReconciler{
 		Client: mgr.GetClient(), Recorder: mgr.GetEventRecorder(kube.ManagerFieldManager), Talos: talosAccess,
-		Cluster: reconciler.Cluster, Steps: reconciler.Steps, Upstreams: reconciler.Release.RegistryHosts(),
+		Cluster: reconciler.Cluster, Steps: reconciler.Steps, Upstreams: upstreams,
 	}
 	if err := node.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up the node controller: %w", err)

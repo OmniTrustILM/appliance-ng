@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot test: boots the appliance offline, drives the onboarding wizard through its API and waits until it is ready.
 #
-#   [E2E=1] [RESTORE=1] [BUNDLE=1] [PLATFORM_UPDATE=1] run.sh <iso|qcow2> <arch>
+#   [E2E=1] [RESTORE=1] [BUNDLE=1] [PLATFORM_UPDATE=1] [SYSTEM_UPDATE=1 FROM=<tag|test>] run.sh <iso|qcow2> <arch>
 #
 # The VM gets a random setup code preset through SMBIOS. While the node waits in maintenance mode, no resource Talos
 # serves without credentials may show the preset. test/boot/drive then answers both wizard parts, checks the
@@ -27,8 +27,17 @@
 # 2.19.0 refuses, and creates the ILM group restore-marker straight through ILM Core. It then loads and installs the
 # bundle, checks the marker through the ILM edge, rolls the update back with the kit and checks the marker straight
 # through ILM Core at ILM_VERSION again; see test/boot/drive.
+# With SYSTEM_UPDATE=1 the VM boots the qcow2 of the release FROM in out/<arch>/previous/, a tag's, or with test this
+# commit's stamped 0.0.0-test, which test/boot/previous.sh builds when it is missing, and SYSTEM_BUNDLE_FILE (default
+# out/<arch>/system-update.tar) is the system bundle of the branch, made by KIND=system test/boot/bundle.sh with the
+# key whose public key both builds trust as BUNDLE_TEST_KEY. After the checks drive creates the ILM group
+# restore-marker, uploads the bundle, installs it and waits until the appliance runs the branch's versions; the marker
+# must still be there. drive then power-cycles the node with nothing changed and checks that the node, zot and the
+# branch's manager come back and that the update recorded no failure; the appliance must be ready again, the ILM UI
+# answer and the marker be there.
 # Prints "PASS <seconds to ready>" (with RESTORE=1 "PASS <seconds> restored <seconds>", with PLATFORM_UPDATE=1 "PASS
-# <seconds> updated <seconds> rolled back <seconds>") or "FAIL <reason>"; exits 0 or 1. The VMs are always stopped.
+# <seconds> updated <seconds> rolled back <seconds>", with SYSTEM_UPDATE=1 "PASS <seconds> system updated <seconds>
+# rebooted <seconds>") or "FAIL <reason>"; exits 0 or 1. The VMs are always stopped.
 # PORT_OFFSET is added to every host port, as in vm.sh, so that the VM runs beside others.
 # VM state is kept in out/boot/<arch>-<media>/ (the second VM's in out/boot/<arch>-<media>-restore/) and recreated on
 # every run. TALOSCTL names the talosctl binary (default talosctl), which must match the Talos version of the release.
@@ -69,6 +78,8 @@ E2E="${E2E:-0}"
 RESTORE="${RESTORE:-0}"
 BUNDLE="${BUNDLE:-0}"
 PLATFORM_UPDATE="${PLATFORM_UPDATE:-0}"
+SYSTEM_UPDATE="${SYSTEM_UPDATE:-0}"
+FROM="${FROM:-}"
 ILM_VERSION="${ILM_VERSION:-2.19.0}"
 # The second VM's node and ILM host name, which the restore sets instead of the backup's, and its administrator,
 # whose name differs from the backup's account so that the restore adds that account instead of replacing this one.
@@ -87,6 +98,8 @@ bundle_file="${BUNDLE_FILE:-$REPO/out/$arch/platform-test.tar}"
 bundle_image=""
 platform_bundle="${PLATFORM_BUNDLE_FILE:-$REPO/out/$arch/platform-update.tar}"
 updated="" rolled_back=""
+system_bundle="${SYSTEM_BUNDLE_FILE:-$REPO/out/$arch/system-update.tar}"
+system_updated="" rebooted=""
 
 export CPUS=4 MEM=12G DISK=50G
 first_dir="$REPO/out/boot/$arch-$media"
@@ -229,8 +242,8 @@ capture_setup_certificate() {
   fail "could not read the certificate of the first-boot service"
 }
 
-drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bundle-load|credential|update|rollback> [<SFTP host key fingerprint>]
-  local part="$1"
+drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bundle-load|credential|update|rollback|system-update|reboot> [<SFTP host key fingerprint>]
+  local part="$1" cmd="$1"
   local fingerprint="${2:-}"
   local args=(--url "$CONSOLE_URL" --user "$admin" --password "$password" --seed-file "$seed_file"
     --host-name "$host")
@@ -253,9 +266,13 @@ drive_wizard() { # drive_wizard <part1|part2|check|kit|backup|access|restore|bun
       --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID") ;;
     update) args+=(--file "$platform_bundle") ;;
     rollback) args+=(--kit "$kit_file" --passphrase-file "$kit_passphrase_file" --ilm-version "$ILM_VERSION") ;;
+    system-update) cmd=update args+=(--kind system --file "$system_bundle" --talos-version "$talos_version"
+      --kubernetes-version "$kubernetes_version") ;;
+    reboot) args+=(--kit "$kit_file" --passphrase-file "$kit_passphrase_file" --kube-addr "$KUBE_API" --apid "$APID"
+      --manager-image "$manager_image") ;;
     *) fail "unknown wizard part $part" ;;
   esac
-  "$drive" "$part" "${args[@]}" >&2 || fail "drive $part failed"
+  "$drive" "$cmd" "${args[@]}" >&2 || fail "drive $part failed"
 }
 
 # drive_marker <--create|--check|--present> [--direct]: creates, checks or finds the ILM group restore-marker with the
@@ -427,7 +444,51 @@ platform_update_test() {
   drive_marker --present --direct
 }
 
+# until_back <seconds>: polls the VM's /status until it is ready again within the seconds, after a reboot.
+until_back() {
+  local timeout="$1" start=$SECONDS current
+  status=""
+  until current="$(curl -sf --max-time 5 "$STATUS_URL")" && status="$current" && [[ "$(field state)" == ready ]]; do
+    [[ $((SECONDS - start)) -lt "$timeout" ]] || fail "not ready again within ${timeout}s"
+    sleep 5
+  done
+}
+
+# system_update_test installs the system bundle of the branch, checks the marker, power-cycles the node with nothing
+# changed and checks that the appliance comes back with the marker.
+system_update_test() {
+  local start=$SECONDS
+  drive_wizard system-update
+  system_updated=$((SECONDS - start))
+  log "system updated in ${system_updated}s"
+  drive_marker --present
+  start=$SECONDS
+  drive_wizard reboot
+  until_back "$READY_TIMEOUT"
+  rebooted=$((SECONDS - start))
+  log "back after the reboot in ${rebooted}s"
+  ui_answers
+  drive_marker --present
+}
+
 if [[ "$PLATFORM_UPDATE" == 1 && "$RESTORE" == 1 ]]; then fail "PLATFORM_UPDATE=1 and RESTORE=1 run apart"; fi
+if [[ "$SYSTEM_UPDATE" == 1 ]]; then
+  [[ "$RESTORE$PLATFORM_UPDATE" == 00 ]] || fail "SYSTEM_UPDATE=1 runs apart from RESTORE=1 and PLATFORM_UPDATE=1"
+  [[ "$media" == qcow2 ]] || fail "SYSTEM_UPDATE=1 boots a qcow2"
+  [[ -n "$FROM" ]] || fail "SYSTEM_UPDATE=1 needs FROM=<tag|test>"
+  [[ -f "$system_bundle" ]] || fail "$system_bundle not found, make it with KIND=system test/boot/bundle.sh"
+  # shellcheck disable=SC2016 # yq and build/lib.sh are expanded by the inner shell
+  read -r version talos_version kubernetes_version < <(cd "$REPO" && ARCH="$arch" bash -c 'source build/lib.sh &&
+    yq ".version + \" \" + .talos.version + \" \" + .talos.kubernetes" release.yaml') ||
+    fail "could not read release.yaml"
+  manager_image="${REGISTRY:-localhost:5005}/manager:$version-$arch"
+  from_version="$FROM"
+  if [[ "$FROM" == test ]]; then from_version=0.0.0-test; fi
+  export IMAGE="$REPO/out/$arch/previous/ilm-appliance-$from_version-$arch.qcow2"
+  if [[ ! -f "$IMAGE" ]]; then
+    "$REPO/test/boot/previous.sh" "$FROM" "$arch" || fail "could not build the appliance of $FROM"
+  fi
+fi
 for d in "$first_dir" "$restore_dir"; do
   "$VM" stop "$d" >/dev/null 2>&1 || true
   rm -rf "$d"
@@ -478,12 +539,14 @@ if [[ "$RESTORE" == 1 ]]; then
   drive_marker --create
   drive_cbom --create
 fi
+if [[ "$SYSTEM_UPDATE" == 1 ]]; then drive_marker --create; fi
 if [[ "$PLATFORM_UPDATE" == 1 ]]; then drive_marker --create --direct; fi
 serve_targets
 drive_wizard backup "$targets_fingerprint"
 drive_wizard access
 if [[ "$BUNDLE" == 1 ]]; then drive_wizard bundle-load; fi
 if [[ "$PLATFORM_UPDATE" == 1 ]]; then platform_update_test; fi
+if [[ "$SYSTEM_UPDATE" == 1 ]]; then system_update_test; fi
 first_ready=$ready
 if [[ "$RESTORE" == 1 ]]; then restore_test; fi
 
@@ -495,6 +558,8 @@ if [[ "$RESTORE" == 1 ]]; then
   echo "PASS $first_ready restored $restored"
 elif [[ "$PLATFORM_UPDATE" == 1 ]]; then
   echo "PASS $first_ready updated $updated rolled back $rolled_back"
+elif [[ "$SYSTEM_UPDATE" == 1 ]]; then
+  echo "PASS $first_ready system updated $system_updated rebooted $rebooted"
 else
   echo "PASS $first_ready"
 fi

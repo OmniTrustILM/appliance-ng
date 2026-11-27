@@ -51,6 +51,8 @@ var (
 
 	answerUpdateUnconfirmed = refusedField(codeInvalid, "confirm",
 		"Confirm the update: the way back is a reinstall and a restore of the backup taken first, which loses the data changed since.")
+	answerSystemUnconfirmed = refusedField(codeInvalid, "confirm",
+		"Confirm the update: the manager restarts and the node reboots, which takes the appliance down for about 10 minutes.")
 	answerUpdateBlocked = refused(http.StatusConflict, "blocked", "The bundle cannot be installed on what runs.")
 
 	answerRollbackUnconfirmed = refusedField(codeInvalid, fieldConfirm,
@@ -91,8 +93,23 @@ var updateRefusals = map[string]restoreAnswer{
 	update.OperatorOlderThanRunning: refused(http.StatusConflict, "operator_older_than_running",
 		"The bundle's ILM operator is older than the one that runs, which is never downgraded."),
 	update.NotFound: refused(http.StatusNotFound, codeNotFound, "The bundle is neither loaded nor found online."),
+	update.KubernetesOlderThanRunning: refused(http.StatusConflict, "kubernetes_older_than_running",
+		"The bundle's Kubernetes is older than the one that runs, which is never downgraded."),
 	update.NoSpace: refused(http.StatusConflict, "no_space",
 		"The data volume has too little free space for the update: it needs twice the bundle's size."),
+}
+
+// systemRefusals answer the refusals of a system update that differ from those of a platform update.
+var systemRefusals = map[string]restoreAnswer{
+	update.NotFound: refused(http.StatusNotFound, codeNotFound, "The system bundle is not loaded."),
+	update.BundleUnavailable: refused(http.StatusConflict, "bundle_unavailable",
+		"The bundle's files are no longer on the appliance; load the bundle again."),
+	update.InvalidBundle: refused(http.StatusConflict, "invalid_bundle",
+		"The bundle carries no installer, manager or etcd image, so it cannot be installed."),
+	update.UnmirroredRegistry: refused(http.StatusConflict, "unmirrored_registry",
+		"The bundle's installer, manager or etcd image comes from a registry this appliance does not mirror."),
+	update.KubernetesMinorSkip: refused(http.StatusConflict, "kubernetes_minor_skip",
+		"The bundle's Kubernetes is more than one minor version above the one that runs; install the system releases in between first."),
 }
 
 // blockedReasons are the reasons a bundle cannot be installed on what runs.
@@ -115,6 +132,8 @@ type Updater interface {
 type PlatformUpdater interface {
 	// StartPlatform starts the update to version to by user; it refuses with an *update.Error.
 	StartPlatform(ctx context.Context, to, user string) error
+	// StartSystem starts the update to the system bundle version to by user; it refuses with an *update.Error.
+	StartSystem(ctx context.Context, to, user string) error
 	PlatformRollback
 }
 
@@ -139,7 +158,8 @@ func (a restoreAnswer) VisitPostUpdatesFetchResponse(w http.ResponseWriter) erro
 func (a restoreAnswer) VisitPostUpdatesPlatformResponse(w http.ResponseWriter) error {
 	return a.visit(w)
 }
-func (a restoreAnswer) VisitGetUpdateNotesResponse(w http.ResponseWriter) error { return a.visit(w) }
+func (a restoreAnswer) VisitPostUpdatesSystemResponse(w http.ResponseWriter) error { return a.visit(w) }
+func (a restoreAnswer) VisitGetUpdateNotesResponse(w http.ResponseWriter) error    { return a.visit(w) }
 func (a restoreAnswer) VisitPostUpdatesRollbackResponse(w http.ResponseWriter) error {
 	return a.visit(w)
 }
@@ -353,28 +373,54 @@ func updateBundles(infos []v1alpha1.BundleInfo) []UpdateBundle {
 // PostUpdatesPlatform starts the update to a platform bundle in the background, once confirmed. The job writes the
 // audit entry of a started update; a refused one is recorded here.
 func (s *Server) PostUpdatesPlatform(ctx context.Context, req PostUpdatesPlatformRequestObject) (PostUpdatesPlatformResponseObject, error) {
+	if req.Body == nil {
+		return s.startUpdate(ctx, nil, false, answerUpdateUnconfirmed, nil, updateRefusal)
+	}
+	return s.startUpdate(ctx, &req.Body.Version, req.Body.Confirm, answerUpdateUnconfirmed, s.platformStarter, updateRefusal)
+}
+
+// PostUpdatesSystem starts the update to a system bundle in the background, once confirmed, with the audit of a
+// platform update.
+func (s *Server) PostUpdatesSystem(ctx context.Context, req PostUpdatesSystemRequestObject) (PostUpdatesSystemResponseObject, error) {
+	if req.Body == nil {
+		return s.startUpdate(ctx, nil, false, answerSystemUnconfirmed, nil, systemRefusal)
+	}
+	return s.startUpdate(ctx, &req.Body.Version, req.Body.Confirm, answerSystemUnconfirmed, s.systemStarter, systemRefusal)
+}
+
+func (s *Server) platformStarter(ctx context.Context, version string) error {
+	return s.deps.Platform.StartPlatform(ctx, version, requestFrom(ctx).user)
+}
+
+func (s *Server) systemStarter(ctx context.Context, version string) error {
+	return s.deps.Platform.StartSystem(ctx, version, requestFrom(ctx).user)
+}
+
+// startUpdate refuses an update that is not confirmed or names no version X.Y.Z with unconfirmed, and starts the
+// others with start, answering its refusals with refusal; a nil version is a request without a body.
+func (s *Server) startUpdate(ctx context.Context, version *string, confirm bool, unconfirmed restoreAnswer, start func(context.Context, string) error, refusal func(error) (restoreAnswer, bool)) (restoreAnswer, error) {
 	if !s.updatesAvailable() || s.deps.Platform == nil {
 		return answerUpdatesUnavailable, nil
 	}
 	details := map[string]string{}
-	if req.Body != nil {
-		details[detailVersion] = req.Body.Version
+	if version != nil {
+		details[detailVersion] = *version
 	}
 	switch {
-	case req.Body == nil || !req.Body.Confirm:
-		return answered(ctx, details, answerUpdateUnconfirmed), nil
-	case !validVersion(req.Body.Version):
+	case version == nil || !confirm:
+		return answered(ctx, details, unconfirmed), nil
+	case !validVersion(*version):
 		return answered(ctx, details, answerBadVersion), nil
 	}
-	err := s.deps.Platform.StartPlatform(ctx, req.Body.Version, requestFrom(ctx).user)
+	err := start(ctx, *version)
 	if err == nil {
 		requestFrom(ctx).unaudited = true
 		return restoreAnswer{status: http.StatusAccepted}, nil
 	}
-	if answer, ok := updateRefusal(err); ok {
+	if answer, ok := refusal(err); ok {
 		return answered(ctx, details, answer), nil
 	}
-	return nil, fmt.Errorf("start the platform update: %w", err)
+	return restoreAnswer{}, fmt.Errorf("start the update: %w", err)
 }
 
 // PostUpdatesRollback rolls the last platform update back with the uploaded recovery kit in the background, once
@@ -415,6 +461,17 @@ func rollbackRefusal(err error) (restoreAnswer, bool) {
 	var e *update.Error
 	if errors.As(err, &e) {
 		if answer, ok := rollbackRefusals[e.Reason]; ok {
+			return answer, true
+		}
+	}
+	return updateRefusal(err)
+}
+
+// systemRefusal is the answer to a refusal of a system update; false for a failure.
+func systemRefusal(err error) (restoreAnswer, bool) {
+	var e *update.Error
+	if errors.As(err, &e) {
+		if answer, ok := systemRefusals[e.Reason]; ok {
 			return answer, true
 		}
 	}

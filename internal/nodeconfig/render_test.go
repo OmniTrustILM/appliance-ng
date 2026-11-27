@@ -375,3 +375,29 @@ func TestNoMirrorsWithoutZot(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryMirrorOfAHostWithAPort(t *testing.T) {
+	docs := nodeconfig.RegistryMirrors(nil, []string{"ghcr.io", "localhost:5005"})
+	mirrors := map[string]*cri.RegistryMirrorConfigV1Alpha1{}
+	for _, doc := range docs {
+		if m, ok := doc.(*cri.RegistryMirrorConfigV1Alpha1); ok {
+			mirrors[m.Name()] = m
+		}
+	}
+	for host, want := range map[string]string{
+		"ghcr.io":        "https://127.0.0.1:5443/v2/ghcr.io",
+		"localhost:5005": "https://127.0.0.1:5443/v2/localhost_5005",
+	} {
+		m := mirrors[host]
+		if m == nil || len(m.RegistryEndpoints) != 1 {
+			t.Fatalf("no mirror document for %s in %v", host, mirrors)
+		}
+		ep := m.RegistryEndpoints[0]
+		if got := ep.EndpointURL.String(); got != want {
+			t.Errorf("%s: endpoint %s, want %s", host, got, want)
+		}
+		if ep.EndpointOverridePath == nil || !*ep.EndpointOverridePath {
+			t.Errorf("%s: overridePath is not set", host)
+		}
+	}
+}

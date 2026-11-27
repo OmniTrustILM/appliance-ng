@@ -1144,7 +1144,14 @@ func TestStepTimesOut(t *testing.T) {
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "example/c"}}},
 	})
 	e := f.engine(testClient)
-	e.waitTimeout = 20 * time.Millisecond
+	// Only the stop step gets the short wait: the Platform wait before it must pass however slow the API server is.
+	e.afterStep = func(step string) bool {
+		f.ran = append(f.ran, step)
+		if step == v1alpha1.RestoreStepPlatform {
+			e.waitTimeout = 200 * time.Millisecond
+		}
+		return false
+	}
 	f.start(t, e, Options{ILMHostName: newILMHost})
 	st := getAppliance(t).Status.Restore
 	if st.Step != v1alpha1.RestoreStepStop || st.Message != v1alpha1.RestoreTimeout {

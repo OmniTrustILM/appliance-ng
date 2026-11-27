@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/cosi-project/runtime/pkg/resource"
 	"github.com/cosi-project/runtime/pkg/safe"
 	"github.com/cosi-project/runtime/pkg/state"
+	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
 	clientconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
@@ -90,11 +92,28 @@ type Node interface {
 	// Disks lists the disks of the node, ordered by device path; before the install, the disk installSelector
 	// matches first is marked as the system disk.
 	Disks(ctx context.Context, installSelector string) ([]Disk, error)
+	// ExtensionVersion returns the version of the system extension name the node runs, empty without one.
+	ExtensionVersion(ctx context.Context, name string) (string, error)
 	// Versions returns the Talos version of the node and the Kubernetes version of its machine configuration.
 	Versions(ctx context.Context) (talos, kubernetes string, err error)
 	// ClientConfig generates a talosconfig for the node with a client certificate of roles, valid for ttl; the node's
 	// CA signs it, so its key never leaves the node.
 	ClientConfig(ctx context.Context, roles []string, ttl time.Duration) ([]byte, error)
+	// Upgrade pulls the Talos installer image into the system store and installs it as the boot entry the next boot
+	// boots. It neither drains nor reboots the node.
+	Upgrade(ctx context.Context, image string) error
+	// RebootPowercycle reboots the node with a power cycle, which boots the default boot entry.
+	RebootPowercycle(ctx context.Context) error
+	// SetInstallerImage sets the installer image of the UnattendedInstallConfig of the running machine configuration,
+	// applied in no-reboot mode.
+	SetInstallerImage(ctx context.Context, image string) error
+	// PullSystemImage pulls image into the system store, which Talos runs its own services, such as etcd, from.
+	PullSystemImage(ctx context.Context, image string) error
+	// Rollback makes the previous boot entry the one the node boots and reboots it.
+	Rollback(ctx context.Context) error
+	// SetKubernetesImages sets the image of a Kubernetes component (apiServer, controllerManager, scheduler or
+	// kubelet) in the running machine configuration, applied in no-reboot mode.
+	SetKubernetesImages(ctx context.Context, component, image string) error
 	Reboot(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 }
@@ -354,6 +373,90 @@ func (n *node) ClientConfig(ctx context.Context, roles []string, ttl time.Durati
 func (n *node) Reboot(ctx context.Context) error {
 	if err := n.c.Reboot(ctx); err != nil {
 		return fmt.Errorf("reboot: %w", err)
+	}
+	return nil
+}
+
+// upgradeTimeout bounds the pull and the installation of an installer image.
+const upgradeTimeout = 15 * time.Minute
+
+// systemStore is the containerd store Talos keeps its own images in, the installer among them.
+var systemStore = &common.ContainerdInstance{Driver: common.ContainerDriver_CONTAINERD, Namespace: common.ContainerdNamespace_NS_SYSTEM}
+
+// Upgrade pulls image into the system store and installs it with the LifecycleService, which writes the new boot
+// entry. The Machine service upgrade is not used: its staged form never installs with an unattended install
+// configuration, and its direct form drains the node.
+func (n *node) Upgrade(ctx context.Context, image string) error {
+	ctx, cancel := context.WithTimeout(ctx, upgradeTimeout)
+	defer cancel()
+	pulled, err := n.pull(ctx, image)
+	if err != nil {
+		return err
+	}
+	stream, err := n.c.LifecycleClient.Upgrade(ctx, &machineapi.LifecycleServiceUpgradeRequest{
+		Containerd: systemStore, Source: &machineapi.InstallArtifactsSource{ImageName: pulled},
+	})
+	if err != nil {
+		return fmt.Errorf("install %s: %w", image, err)
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("install %s: the installer ended without an exit code", image)
+		}
+		if err != nil {
+			return fmt.Errorf("install %s: %w", image, err)
+		}
+		if code, ok := resp.GetProgress().GetResponse().(*machineapi.LifecycleServiceInstallProgress_ExitCode); ok {
+			if code.ExitCode != 0 {
+				return fmt.Errorf("install %s: exit code %d", image, code.ExitCode)
+			}
+			slog.Info("installed the Talos installer image", "image", image)
+			return nil
+		}
+	}
+}
+
+// pull pulls image into the system store and returns the name it was stored under.
+func (n *node) pull(ctx context.Context, image string) (string, error) {
+	stream, err := n.c.ImageClient.Pull(ctx, &machineapi.ImageServicePullRequest{Containerd: systemStore, ImageRef: image})
+	if err != nil {
+		return "", fmt.Errorf("pull %s: %w", image, err)
+	}
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("pull %s: no image name reported", image)
+		}
+		if err != nil {
+			return "", fmt.Errorf("pull %s: %w", image, err)
+		}
+		if name := resp.GetName(); name != "" {
+			return name, nil
+		}
+	}
+}
+
+// pullTimeout bounds the pull of an image into the system store, which may take longer than a call.
+const pullTimeout = 15 * time.Minute
+
+func (n *node) PullSystemImage(ctx context.Context, image string) error {
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
+	_, err := n.pull(ctx, image)
+	return err
+}
+
+func (n *node) RebootPowercycle(ctx context.Context) error {
+	if err := n.c.Reboot(ctx, client.WithPowerCycle); err != nil {
+		return fmt.Errorf("reboot: %w", err)
+	}
+	return nil
+}
+
+func (n *node) Rollback(ctx context.Context) error {
+	if err := n.c.Rollback(ctx); err != nil {
+		return fmt.Errorf("roll back to the previous boot slot: %w", err)
 	}
 	return nil
 }

@@ -168,6 +168,15 @@ func TestRollbackRefusals(t *testing.T) {
 			e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Update.Step = update.StepWait })
 			return e.backups
 		}, nil, update.UpdateRunning},
+		{"system update running", func(e *jobEnv) update.JobBackups {
+			e.updated(fromBundle, toBundle, update.Timeout)
+			e.updateStatus(func(st *v1alpha1.ApplianceStatus) {
+				st.Update = &v1alpha1.UpdateStatus{
+					Kind: v1alpha1.UpdateKindSystem, From: fromBundle, To: "1.2.0", Step: update.StepTalos, StartedAt: metav1.Now(),
+				}
+			})
+			return e.backups
+		}, nil, update.UpdateRunning},
 		{"previous bundle gone", func(e *jobEnv) update.JobBackups {
 			e.updated("0.9.0", toBundle, update.Timeout)
 			return e.backups
@@ -481,5 +490,66 @@ func TestFailedUpdateKeepsTheBundleWhoseOperatorRuns(t *testing.T) {
 	}
 	if got := e.appliance().Status.Versions.PlatformBundle; got != toBundle {
 		t.Errorf("platform bundle %q, want %s whose operator runs", got, toBundle)
+	}
+}
+
+// TestRollbackGoesBackToTheILMTheUpdateStartedFrom rolls a platform update back to the ILM version it started from,
+// also after a system update whose release embeds another ILM: from a loaded platform bundle carrying it, else from
+// the release only when it embeds that version, else not at all.
+func TestRollbackGoesBackToTheILMTheUpdateStartedFrom(t *testing.T) {
+	const systemILM = "2.19.5"
+	cases := []struct {
+		name       string
+		releaseILM string
+		loaded     bool
+		version    string
+		bundle     string
+		reason     string
+	}{
+		{"release embeds another ILM", systemILM, false, "", "", update.NoPreviousBundle},
+		{"a loaded bundle carries it", systemILM, true, oldILM, "1.0.5", ""},
+		{"the release embeds it", oldILM, false, oldILM, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newJobEnv(t, shippedOperator)
+			e.releaseILM = tc.releaseILM
+			if tc.loaded {
+				e.storeBundleAt("1.0.5", oldILM, shippedOperator)
+				e.updateStatus(func(st *v1alpha1.ApplianceStatus) {
+					st.Updates.Loaded = append(st.Updates.Loaded, v1alpha1.BundleInfo{
+						Kind: release.BundlePlatform, Version: "1.0.5", Arch: testArch, ILM: oldILM, Operator: shippedOperator,
+						Blocked: update.OlderThanRunning,
+					})
+				})
+			}
+			e.updated(fromBundle, toBundle, update.Timeout)
+			e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Update.FromILM = oldILM })
+			restorer := &fakeRestorer{}
+			err := e.newJobsWithRestorer(e.backups, restorer).Rollback(t.Context(), rollbackKey(t), "admin")
+			if tc.reason != "" {
+				if update.Reason(err) != tc.reason || len(restorer.started()) != 0 {
+					t.Fatalf("rollback: %v, want %s", err, tc.reason)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rollback: %v", err)
+			}
+			r := restorer.started()[0].opts.Rollback
+			if r.Version != tc.version || r.PlatformBundle != tc.bundle || r.Update.FromILM != oldILM {
+				t.Errorf("rollback to ILM %q of bundle %q (%+v), want %s of %q", r.Version, r.PlatformBundle, r.Update, tc.version, tc.bundle)
+			}
+		})
+	}
+}
+
+// TestPlatformUpdateRecordsTheILMItStartsFrom records the ILM version that runs when a platform update starts.
+func TestPlatformUpdateRecordsTheILMItStartsFrom(t *testing.T) {
+	e := newJobEnv(t, newerOperator)
+	jobs := e.newJobs()
+	e.start(jobs)
+	if u := e.waitEnded(jobs); u.FromILM != oldILM {
+		t.Errorf("update %+v, want it to record ILM %s", u, oldILM)
 	}
 }

@@ -160,13 +160,20 @@ func extractCRDs(manifest, dir string) error {
 
 // fakeCluster passes every add-on step unless unready names a wait that is not ready.
 type fakeCluster struct {
-	unready  string
+	unready string
+	// missing names a wait whose object does not exist.
+	missing  string
 	applies  int
 	applyErr error
+	// onApply runs after each apply.
+	onApply func()
 }
 
 func (f *fakeCluster) Apply(context.Context, []byte) error {
 	f.applies++
+	if f.onApply != nil {
+		f.onApply()
+	}
 	return f.applyErr
 }
 
@@ -178,6 +185,9 @@ func (f *fakeCluster) LabelNamespace(context.Context, string, map[string]string)
 func (f *fakeCluster) Ready(_ context.Context, w kube.WaitFor) (bool, string, error) {
 	if w.Name == f.unready {
 		return false, "0/1 available", nil
+	}
+	if w.Name == f.missing {
+		return false, kube.NotFound, nil
 	}
 	return true, "", nil
 }

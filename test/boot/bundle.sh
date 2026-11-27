@@ -5,12 +5,15 @@
 # With SAME_ILM=1 it keeps release.yaml's ILM version and names the next appliance patch version as the bundle's
 # instead, for an appliance built with an older ILM_VERSION: the platform update test installs it and rolls it back to
 # the appliance's own platform, which a bundle of the appliance's version would stand in for.
+# With KIND=system it builds the system bundle of release.yaml as it is instead, for an appliance of an older version:
+# it carries the installer and the manager that make images pushed, by the digests in out/<arch>/installer.digest and
+# out/<arch>/manager.digest.
 #
 #   bundle.sh <arch> <cosign key> <file>
 #
 # <cosign key> is the cosign.key of cosign generate-key-pair, with cosign.pub beside it, and its password is in
 # COSIGN_PASSWORD (empty for a key made with COSIGN_PASSWORD=''). The bundle is pushed to REGISTRY (default
-# localhost:5005, see build/lib.sh) as test/platform:<version>-<arch> for cosign to sign it, and signed with
+# localhost:5005, see build/lib.sh) as test/<kind>:<version>-<arch> for cosign to sign it, and signed with
 # --tlog-upload=false --use-signing-config=false, so nothing reaches a public log. Needs go, jq, cosign v3 and oras
 # 1.4 or later.
 set -euo pipefail
@@ -31,7 +34,17 @@ trap 'rm -rf -- "$work"' EXIT
 mkdir "$work/root" "$work/export"
 ilm="$(yq '.platform.ilmVersion' release.yaml)"
 bundle_version="$VERSION"
-if [[ "${SAME_ILM:-0}" == 1 ]]; then
+kind="${KIND:-platform}"
+built=()
+if [[ "$kind" == system ]]; then
+  for name in installer manager; do
+    digest="$(cat "$OUT/$name.digest")" || die "$OUT/$name.digest not found, run make images ARCH=$ARCH"
+    built+=(--image "$REGISTRY/$name:$VERSION-$ARCH@$digest")
+  done
+  cp release.yaml "$work/root/release.yaml"
+elif [[ "$kind" != platform ]]; then
+  die "KIND must be platform or system, not $kind"
+elif [[ "${SAME_ILM:-0}" == 1 ]]; then
   bundle_version="${VERSION%.*}.$((${VERSION##*.} + 1))"
   yq ".version = \"$bundle_version\"" release.yaml >"$work/root/release.yaml"
 else
@@ -39,11 +52,11 @@ else
   yq ".platform.ilmVersion = \"$ilm\"" release.yaml >"$work/root/release.yaml"
 fi
 ln -s "$PWD/addons" "$work/root/addons"
-log "building the platform bundle $bundle_version with ILM $ilm for $ARCH"
-go run ./cmd/bundle build --root "$work/root" --kind platform --arch "$ARCH" --out "$work/bundle"
+log "building the $kind bundle $bundle_version with ILM $ilm for $ARCH"
+go run ./cmd/bundle build --root "$work/root" --kind "$kind" --arch "$ARCH" ${built[@]+"${built[@]}"} --out "$work/bundle"
 
 tag="$bundle_version-$ARCH"
-repo="$REGISTRY/test/platform"
+repo="$REGISTRY/test/$kind"
 digest="$(jq -er --arg tag "$tag" \
   '.manifests[] | select(.annotations["org.opencontainers.image.ref.name"] == $tag) | .digest' "$work/bundle/index.json")" ||
   die "the bundle has no index tagged $tag"

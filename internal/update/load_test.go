@@ -113,6 +113,12 @@ func TestLoadRejects(t *testing.T) {
 			e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
 			return e.upload(e.build(e.platform("1.1.0", "2.20.0")))
 		}, update.UnmirroredRegistry},
+		{"system installer from a registry the release does not mirror", release.BundleSystem, func(e *env) string {
+			e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
+			s := e.system("1.1.0")
+			s.installer = true
+			return e.upload(e.build(s))
+		}, update.UnmirroredRegistry},
 		{"no space", release.BundlePlatform, func(e *env) string {
 			e.noSpace = true
 			return e.upload(e.build(e.platform("1.1.0", "2.20.0")))
@@ -173,6 +179,34 @@ func TestLoadChecksSpaceBeforeOpening(t *testing.T) {
 	}
 	if len(e.spaceChecks) == 0 || e.spaceChecks[0] != uint64(info.Size()) {
 		t.Errorf("space checks %v, want the tar's size %d first", e.spaceChecks, info.Size())
+	}
+}
+
+// TestLoadAcceptsImagesOfAnotherMirroredRegistry loads a platform bundle whose images come from a registry that is
+// mirrored although the release pins no image there.
+func TestLoadAcceptsImagesOfAnotherMirroredRegistry(t *testing.T) {
+	e := newEnv(t)
+	e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
+	e.upstreams = []string{"ghcr.io", sourceHost}
+	path := e.upload(e.build(e.platform("1.1.0", "2.20.0")))
+	if _, err := e.loader().Load(t.Context(), release.BundlePlatform, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLoadAcceptsASystemBundleWhoseNodeImagesAreMirrored loads a system bundle whose installer comes from a mirrored
+// registry, while its other images come from one that is not: the new release mirrors those.
+func TestLoadAcceptsASystemBundleWhoseNodeImagesAreMirrored(t *testing.T) {
+	e := newEnv(t)
+	e.upstreams = []string{sourceHost}
+	s := e.system("1.1.0")
+	s.installer = true
+	if _, err := e.loader().Load(t.Context(), release.BundleSystem, e.upload(e.build(s))); err != nil {
+		t.Fatal(err)
+	}
+	e.upstreams = []string{"ghcr.io"}
+	if _, err := e.loader().Load(t.Context(), release.BundleSystem, e.upload(e.build(e.system("1.2.0")))); err != nil {
+		t.Errorf("a system bundle without node images was refused: %v", err)
 	}
 }
 
@@ -264,6 +298,68 @@ func TestLoadKeepsCurrentAndPrevious(t *testing.T) {
 	for _, b := range e.appliance().Status.Updates.Loaded {
 		if b.Version == "1.2.0" && b.Blocked != update.SameVersion {
 			t.Errorf("the running bundle is listed as %q, want %q", b.Blocked, update.SameVersion)
+		}
+	}
+}
+
+// TestLoadKeepsTheBundleOfTheILMToRollBackTo keeps, while the backup of the last update is pinned, the loaded platform
+// bundle that carries the ILM version the update started from, which a rollback installs again.
+func TestLoadKeepsTheBundleOfTheILMToRollBackTo(t *testing.T) {
+	e := newEnv(t)
+	l := e.loader()
+	load := func(version, ilm string) {
+		t.Helper()
+		if _, err := l.Load(t.Context(), release.BundlePlatform, e.upload(e.build(e.platform(version, ilm)))); err != nil {
+			t.Fatalf("load %s: %v", version, err)
+		}
+	}
+	load("1.1.0", "2.20.0")
+	load("1.2.0", "2.21.0")
+	a := e.appliance()
+	a.Status.Versions = v1alpha1.Versions{Appliance: "1.0.0", Operator: "1.0.0", ILM: "2.21.0", PlatformBundle: "1.2.0"}
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: release.BundlePlatform, From: "1.0.0", FromILM: "2.20.0", To: "1.2.0", Step: update.StepDone,
+		Backup: "pre-update", StartedAt: metav1.Now(),
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	e.lock.setBackups(v1alpha1.BackupRecord{Name: "pre-update", Pinned: release.BundlePlatform})
+	load("1.3.0", "2.22.0")
+	load("1.4.0", "2.23.0")
+	if got, want := e.stored(release.BundlePlatform), []string{"1.1.0-amd64", "1.2.0-amd64", "1.4.0-amd64"}; !slices.Equal(got, want) {
+		t.Errorf("stored bundles %v, want %v", got, want)
+	}
+	if !slices.ContainsFunc(e.appliance().Status.Updates.Loaded, func(b v1alpha1.BundleInfo) bool { return b.Version == "1.1.0" }) {
+		t.Error("the bundle a rollback installs again is no longer listed as loaded")
+	}
+}
+
+// TestLoadUnblocksAFailedSystemUpdate lists the running system bundle as installable while a system update to it
+// failed past its point of no return, so that it can run again.
+func TestLoadUnblocksAFailedSystemUpdate(t *testing.T) {
+	e := newEnv(t)
+	l := e.loader()
+	load := func(version string) {
+		t.Helper()
+		if _, err := l.Load(t.Context(), release.BundleSystem, e.upload(e.build(e.system(version)))); err != nil {
+			t.Fatalf("load %s: %v", version, err)
+		}
+	}
+	load("1.2.0")
+	e.setVersions(v1alpha1.Versions{Appliance: "1.2.0", Operator: "1.0.0", ILM: "2.19.0"})
+	a := e.appliance()
+	a.Status.Update = &v1alpha1.UpdateStatus{
+		Kind: release.BundleSystem, From: "1.1.0", To: "1.2.0", Step: update.StepKubernetes, Message: update.Failed,
+		PointOfNoReturn: true, StartedAt: metav1.Now(),
+	}
+	if err := e.client.Status().Update(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	load("1.3.0")
+	for _, b := range e.appliance().Status.Updates.Loaded {
+		if b.Version == "1.2.0" && b.Blocked != "" {
+			t.Errorf("the bundle of the failed update is listed as %q, want installable", b.Blocked)
 		}
 	}
 }

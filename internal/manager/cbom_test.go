@@ -291,3 +291,35 @@ func TestCBOMRepositoryNeedsItsChart(t *testing.T) {
 		t.Error("the CBOM condition is kept without a repository")
 	}
 }
+
+// TestHeldPassLeavesTheCBOMRepository leaves the CBOM repository as it is while a system update holds the add-on
+// pass, and applies it again once the hold is released.
+func TestHeldPassLeavesTheCBOMRepository(t *testing.T) {
+	cbomAppliance(t, &v1alpha1.CBOMSpec{Enabled: true, Storage: v1alpha1.CBOMStorageAppliance})
+	r := cbomReconciler(t, testClient)
+	runReconcile(t, r)
+	d := &appsv1.Deployment{}
+	if !cbomObjectExists(t, d, "cbom-repository-deployment") {
+		t.Fatal("the repository is not applied")
+	}
+	if err := testClient.Delete(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	held := &v1alpha1.UpdateStatus{
+		Kind: v1alpha1.UpdateKindSystem, From: "1.0.0", To: "1.1.0", Step: "health", StartedAt: metav1.Now(),
+	}
+	setUpdate(t, held)
+	runReconcile(t, r)
+	if cbomObjectExists(t, &appsv1.Deployment{}, "cbom-repository-deployment") {
+		t.Error("the repository was applied while the add-on pass is held")
+	}
+	if c := condition(t, getAppliance(t), v1alpha1.ConditionCBOMRepositoryApplied); c.Status != metav1.ConditionTrue {
+		t.Errorf("CBOMRepositoryApplied = %+v, want kept as applied", c)
+	}
+	held.Step = v1alpha1.UpdateStepDone
+	setUpdate(t, held)
+	runReconcile(t, r)
+	if !cbomObjectExists(t, &appsv1.Deployment{}, "cbom-repository-deployment") {
+		t.Error("the repository was not applied once the hold was released")
+	}
+}

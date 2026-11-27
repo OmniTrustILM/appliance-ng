@@ -2,6 +2,7 @@ package talos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -15,6 +16,8 @@ import (
 	"github.com/siderolabs/talos/pkg/machinery/config/configpatcher"
 	"github.com/siderolabs/talos/pkg/machinery/config/container"
 	"github.com/siderolabs/talos/pkg/machinery/config/encoder"
+	k8sconfig "github.com/siderolabs/talos/pkg/machinery/config/types/k8s"
+	runtimeconfig "github.com/siderolabs/talos/pkg/machinery/config/types/runtime"
 	"github.com/siderolabs/talos/pkg/machinery/config/types/runtime/extensions"
 	"github.com/siderolabs/talos/pkg/machinery/resources/config"
 	"google.golang.org/grpc/status"
@@ -46,6 +49,45 @@ func (n *node) PatchConfig(ctx context.Context, patch []byte) error {
 	}
 
 	return n.applyNoReboot(ctx, current, patched)
+}
+
+// kubernetesComponents maps a Kubernetes component to the kind of the document that holds its image.
+var kubernetesComponents = map[string]string{
+	"apiServer":         k8sconfig.KubeAPIServerConfig,
+	"controllerManager": k8sconfig.KubeControllerManagerConfig,
+	"scheduler":         k8sconfig.KubeSchedulerConfig,
+	"kubelet":           k8sconfig.KubeletConfig,
+}
+
+// SetKubernetesImages sets the image of one Kubernetes component and keeps the rest of the machine configuration.
+func (n *node) SetKubernetesImages(ctx context.Context, component, image string) error {
+	kind, ok := kubernetesComponents[component]
+	if !ok {
+		return fmt.Errorf("unknown Kubernetes component %q", component)
+	}
+	if image == "" {
+		return fmt.Errorf("no image for Kubernetes component %s", component)
+	}
+	patch := fmt.Sprintf("apiVersion: v1alpha1\nkind: %s\nimage: %q\n", kind, image)
+	if err := n.PatchConfig(ctx, []byte(patch)); err != nil {
+		return fmt.Errorf("set the %s image: %w", component, err)
+	}
+	slog.Info("set Kubernetes component image", "component", component, "image", image)
+	return nil
+}
+
+// SetInstallerImage sets the installer image of the unattended install configuration and keeps the rest of the
+// machine configuration.
+func (n *node) SetInstallerImage(ctx context.Context, image string) error {
+	if image == "" {
+		return errors.New("no installer image")
+	}
+	patch := fmt.Sprintf("apiVersion: v1alpha1\nkind: %s\ninstaller:\n  image: %q\n", runtimeconfig.UnattendedInstallConfigKind, image)
+	if err := n.PatchConfig(ctx, []byte(patch)); err != nil {
+		return fmt.Errorf("set the installer image: %w", err)
+	}
+	slog.Info("set the installer image", "image", image)
+	return nil
 }
 
 // ExtensionConfigFile returns the content of the file mounted at file by the ExtensionServiceConfig name of the

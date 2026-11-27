@@ -28,6 +28,10 @@ const (
 	ConditionAdminCertificateRegistered = "AdminCertificateRegistered"
 )
 
+// ReasonUpdateHeld is the reason of AddonsReady while a system update holds the add-on pass: the add-ons are
+// checked, not applied.
+const ReasonUpdateHeld = "UpdateHeld"
+
 // Setup phases reported in ApplianceStatus.Setup.
 const (
 	SetupPart1    = "part1"
@@ -493,6 +497,11 @@ type Versions struct {
 	// PlatformBundle is the version of the platform bundle that is running.
 	// +optional
 	PlatformBundle string `json:"platformBundle,omitempty"`
+	// RequiredManager is the version of the release a system update installed once it passed its point of no return.
+	// The manager of any other version holds the add-on pass: its add-ons are not for the upgraded Kubernetes. It is
+	// kept across later updates and restores in place.
+	// +optional
+	RequiredManager string `json:"requiredManager,omitempty"`
 }
 
 // ApplianceStatus is the observed state of the appliance.
@@ -594,6 +603,10 @@ type UpdateStatus struct {
 	// FromBundle is the platform bundle that ran before the update; empty for the release's own platform.
 	// +optional
 	FromBundle string `json:"fromBundle,omitempty"`
+	// FromILM is the ILM version that ran before a platform update, to which a rollback goes back; a rollback keeps
+	// it. Unset in the status of an update recorded before it was kept.
+	// +optional
+	FromILM string `json:"fromILM,omitempty"`
 	// Step is the step the update is at.
 	// +optional
 	Step string `json:"step,omitempty"`
@@ -604,21 +617,60 @@ type UpdateStatus struct {
 	// +optional
 	Backup    string      `json:"backup,omitempty"`
 	StartedAt metav1.Time `json:"startedAt"`
-	// PointOfNoReturn is set once the update has asked for the new ILM version; from then on only a rollback undoes it.
+	// PointOfNoReturn is set once the update has asked for the new ILM version, or the health check of a system update
+	// passed; from then on only a rollback, or for a system update a restore onto a fresh appliance, undoes it.
 	// +optional
 	PointOfNoReturn bool `json:"pointOfNoReturn,omitempty"`
+	// BootID is the boot ID of the node before the reboot a system update waits for: the reboot into the new Talos,
+	// or back into the old one.
+	// +optional
+	BootID string `json:"bootID,omitempty"`
+	// Deadline is when the wait at the recorded step of a system update gives up: for the manager of the new release
+	// to take the update over, for the node to boot the new Talos and come back healthy, or to boot the old Talos
+	// again after a rollback.
+	// +optional
+	Deadline *metav1.Time `json:"deadline,omitempty"`
+	// Installed is set once a system update installed the new Talos as the boot entry the next boot boots.
+	// +optional
+	Installed bool `json:"installed,omitempty"`
+	// PreviousManager is the manager image that ran before a system update applied the manager of the new release.
+	// +optional
+	PreviousManager string `json:"previousManager,omitempty"`
+	// PreviousAddonSteps are the add-on steps of the release a system update started from, which its pass applied:
+	// while the update holds the pass, they must stay ready.
+	// +optional
+	PreviousAddonSteps []string `json:"previousAddonSteps,omitempty"`
+	// HandBack is the fixed reason of a system update that failed before the node booted the new Talos: the manager
+	// of the new release runs the previous manager again, which records the update failed with it.
+	// +optional
+	HandBack string `json:"handBack,omitempty"`
 }
 
-// The kind of a rollback in UpdateStatus, whose progress is that of its restore, and the step of a completed update.
+// The system and rollback kinds of UpdateStatus, a rollback's progress being that of its restore; the step of a
+// completed update; and the step at which a system update releases the add-on pass.
 const (
+	UpdateKindSystem   = "system"
 	UpdateKindRollback = "rollback"
 	UpdateStepDone     = "done"
+	UpdateStepAddons   = "addons"
 )
 
 // Unfinished tells whether u is an update that neither completed nor failed; the progress of a rollback is that of its
 // restore.
 func (u *UpdateStatus) Unfinished() bool {
 	return u != nil && u.Kind != UpdateKindRollback && u.Step != UpdateStepDone && u.Message == ""
+}
+
+// HoldsAddons tells whether u is a system update that holds the add-on pass: unfinished and not yet at its addons
+// step, so that nothing changes the add-ons from its backup on.
+func (u *UpdateStatus) HoldsAddons() bool {
+	return u.Unfinished() && u.Kind == UpdateKindSystem && u.Step != UpdateStepAddons
+}
+
+// HoldsAddonsFor tells whether s holds the add-on pass of the manager of version: while a system update holds it,
+// and in a manager of another version than the one a system update made required past its point of no return.
+func (s *ApplianceStatus) HoldsAddonsFor(version string) bool {
+	return s.Update.HoldsAddons() || s.Versions.RequiredManager != "" && s.Versions.RequiredManager != version
 }
 
 // ConnectorState is the state of one chosen connector.

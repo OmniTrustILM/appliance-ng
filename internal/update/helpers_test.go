@@ -81,6 +81,8 @@ type env struct {
 	// spaceChecks records the sizes the free space check was asked about.
 	spaceChecks []uint64
 	rel         *release.Manifest
+	// upstreams are the mirrored registries the loader is given, the release's own when empty.
+	upstreams []string
 }
 
 // sourceHost names the registry the bundle images and the online bundles come from. Image references with a port
@@ -196,6 +198,7 @@ func (e *env) loaderWith(online update.Online) *update.Loader {
 		Audit:     e.audit,
 		Log:       slog.New(slog.NewTextHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Release:   e.rel,
+		Upstreams: e.upstreams,
 		Dir:       e.dir,
 		Uploads:   e.uploads,
 		Online:    online,
@@ -212,6 +215,8 @@ type spec struct {
 	ilm, operatorRange string
 	// key signs the bundle; nil leaves it unsigned.
 	key *ecdsa.PrivateKey
+	// installer adds the installer built with the appliance to a system bundle.
+	installer bool
 }
 
 func (e *env) system(version string) spec {
@@ -244,6 +249,9 @@ func (e *env) build(s spec) string {
 			e.pushImage(e.src+"/"+s.kind+"/tool:"+s.version, s.kind, s.arch),
 			e.pushImage(e.src+"/"+s.kind+"/shared:1.0", s.kind, s.arch),
 		},
+	}
+	if s.installer {
+		m.Images = append(m.Images, e.pushImage(e.src+"/installer:"+s.version+"-"+s.arch, s.kind, s.arch))
 	}
 	dir := filepath.Join(t.TempDir(), "layout")
 	if _, err := bundle.Build(t.Context(), m, s.kind, s.arch, bundle.Inputs{Files: files, Notes: testNotes}, dir); err != nil {

@@ -56,6 +56,15 @@ func bundleInfo(md bundle.Metadata) v1alpha1.BundleInfo {
 	}
 }
 
+// unblockRetry lets the system bundle of infos that the failed update u runs again from be installed.
+func unblockRetry(infos []v1alpha1.BundleInfo, u *v1alpha1.UpdateStatus) {
+	for i := range infos {
+		if b := &infos[i]; b.Kind == release.BundleSystem && b.Blocked == SameVersion && Retryable(u, b.Version) {
+			b.Blocked = ""
+		}
+	}
+}
+
 // recheck sets why each of infos cannot be installed on cur now.
 func recheck(infos []v1alpha1.BundleInfo, cur Current) {
 	for i := range infos {

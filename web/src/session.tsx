@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Navigate, useNavigate } from 'react-router';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { Loading } from './components/Spinner';
 import { api, setCsrfToken, setUnauthorizedHandler } from './api/client';
 import { attempt } from './setup/failure';
@@ -20,15 +20,21 @@ const SessionContext = createContext<SessionControl>({
   signOut: () => {},
 });
 
-/** Loads the console session once and sends the user to sign-in when the session ends. */
+/**
+ * Loads the console session once and sends the user to sign-in when the session ends, to come back to the page that
+ * found it ended.
+ */
 export function SessionProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [session, setSession] = useState<Session>({ state: 'loading' });
   const navigate = useNavigate();
-  // navigate changes with every page, which must not load the session again.
+  const { pathname } = useLocation();
+  // navigate and the page change with every page, which must not load the session again.
   const navigateRef = useRef(navigate);
+  const pathnameRef = useRef(pathname);
   useEffect(() => {
     navigateRef.current = navigate;
-  }, [navigate]);
+    pathnameRef.current = pathname;
+  }, [navigate, pathname]);
 
   // Counts the changes of the session, so that the initial lookup does not undo a sign-in or sign-out made while it
   // was pending.
@@ -50,7 +56,10 @@ export function SessionProvider({ children }: Readonly<{ children: ReactNode }>)
       changes.current++;
       setCsrfToken(undefined);
       setSession({ state: 'signedOut' });
-      void navigateRef.current('/signin');
+      // A further request ending while sign-in is open must keep the page sign-in returns to.
+      const returnTo = pathnameRef.current;
+      if (returnTo === '/signin') return;
+      void navigateRef.current('/signin', { state: { returnTo } satisfies SignInState });
     });
     let active = true;
     const before = changes.current;
@@ -79,10 +88,14 @@ export function useSessionControl() {
   return { signIn, signOut };
 }
 
-/** Shows children to a signed-in user and sends anyone else to sign-in. */
+/** What sign-in is sent: the page to open again once signed in. */
+export type SignInState = { returnTo?: string };
+
+/** Shows children to a signed-in user and sends anyone else to sign-in, to come back to this page. */
 export function RequireSession({ children }: Readonly<{ children: ReactNode }>) {
   const session = useSession();
+  const { pathname } = useLocation();
   if (session.state === 'loading') return <Loading />;
-  if (session.state === 'signedOut') return <Navigate to="/signin" replace />;
+  if (session.state === 'signedOut') return <Navigate to="/signin" replace state={{ returnTo: pathname } satisfies SignInState} />;
   return children;
 }

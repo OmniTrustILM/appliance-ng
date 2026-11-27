@@ -82,6 +82,9 @@ type LoaderDeps struct {
 	Log       *slog.Logger
 	// Release is the running release; its operator range is what a system bundle is checked against.
 	Release *release.Manifest
+	// Upstreams are the registries the registry mirror serves, which a platform bundle's images must come from; they
+	// default to the release's.
+	Upstreams []string
 	// Dir keeps the verified bundle files in <kind>/<version>-<arch>/ and the cached notes of bundles found online.
 	Dir string
 	// Uploads keeps the uploaded bundles until they are loaded and the bundles fetched online while they are checked.
@@ -99,6 +102,9 @@ type LoaderDeps struct {
 }
 
 func (d *LoaderDeps) defaults() {
+	if d.Upstreams == nil && d.Release != nil {
+		d.Upstreams = d.Release.RegistryHosts()
+	}
 	if d.Key == nil {
 		d.Key = bundle.PublicKey()
 	}
@@ -311,7 +317,7 @@ func (l *Loader) admissible(ctx context.Context, kind, version string, md bundle
 	if version != "" && md.Version != version {
 		return Current{}, &Error{Reason: WrongVersion}
 	}
-	if md.Kind == release.BundlePlatform && !mirrored(l.deps.Release, md) {
+	if !mirrored(l.deps.Upstreams, md) {
 		return Current{}, &Error{Reason: UnmirroredRegistry}
 	}
 	if _, err := semver.StrictNewVersion(md.Version); err != nil {
@@ -328,10 +334,14 @@ func (l *Loader) admissible(ctx context.Context, kind, version string, md bundle
 	return cur, nil
 }
 
-// mirrored reports whether every image of md comes from a registry rel mirrors.
-func mirrored(rel *release.Manifest, md bundle.Metadata) bool {
-	hosts := rel.RegistryHosts()
-	for _, im := range md.Images {
+// mirrored reports whether the images of md the running release must pull come from one of the mirrored registries
+// hosts: every image of a platform bundle, and those of a system bundle the node pulls before the new release runs.
+func mirrored(hosts []string, md bundle.Metadata) bool {
+	images := md.Images
+	if md.Kind == release.BundleSystem {
+		images = pulledByTheNode(&md)
+	}
+	for _, im := range images {
 		if !slices.Contains(hosts, release.RegistryHost(im.Ref)) {
 			return false
 		}
@@ -441,8 +451,8 @@ func (l *Loader) keep(md bundle.Metadata, cur Current) []string {
 	return keep
 }
 
-// wayBack names the platform bundle versions a rollback goes back to: the one the last update started from while a
-// backup is pinned for it, and the one a rollback that is not done installs again.
+// wayBack names the platform bundle versions a rollback goes back to: those it may install again for the last update
+// while a backup is pinned for it, and the one a rollback that is not done installs again.
 func (l *Loader) wayBack(ctx context.Context) ([]string, error) {
 	a, err := l.appliance(ctx)
 	if err != nil {
@@ -460,7 +470,8 @@ func (l *Loader) wayBack(ctx context.Context) ([]string, error) {
 		return nil, fail("list the local backups", err)
 	}
 	if slices.ContainsFunc(backups, func(b v1alpha1.BackupRecord) bool { return b.Pinned == release.BundlePlatform }) {
-		versions = append(versions, a.Status.Update.From)
+		u := a.Status.Update
+		versions = append(versions, sourceCandidates(a, u.From, u.FromILM, l.deps.Arch)...)
 	}
 	return versions, nil
 }
@@ -522,6 +533,7 @@ func (l *Loader) record(ctx context.Context, md bundle.Metadata, keep []string) 
 		info.LoadedAt = &now
 		u.Loaded = append(loaded, info)
 		recheck(u.Loaded, current(&v1alpha1.Appliance{Status: *st}, l.deps.Release, l.deps.Arch))
+		unblockRetry(u.Loaded, st.Update)
 	})
 	if err != nil {
 		return fail("record the bundle", err)

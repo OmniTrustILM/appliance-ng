@@ -31,9 +31,11 @@
 //	drive credential --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
 //	            --credential <p12> --credential-password-file <file>
 //	drive update --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
-//	            --file <bundle tar>
+//	            --file <bundle tar> [--kind system --talos-version <v> --kubernetes-version <v>]
 //	drive rollback --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
 //	            --kit <file> --passphrase-file <file> --ilm-version <x.y.z>
+//	drive reboot --url <console> --user <user> --password <password> --seed-file <file> --host-name <fqdn>
+//	            --kit <file> --passphrase-file <file> --manager-image <ref> [--kube-addr <host:port>] [--apid <host:port>]
 //
 // part1 answers wizard part 1 of the first-boot service: the setup code, the administrator, the TOTP enrolment
 // (the seed goes to --seed-file, mode 0600) and the node, with the address DHCP delivered as a static one and the
@@ -86,7 +88,13 @@
 // update signs in, loads the platform bundle in --file, installs it and waits until the update is done and the
 // appliance runs the bundle's ILM version. rollback signs in, rolls the last platform update back with the kit in
 // --kit, resuming it with the kit when it waits for it, and waits until it is done and the appliance runs ILM
-// --ilm-version. Both print versions, steps and reasons only.
+// --ilm-version. Both print versions, steps and reasons only. update --kind system loads the system bundle in --file
+// instead, installs it, which replaces the manager and reboots the node, and waits until it is done and the appliance
+// runs the bundle's version, Talos --talos-version and Kubernetes --kubernetes-version.
+// reboot signs in and power-cycles the node with the talosconfig of the kit in --kit, waits with the kit's kubeconfig
+// until the node is Ready with another boot ID, zot is available and the manager Deployment runs --manager-image, and
+// checks that the last update is a system update that is done without a failure. It prints boot IDs, images and
+// steps only.
 //
 // Every connection is verified. part1 trusts the self-signed certificate of the first-boot service given with
 // --ca-file for --server-name, the node address it is issued for. part2 and restore trust that certificate too while
@@ -198,6 +206,10 @@ func main() {
 	fs.BoolVar(&o.present, "present", false, "wait until the marker group is there (ilm-marker)")
 	fs.BoolVar(&o.direct, "direct", false, "reach ILM Core through a port-forward with the kit's kubeconfig (ilm-marker)")
 	fs.StringVar(&o.ilmVersion, "ilm-version", "", "ILM version the platform runs once rolled back (rollback)")
+	fs.StringVar(&o.kind, "kind", kindPlatform, "kind of the bundle in --file, platform or system (update)")
+	fs.StringVar(&o.talosVersion, "talos-version", "", "Talos version the node runs once the system update is done (update --kind system)")
+	fs.StringVar(&o.kubernetesVersion, "kubernetes-version", "", "Kubernetes version the node runs once the system update is done (update --kind system)")
+	fs.StringVar(&o.managerImage, "manager-image", "", "image the manager Deployment runs after the reboot (reboot)")
 	args := os.Args[2:]
 	if cmd == "api" {
 		if len(args) < 2 {
@@ -211,7 +223,7 @@ func main() {
 		cmdPart1: part1, "part2": part2, "check": check, "api": apiCall, "kit": kit, "access": access,
 		cmdBackup: backupNow, "serve-targets": serveTargets, cmdRestore: restoreBackup, "ilm-marker": ilmMarker,
 		cmdCBOM: cbomCommand, cmdBundleLoad: bundleLoad, cmdCredential: credentialCommand, cmdUpdate: platformUpdate,
-		cmdRollback: rollbackUpdate,
+		cmdRollback: rollbackUpdate, cmdReboot: rebootNode,
 	}[cmd]
 	if !ok {
 		usage()
@@ -227,9 +239,11 @@ func main() {
 	case cmdBundleLoad:
 		timeout = 2*bundleLoadTimeout + podTimeout
 	case cmdUpdate:
-		timeout = bundleLoadTimeout + updateTimeout + waitTimeout
+		timeout = bundleLoadTimeout + systemUpdateTimeout + versionsTimeout
 	case cmdRollback:
 		timeout = updateTimeout + waitTimeout
+	case cmdReboot:
+		timeout = rebootTimeout + waitTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -241,7 +255,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore|bundle-load|credential|update|rollback --url <console> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: drive part1|part2|check|kit|access|backup|restore|bundle-load|credential|update|rollback|reboot --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive ilm-marker --create|--check|--present --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive cbom --create|--check --url <console> [flags]")
 	fmt.Fprintln(os.Stderr, "       drive serve-targets --sftp <addr> --s3 <addr> --dir <dir> --guest-host <host> [flags]")
@@ -259,6 +273,7 @@ type options struct {
 	guestHost, mode, backupFile, ilmHost                        string
 	credential, credentialPasswordFile, clientSecretOut         string
 	bundleFile, image, ilmVersion                               string
+	kind, talosVersion, kubernetesVersion, managerImage         string
 	create, check, present, direct                              bool
 }
 
@@ -317,6 +332,12 @@ func (o options) validateOperation(cmd string) error {
 		return errNoCredential
 	case cmd == cmdUpdate && o.bundleFile == "":
 		return errors.New("--file is required")
+	case cmd == cmdUpdate && !slices.Contains([]string{"", kindPlatform, kindSystem}, o.kind):
+		return errors.New("--kind is platform or system")
+	case cmd == cmdUpdate && o.kind == kindSystem && (o.talosVersion == "" || o.kubernetesVersion == ""):
+		return errors.New("--kind system needs --talos-version and --kubernetes-version")
+	case cmd == cmdReboot && (o.kitFile == "" || o.passphraseFile == "" || o.managerImage == ""):
+		return errors.New("--kit, --passphrase-file and --manager-image are required")
 	case cmd == cmdRollback && (o.kitFile == "" || o.passphraseFile == "" || o.ilmVersion == ""):
 		return errors.New("--kit, --passphrase-file and --ilm-version are required")
 	case cmd == cmdCBOM && o.create == o.check:

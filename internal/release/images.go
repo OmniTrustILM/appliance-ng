@@ -133,6 +133,12 @@ func Repository(name string) string {
 
 const dockerHub = "docker.io"
 
+// MirrorPath is the path component the registry mirror keeps the images of the registry host under: host itself, in
+// lowercase, or, for a host with a port, host_port, as a repository name may not contain a colon.
+func MirrorPath(host string) string {
+	return strings.ReplaceAll(strings.ToLower(host), ":", "_")
+}
+
 // RegistryHost is the registry the connector's image is pulled from, in lowercase.
 func (c Connector) RegistryHost() string {
 	host, _, _ := strings.Cut(normalize(c.Image), "/")

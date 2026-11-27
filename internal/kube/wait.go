@@ -42,6 +42,9 @@ var waitKinds = map[string]waitKind{
 	},
 }
 
+// NotFound is the reason Ready gives for an object that does not exist.
+const NotFound = "not found"
+
 func (c *cluster) Ready(ctx context.Context, w WaitFor) (bool, string, error) {
 	kind, ok := waitKinds[w.Kind]
 	if !ok {
@@ -64,7 +67,7 @@ func (c *cluster) Ready(ctx context.Context, w WaitFor) (bool, string, error) {
 		obj, err = client.Get(ctx, w.Name, metav1.GetOptions{})
 	}
 	if apierrors.IsNotFound(err) {
-		return false, "not found", nil
+		return false, NotFound, nil
 	}
 	if err != nil {
 		return false, "", fmt.Errorf("get %s %s/%s: %w", w.Kind, w.Namespace, w.Name, err)

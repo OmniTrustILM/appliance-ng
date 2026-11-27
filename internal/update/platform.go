@@ -28,25 +28,42 @@ const (
 
 var rejectedVersion = []string{"DowngradeForbidden", "UnsupportedVersion"}
 
-// platformOrder is the order of the steps of a platform update.
-var platformOrder = []string{StepBackup, StepImages, StepOperator, StepVersion, StepWait, StepDone}
-
-// platformSteps run each step of a platform update; each can run again after a restart.
-var platformSteps = map[string]func(j *Jobs, ctx context.Context, jb *job) error{
-	StepBackup:   (*Jobs).backupStep,
-	StepImages:   (*Jobs).imagesStep,
-	StepOperator: (*Jobs).operatorStep,
-	StepVersion:  (*Jobs).versionStep,
-	StepWait:     (*Jobs).waitStep,
+// stepTable is the order of the steps of a kind of update and what runs each; each step can run again after a
+// restart.
+type stepTable struct {
+	order []string
+	run   map[string]func(j *Jobs, ctx context.Context, jb *job) error
 }
 
-func nextStep(step string) string {
-	return platformOrder[slices.Index(platformOrder, step)+1]
+// next is the step after step.
+func (t *stepTable) next(step string) string {
+	return t.order[slices.Index(t.order, step)+1]
 }
 
-// backupStep takes the backup to every target of the Appliance and pins its local copy until the next platform
-// update ends. A backup without the database is no way back from an update that migrates it.
+// stepTables are the steps of each kind of update.
+var stepTables = map[string]*stepTable{
+	release.BundlePlatform: {
+		order: []string{StepBackup, StepImages, StepOperator, StepVersion, StepWait, StepDone},
+		run: map[string]func(j *Jobs, ctx context.Context, jb *job) error{
+			StepBackup:   (*Jobs).backupStep,
+			StepImages:   (*Jobs).imagesStep,
+			StepOperator: (*Jobs).operatorStep,
+			StepVersion:  (*Jobs).versionStep,
+			StepWait:     (*Jobs).waitStep,
+		},
+	},
+	release.BundleSystem: {order: systemOrder, run: systemSteps},
+}
+
+// backupStep takes the backup to every target of the Appliance and pins its local copy until the next update of its
+// kind ends. A backup without the database is no way back from an update that migrates it. A system update first waits
+// for a step of the add-on pass that is being applied.
 func (j *Jobs) backupStep(ctx context.Context, jb *job) error {
+	if l := j.deps.AddonLock; l != nil && jb.status.Kind == release.BundleSystem {
+		// A step of the add-on pass that began before the update held it ends first.
+		l.Lock()
+		l.Unlock() //nolint:staticcheck // waits for the step, takes nothing
+	}
 	a, err := j.readAppliance(ctx, StepBackup)
 	if err != nil {
 		return err
@@ -57,7 +74,7 @@ func (j *Jobs) backupStep(ctx context.Context, jb *job) error {
 			targets = append(targets, t.Name)
 		}
 	}
-	rec, err := j.deps.Backups.Run(ctx, backup.RunUpdate, targets, backup.Pin(release.BundlePlatform), backup.ByUser(jb.user))
+	rec, err := j.deps.Backups.Run(ctx, backup.RunUpdate, targets, backup.Pin(jb.status.Kind), backup.ByUser(jb.user))
 	if err != nil {
 		return &Error{Reason: BackupFailed, step: StepBackup, err: err}
 	}
@@ -80,7 +97,7 @@ func (j *Jobs) readAppliance(ctx context.Context, step string) (*v1alpha1.Applia
 // imagesStep makes sure the registry holds every image of the bundle, fetching the bundle online when it is not
 // loaded, and tags each under its upstream tag, which workloads pull through the registry mirror.
 func (j *Jobs) imagesStep(ctx context.Context, jb *job) error {
-	md, err := j.bundle(ctx, jb.status.To, StepImages)
+	md, err := j.bundle(ctx, jb.status.Kind, jb.status.To, StepImages)
 	if err != nil {
 		return err
 	}
@@ -94,14 +111,14 @@ func (j *Jobs) imagesStep(ctx context.Context, jb *job) error {
 	return nil
 }
 
-// bundle reads the metadata of the platform bundle version, fetching the bundle online when it is not loaded.
-func (j *Jobs) bundle(ctx context.Context, version, step string) (*bundle.Metadata, error) {
-	md, err := InstalledPlatform(j.deps.Dir, version, j.deps.Arch)
+// bundle reads the metadata of the bundle of kind and version, fetching the bundle online when it is not loaded.
+func (j *Jobs) bundle(ctx context.Context, kind, version, step string) (*bundle.Metadata, error) {
+	md, err := installed(j.deps.Dir, kind, version, j.deps.Arch)
 	if errors.Is(err, fs.ErrNotExist) {
-		if ferr := j.deps.Fetcher.Fetch(ctx, release.BundlePlatform, version); ferr != nil {
+		if ferr := j.deps.Fetcher.Fetch(ctx, kind, version); ferr != nil {
 			return nil, &Error{Reason: BundleUnavailable, step: step, err: ferr}
 		}
-		md, err = InstalledPlatform(j.deps.Dir, version, j.deps.Arch)
+		md, err = installed(j.deps.Dir, kind, version, j.deps.Arch)
 	}
 	if err != nil {
 		return nil, &Error{Reason: BundleUnavailable, step: step, err: err}
@@ -112,7 +129,7 @@ func (j *Jobs) bundle(ctx context.Context, version, step string) (*bundle.Metada
 // operatorStep records the bundle as the platform bundle, from which the add-on pass applies its ILM operator when it
 // is newer than the embedded one, and waits for that operator to roll out.
 func (j *Jobs) operatorStep(ctx context.Context, jb *job) error {
-	md, err := j.bundle(ctx, jb.status.To, StepOperator)
+	md, err := j.bundle(ctx, release.BundlePlatform, jb.status.To, StepOperator)
 	if err != nil {
 		return err
 	}
@@ -160,7 +177,7 @@ func rolledOut(d *appsv1.Deployment) bool {
 // versionStep asks for the bundle's ILM version, unless the operator is upgrading the platform. From here the update
 // can only be rolled back.
 func (j *Jobs) versionStep(ctx context.Context, jb *job) error {
-	md, err := j.bundle(ctx, jb.status.To, StepVersion)
+	md, err := j.bundle(ctx, release.BundlePlatform, jb.status.To, StepVersion)
 	if err != nil {
 		return err
 	}
@@ -206,7 +223,7 @@ func (j *Jobs) setVersion(ctx context.Context, a *v1alpha1.Appliance, version st
 // waitStep waits until the operator runs the bundle's ILM version and the chosen connectors are ready, and fails at
 // once when the operator rejects the version.
 func (j *Jobs) waitStep(ctx context.Context, jb *job) error {
-	md, err := j.bundle(ctx, jb.status.To, StepWait)
+	md, err := j.bundle(ctx, release.BundlePlatform, jb.status.To, StepWait)
 	if err != nil {
 		return err
 	}

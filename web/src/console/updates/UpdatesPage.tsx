@@ -11,6 +11,7 @@ import { attempt, unreachable } from '../../setup/failure';
 import { useLoaded } from '../shared/useLoaded';
 import { BundleRow } from './BundleRow';
 import { InstallConfirm, UpdateStatus, updating } from './PlatformUpdate';
+import { SystemConfirm } from './SystemUpdate';
 import { checkErrorText, loadReasonText, refusalText, rollbackUnavailableText, updateRefusalText } from './reasons';
 import { RollbackCard, RollbackUnavailable } from './Rollback';
 import { UploadCard } from './UploadCard';
@@ -20,6 +21,8 @@ type Bundle = components['schemas']['UpdateBundle'];
 
 /** How often the page reads the updates again while a bundle loads or an update runs. */
 export const runningRefreshMs = 5000;
+/** The longest the page waits between reads while the appliance does not answer. */
+export const maxBackoffMs = 30_000;
 /** How long the page waits for a check: longer than the appliance takes at most to check, record and answer. */
 export const checkTimeoutMs = 6 * 60_000;
 /** How many reads after a load was accepted look for it before the page stops looking. */
@@ -67,6 +70,9 @@ export function UpdatesPage() {
   const [awaited, setAwaited] = useState(0);
   const [installing, setInstalling] = useState<Bundle>();
   const running = data?.load?.state === 'running' || updating(data?.update);
+  // The manager is replaced and the node reboots during a system update: the appliance not answering is expected then.
+  const restarting = !!error && updating(data?.update) && data?.update?.kind === 'system';
+  const failedReads = useRef(0);
 
   const reload = useCallback(() => {
     background.current = false;
@@ -74,14 +80,16 @@ export function UpdatesPage() {
   }, [load]);
 
   useEffect(() => {
+    failedReads.current = error ? failedReads.current + 1 : 0;
     if (!running && awaited === 0) return undefined;
+    const delay = Math.min(runningRefreshMs * 2 ** failedReads.current, maxBackoffMs);
     const timer = setTimeout(() => {
       setAwaited((left) => (running ? 0 : left - 1));
       background.current = true;
       load();
-    }, runningRefreshMs);
+    }, delay);
     return () => clearTimeout(timer);
-  }, [running, awaited, settled, load]);
+  }, [running, awaited, settled, error, load]);
 
   function started() {
     setAwaited(startedReads);
@@ -111,9 +119,11 @@ export function UpdatesPage() {
     setInstalling(undefined);
     setFailure(undefined);
     const body = { version: bundle.version, confirm: true };
-    const result = await attempt(() => api.POST('/updates/platform', { body, signal: timeoutSignal() }));
+    const result = await attempt(() => (bundle.kind === 'system'
+      ? api.POST('/updates/system', { body, signal: timeoutSignal() })
+      : api.POST('/updates/platform', { body, signal: timeoutSignal() })));
     if (!result) return setFailure(unreachable);
-    if (!result.response.ok) return setFailure(updateRefusalText(result.error?.code));
+    if (!result.response.ok) return setFailure(updateRefusalText(result.error?.code, bundle.kind));
     started();
   }
 
@@ -124,7 +134,8 @@ export function UpdatesPage() {
     <PageWidth>
       <Card>
         <PageHeading title="Updates" lead="System and platform bundles, loaded from the online repository or uploaded. Loading a bundle does not install it." />
-        {error && <Alert tone="error">{error}</Alert>}
+        {restarting && <Alert tone="info" busy>The appliance is restarting. This page waits until it is back, then asks you to sign in again.</Alert>}
+        {error && !restarting && <Alert tone="error">{error}</Alert>}
         {failure && <Alert tone="error">{failure}</Alert>}
         {!data && !error && <Loading />}
         {data && (
@@ -165,12 +176,13 @@ export function UpdatesPage() {
                 key={`${b.kind}-${b.version}`}
                 bundle={b}
                 disabled={busy}
-                onInstall={b.kind === 'platform' ? () => setInstalling(b) : undefined}
+                onInstall={() => setInstalling(b)}
               />
             )}
           </Section>
           <div className="mt-6"><UploadCard disabled={busy} onUploaded={started} /></div>
-          {installing && <InstallConfirm bundle={installing} operator={data.operator} externalDatabase={data.externalDatabase} onConfirm={() => void install(installing)} onCancel={() => setInstalling(undefined)} />}
+          {installing?.kind === 'system' && <SystemConfirm bundle={installing} onConfirm={() => void install(installing)} onCancel={() => setInstalling(undefined)} />}
+          {installing?.kind === 'platform' && <InstallConfirm bundle={installing} operator={data.operator} externalDatabase={data.externalDatabase} onConfirm={() => void install(installing)} onCancel={() => setInstalling(undefined)} />}
         </>
       )}
     </PageWidth>
