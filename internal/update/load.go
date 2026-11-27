@@ -317,7 +317,7 @@ func (l *Loader) admissible(ctx context.Context, kind, version string, md bundle
 	if version != "" && md.Version != version {
 		return Current{}, &Error{Reason: WrongVersion}
 	}
-	if md.Kind == release.BundlePlatform && !mirrored(l.deps.Upstreams, md) {
+	if !mirrored(l.deps.Upstreams, md) {
 		return Current{}, &Error{Reason: UnmirroredRegistry}
 	}
 	if _, err := semver.StrictNewVersion(md.Version); err != nil {
@@ -334,9 +334,14 @@ func (l *Loader) admissible(ctx context.Context, kind, version string, md bundle
 	return cur, nil
 }
 
-// mirrored reports whether every image of md comes from one of the mirrored registries hosts.
+// mirrored reports whether the images of md the running release must pull come from one of the mirrored registries
+// hosts: every image of a platform bundle, and those of a system bundle the node pulls before the new release runs.
 func mirrored(hosts []string, md bundle.Metadata) bool {
-	for _, im := range md.Images {
+	images := md.Images
+	if md.Kind == release.BundleSystem {
+		images = pulledByTheNode(&md)
+	}
+	for _, im := range images {
 		if !slices.Contains(hosts, release.RegistryHost(im.Ref)) {
 			return false
 		}

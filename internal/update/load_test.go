@@ -113,6 +113,12 @@ func TestLoadRejects(t *testing.T) {
 			e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
 			return e.upload(e.build(e.platform("1.1.0", "2.20.0")))
 		}, update.UnmirroredRegistry},
+		{"system installer from a registry the release does not mirror", release.BundleSystem, func(e *env) string {
+			e.rel.Images = []release.Image{{Ref: "ghcr.io/other/tool:1.0"}}
+			s := e.system("1.1.0")
+			s.installer = true
+			return e.upload(e.build(s))
+		}, update.UnmirroredRegistry},
 		{"no space", release.BundlePlatform, func(e *env) string {
 			e.noSpace = true
 			return e.upload(e.build(e.platform("1.1.0", "2.20.0")))
@@ -185,6 +191,22 @@ func TestLoadAcceptsImagesOfAnotherMirroredRegistry(t *testing.T) {
 	path := e.upload(e.build(e.platform("1.1.0", "2.20.0")))
 	if _, err := e.loader().Load(t.Context(), release.BundlePlatform, path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestLoadAcceptsASystemBundleWhoseNodeImagesAreMirrored loads a system bundle whose installer comes from a mirrored
+// registry, while its other images come from one that is not: the new release mirrors those.
+func TestLoadAcceptsASystemBundleWhoseNodeImagesAreMirrored(t *testing.T) {
+	e := newEnv(t)
+	e.upstreams = []string{sourceHost}
+	s := e.system("1.1.0")
+	s.installer = true
+	if _, err := e.loader().Load(t.Context(), release.BundleSystem, e.upload(e.build(s))); err != nil {
+		t.Fatal(err)
+	}
+	e.upstreams = []string{"ghcr.io"}
+	if _, err := e.loader().Load(t.Context(), release.BundleSystem, e.upload(e.build(e.system("1.2.0")))); err != nil {
+		t.Errorf("a system bundle without node images was refused: %v", err)
 	}
 }
 

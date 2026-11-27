@@ -705,6 +705,7 @@ describe('UpdatesPage system update', () => {
     [409, 'kubernetes_older_than_running', /kubernetes is older than the one that runs/i],
     [409, 'bundle_unavailable', /no longer on the appliance\. load the bundle again/i],
     [409, 'invalid_bundle', /carries no installer, manager or etcd image/i],
+    [409, 'unmirrored_registry', /comes from a registry this appliance does not mirror/i],
     [409, 'kubernetes_minor_skip', /more than one minor version above.*releases in between first/i],
     [409, 'update_running', /another update is running/i],
     [409, 'blocked', /cannot be installed on what runs/i],

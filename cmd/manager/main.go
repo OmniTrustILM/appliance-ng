@@ -325,6 +325,7 @@ func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer
 		Talos:     func(ctx context.Context) (update.TalosNode, error) { return s.talos(ctx) },
 		Manifests: manifests,
 		Console:   s.console,
+		Upstreams: s.upstreams,
 	})
 	if err := s.mgr.Add(crmanager.RunnableFunc(jobs.KeepResuming)); err != nil {
 		return nil, fmt.Errorf("add the resumption of an interrupted update: %w", err)

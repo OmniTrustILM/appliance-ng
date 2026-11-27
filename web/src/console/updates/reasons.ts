@@ -90,6 +90,7 @@ const updateRefusals: Record<string, string> = {
   not_found: 'The bundle is neither loaded nor found online.',
   bundle_unavailable: "The bundle's files are no longer on the appliance. Load the bundle again.",
   invalid_bundle: 'The bundle carries no installer, manager or etcd image, so it cannot be installed.',
+  unmirrored_registry: "The bundle's installer, manager or etcd image comes from a registry this appliance does not mirror.",
   kubernetes_minor_skip: "The bundle's Kubernetes is more than one minor version above the one that runs. Install the system releases in between first.",
 };
 

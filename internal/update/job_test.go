@@ -264,6 +264,8 @@ type jobEnv struct {
 	health   time.Duration
 	// rebootRetry is how long the node may keep its boot before it is rebooted again; the default when zero.
 	rebootRetry time.Duration
+	// upstreams are the registries the registry mirror serves.
+	upstreams []string
 	// releaseILM is the ILM version the running release embeds, oldILM when empty.
 	releaseILM string
 
@@ -473,6 +475,7 @@ func (e *jobEnv) newJobsWithRestorer(backups update.JobBackups, restorer update.
 		HealthTimeout:    e.health,
 		ComponentTimeout: 10 * time.Second,
 		RebootRetry:      e.rebootRetry,
+		Upstreams:        e.upstreams,
 	})
 }
 

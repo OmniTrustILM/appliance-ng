@@ -186,6 +186,9 @@ type JobDeps struct {
 	ComponentTimeout time.Duration
 	HandOverTimeout  time.Duration
 	RebootRetry      time.Duration
+	// Upstreams are the registries the registry mirror serves, which the images the node pulls for a system update
+	// must come from; the release's own when nil.
+	Upstreams []string
 }
 
 func (d *JobDeps) defaults() {
@@ -212,6 +215,9 @@ func (d *JobDeps) defaults() {
 	}
 	if d.RebootRetry == 0 {
 		d.RebootRetry = RebootRetry
+	}
+	if d.Upstreams == nil && d.Release != nil {
+		d.Upstreams = d.Release.RegistryHosts()
 	}
 }
 

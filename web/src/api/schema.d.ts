@@ -1457,7 +1457,8 @@ export interface paths {
          *     `last_update_failed` while the last platform update failed past its point of no return and can be rolled back,
          *     `not_installed` while the platform is not installed, `blocked` when the bundle cannot be installed on what
          *     runs, `bundle_unavailable` when the bundle's files are no longer on the appliance, `invalid_bundle` when the
-         *     bundle carries no installer, manager or etcd image, `kubernetes_older_than_running` when the bundle's Kubernetes is
+         *     bundle carries no installer, manager or etcd image, `unmirrored_registry` when one of them comes from a
+         *     registry the appliance does not mirror, `kubernetes_older_than_running` when the bundle's Kubernetes is
          *     older than the one that runs, which is never downgraded, `kubernetes_minor_skip` when it is more than one minor
          *     version above the one that runs, and `no_space` when the data volume has less than
          *     twice the bundle's size free; with 404 `not_found` when the bundle is not loaded. A system update that failed

@@ -30,8 +30,9 @@ const (
 	Timeout       = "timeout"
 	Failed        = "failed"
 
-	// UnmirroredRegistry is a platform bundle with an image from a registry the running release does not mirror,
-	// which the node could not pull offline.
+	// UnmirroredRegistry is a bundle with an image the node pulls from a registry the running release does not
+	// mirror, which it could not pull offline: any image of a platform bundle, the installer, manager or etcd image
+	// of a system bundle.
 	UnmirroredRegistry = "unmirroredRegistry"
 )
 

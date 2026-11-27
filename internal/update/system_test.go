@@ -291,6 +291,7 @@ func newSystemEnvWith(t *testing.T, kubernetes string) *systemEnv {
 	e.node = &fakeNode{e: e, kube: oldKubernetes, talos: oldTalos, extension: fromBundle}
 	e.newLock = &processBackups{fakeBackups: e.backups}
 	e.health = 10 * time.Second
+	e.upstreams = []string{builtRegistry, "registry.k8s.io"}
 	e.talos, e.applier, e.console = e.node, e.manifests, e.consoleCheck
 	e.resetNode()
 	e.storeSystemBundle()
@@ -1414,6 +1415,11 @@ func TestSystemUpdateAdmission(t *testing.T) {
 	t.Run("older Kubernetes", func(t *testing.T) {
 		e := newSystemEnvWith(t, "v1.36.0")
 		refused(t, e, update.KubernetesOlderThanRunning)
+	})
+	t.Run("node images from a registry not mirrored", func(t *testing.T) {
+		e := newSystemEnv(t)
+		e.upstreams = []string{"registry.k8s.io"}
+		refused(t, e, update.UnmirroredRegistry)
 	})
 	t.Run("Kubernetes minor skipped", func(t *testing.T) {
 		e := newSystemEnvWith(t, "v1.39.0")

@@ -598,6 +598,7 @@ func TestSystemUpdateRefusals(t *testing.T) {
 		{update.BundleUnavailable, http.StatusConflict, "bundle_unavailable"},
 		{update.InvalidBundle, http.StatusConflict, "invalid_bundle"},
 		{update.KubernetesMinorSkip, http.StatusConflict, "kubernetes_minor_skip"},
+		{update.UnmirroredRegistry, http.StatusConflict, "unmirrored_registry"},
 		{update.SameVersion, http.StatusConflict, "blocked"},
 		{update.NeedsAppliance, http.StatusConflict, "blocked"},
 	} {

@@ -106,6 +106,8 @@ var systemRefusals = map[string]restoreAnswer{
 		"The bundle's files are no longer on the appliance; load the bundle again."),
 	update.InvalidBundle: refused(http.StatusConflict, "invalid_bundle",
 		"The bundle carries no installer, manager or etcd image, so it cannot be installed."),
+	update.UnmirroredRegistry: refused(http.StatusConflict, "unmirrored_registry",
+		"The bundle's installer, manager or etcd image comes from a registry this appliance does not mirror."),
 	update.KubernetesMinorSkip: refused(http.StatusConflict, "kubernetes_minor_skip",
 		"The bundle's Kubernetes is more than one minor version above the one that runs; install the system releases in between first."),
 }

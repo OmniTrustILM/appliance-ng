@@ -162,7 +162,8 @@ func (j *Jobs) systemCurrent(a *v1alpha1.Appliance) (Current, error) {
 }
 
 // refuseSystemBundle refuses the loaded system bundle info when its files are gone, it cannot be installed on cur,
-// carries no installer, manager or etcd image, or would downgrade the Kubernetes that runs or skip one of its minor versions.
+// carries no installer, manager or etcd image, or one the node pulls from a registry the running release does not
+// mirror, or would downgrade the Kubernetes that runs or skip one of its minor versions.
 func (j *Jobs) refuseSystemBundle(a *v1alpha1.Appliance, info v1alpha1.BundleInfo, cur Current) error {
 	md, err := installed(j.deps.Dir, release.BundleSystem, info.Version, j.deps.Arch)
 	if err != nil {
@@ -179,6 +180,9 @@ func (j *Jobs) refuseSystemBundle(a *v1alpha1.Appliance, info v1alpha1.BundleInf
 	}
 	if len(bootImages(md)) == 0 {
 		return &Error{Reason: InvalidBundle, err: errors.New("the bundle carries no etcd image")}
+	}
+	if !mirrored(j.deps.Upstreams, *md) {
+		return &Error{Reason: UnmirroredRegistry}
 	}
 	switch {
 	case older(md.Kubernetes, a.Status.Versions.Kubernetes):
@@ -417,8 +421,29 @@ func (j *Jobs) install(ctx context.Context, st *v1alpha1.UpdateStatus, node Talo
 func bootImages(md *bundle.Metadata) []string {
 	var images []string
 	for _, im := range md.Images {
-		if strings.HasPrefix(im.Ref, constants.EtcdImage+":") {
+		if isBootImage(im) {
 			images = append(images, im.Ref)
+		}
+	}
+	return images
+}
+
+func isBootImage(im bundle.ImageRef) bool {
+	return strings.HasPrefix(im.Ref, constants.EtcdImage+":")
+}
+
+// pulledByTheNode are the images of the system bundle md that the node pulls through the running release's registry
+// mirrors: the installer, the manager and the boot images.
+func pulledByTheNode(md *bundle.Metadata) []bundle.ImageRef {
+	var images []bundle.ImageRef
+	for _, name := range []string{installerImage, managerImage} {
+		if im, ok := builtImage(md, name); ok {
+			images = append(images, im)
+		}
+	}
+	for _, im := range md.Images {
+		if isBootImage(im) {
+			images = append(images, im)
 		}
 	}
 	return images
