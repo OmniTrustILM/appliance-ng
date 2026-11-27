@@ -189,6 +189,35 @@ func TestPlatformKeepsTheILMVersion(t *testing.T) {
 	}
 }
 
+// TestPlatformKeepsTheNodeTags: a save that names the components keeps the node tag of each component that stays
+// chosen; a component chosen again after it was dropped starts without one.
+func TestPlatformKeepsTheNodeTags(t *testing.T) {
+	h := newHarness(t)
+	s := h.signIn()
+	installedAppliance(t, "ejbca-ng-connector")
+	a := getAppliance(t)
+	a.Spec.Platform.Components[0].NodeTag = "hsm"
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+
+	body := PlatformUpdate{HostName: "pki.example.com", Components: []string{"ejbca-ng-connector"}, IlmVersion: ptr("2.19.0")}
+	wantStatus(t, h.request(http.MethodPut, pathPlatform, body, s), http.StatusAccepted)
+	want := []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector", NodeTag: "hsm"}}
+	if got := getAppliance(t).Spec.Platform.Components; !reflect.DeepEqual(got, want) {
+		t.Errorf("components %+v after a host name change, want %+v", got, want)
+	}
+
+	body.Components = []string{}
+	wantStatus(t, h.request(http.MethodPut, pathPlatform, body, s), http.StatusAccepted)
+	body.Components = []string{"ejbca-ng-connector"}
+	wantStatus(t, h.request(http.MethodPut, pathPlatform, body, s), http.StatusAccepted)
+	want = []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}}
+	if got := getAppliance(t).Spec.Platform.Components; !reflect.DeepEqual(got, want) {
+		t.Errorf("components %+v after dropping and choosing again, want %+v", got, want)
+	}
+}
+
 // TestConsoleCannotChangeILMVersion refuses the ILM version of a loaded platform bundle through PUT /platform: only
 // a platform update installs it.
 func TestConsoleCannotChangeILMVersion(t *testing.T) {

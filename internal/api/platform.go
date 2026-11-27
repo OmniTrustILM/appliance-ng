@@ -193,9 +193,10 @@ func uncoveredHostRefusal(host string) *fieldError {
 	return uncoveredHostError(host)
 }
 
-// mergePlatform completes platform with what before keeps: the dependencies deps leaves out, utils unless it is
-// set, and the CBOM repository.
+// mergePlatform completes platform with what before keeps: the settings of the components that stay chosen, such as
+// their node tags, the dependencies deps leaves out, utils unless it is set, and the CBOM repository.
 func mergePlatform(platform, before *v1alpha1.PlatformSpec, deps *dependenciesInput, utils *bool) {
+	keepComponents(platform, before)
 	deps.apply(platform, before)
 	platform.Utils = before != nil && before.Utils
 	if utils != nil {
@@ -204,6 +205,19 @@ func mergePlatform(platform, before *v1alpha1.PlatformSpec, deps *dependenciesIn
 	platform.CBOM = nil
 	if before != nil {
 		platform.CBOM = before.CBOM
+	}
+}
+
+// keepComponents replaces each component of platform that before already chose with before's, which keeps its
+// settings; a new component keeps its bare entry and a dropped one is gone.
+func keepComponents(platform, before *v1alpha1.PlatformSpec) {
+	if before == nil {
+		return
+	}
+	for i, c := range platform.Components {
+		if j := slices.IndexFunc(before.Components, func(b v1alpha1.ComponentSpec) bool { return b.Name == c.Name }); j >= 0 {
+			platform.Components[i] = before.Components[j]
+		}
 	}
 }
 
