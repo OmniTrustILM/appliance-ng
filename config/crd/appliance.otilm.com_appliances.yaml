@@ -264,6 +264,11 @@ spec:
                     x-kubernetes-list-map-keys:
                     - hostName
                     x-kubernetes-list-type: map
+                    x-kubernetes-validations:
+                    - message: node host names must differ in their first label, which
+                        is the Kubernetes node name
+                      rule: self.all(a, self.exists_one(b, b.hostName.split('.')[0]
+                        == a.hostName.split('.')[0]))
                 required:
                 - nodes
                 type: object

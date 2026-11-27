@@ -140,6 +140,7 @@ type ClusterSpec struct {
 	// +listMapKey=hostName
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=7
+	// +kubebuilder:validation:XValidation:rule="self.all(a, self.exists_one(b, b.hostName.split('.')[0] == a.hostName.split('.')[0]))",message="node host names must differ in their first label, which is the Kubernetes node name"
 	Nodes []ClusterNode `json:"nodes"`
 }
 

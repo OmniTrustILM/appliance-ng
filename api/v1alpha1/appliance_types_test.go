@@ -116,6 +116,17 @@ func TestNodeEntryHostNamesUnique(t *testing.T) {
 	wantInvalid(t, create(t, a))
 }
 
+func TestNodeEntryFirstLabelsUnique(t *testing.T) {
+	a := newAppliance(v1alpha1.ApplianceName)
+	a.Spec.Cluster.Nodes = []v1alpha1.ClusterNode{{HostName: "ilm.site-a.example"}, {HostName: "ilm.site-b.example"}}
+	wantInvalid(t, create(t, a))
+	a = newAppliance(v1alpha1.ApplianceName)
+	a.Spec.Cluster.Nodes = []v1alpha1.ClusterNode{{HostName: "ilm1.site-a.example"}, {HostName: "ilm2.site-a.example"}}
+	if err := create(t, a); err != nil {
+		t.Fatalf("different first labels must be accepted: %v", err)
+	}
+}
+
 func TestClusterAddressOneOf(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
