@@ -124,7 +124,7 @@ func (r *ApplianceReconciler) reconcileACME(ctx context.Context, a *v1alpha1.App
 }
 
 func (r *ApplianceReconciler) ensureCertificate(ctx context.Context, a *v1alpha1.Appliance, ip netip.Addr) (bool, error) {
-	if _, err := certs.EnsureBuiltin(ctx, r.Client, certs.Hosts(a), []netip.Addr{ip}); err != nil {
+	if _, err := certs.EnsureBuiltin(ctx, r.Client, certs.Hosts(a), certs.Addresses(a, ip)); err != nil {
 		return false, err
 	}
 	return certs.Ready(ctx, r.Client)

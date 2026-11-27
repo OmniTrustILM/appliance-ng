@@ -665,7 +665,7 @@ func (e *Engine) ensureBuiltin(ctx context.Context, a *v1alpha1.Appliance, hosts
 		return err
 	}
 	if found {
-		ips = append(ips, ip)
+		ips = certs.Addresses(a, ip)
 	}
 	_, err = certs.EnsureBuiltin(ctx, e.deps.Client, hosts, ips)
 	return err

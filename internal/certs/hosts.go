@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net/netip"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -21,6 +22,20 @@ func Hosts(a *v1alpha1.Appliance) []string {
 		hosts = append(hosts, p.HostName)
 	}
 	return hosts
+}
+
+// Addresses returns the IP addresses the appliance's certificate covers: ip and the address of every node entry,
+// without duplicates, in ascending order. Console access works by the address of any node, and the node address
+// in the status is that of the leader, which changes.
+func Addresses(a *v1alpha1.Appliance, ip netip.Addr) []netip.Addr {
+	addrs := []netip.Addr{ip}
+	for _, n := range a.Spec.Cluster.Nodes {
+		if addr, ok := ParseAddress(n.Address); ok {
+			addrs = append(addrs, addr)
+		}
+	}
+	slices.SortFunc(addrs, netip.Addr.Compare)
+	return slices.Compact(addrs)
 }
 
 // UncoveredHost returns the first of hosts that the first certificate of certPEM does not cover, or "" when it
