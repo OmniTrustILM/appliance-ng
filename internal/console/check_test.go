@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,5 +70,45 @@ func TestCheckPassesAnExpiredServedCertificate(t *testing.T) {
 	c.served.Store(&expired)
 	if err := c.Check(context.Background(), serveHealth(t, c, http.StatusOK)); err != nil {
 		t.Errorf("check behind an expired served certificate: %v", err)
+	}
+}
+
+// TestCheckFailsAnotherCertificateOfTheSameName checks that a server with another certificate for the same name as
+// the served one fails the check: only the served certificate is trusted.
+func TestCheckFailsAnotherCertificateOfTheSameName(t *testing.T) {
+	client := fakeClient(appliance(v1alpha1.TLSSpec{}))
+	c, err := NewCertificate(discard, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewCertificate(discard, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"console.example.com"}
+	for _, cert := range []*Certificate{c, other} {
+		served, err := certs.SelfSigned("console", names, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert.served.Store(&served)
+	}
+	if err := c.Check(context.Background(), serveHealth(t, other, http.StatusOK)); err == nil {
+		t.Error("a server with another certificate of the same name passed")
+	}
+}
+
+func TestCheckFailsAServedCertificateWithoutNames(t *testing.T) {
+	c, err := NewCertificate(discard, fakeClient(appliance(v1alpha1.TLSSpec{})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unnamed, err := certs.SelfSigned("unnamed", nil, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.served.Store(&unnamed)
+	if err := c.Check(context.Background(), serveHealth(t, c, http.StatusOK)); !errors.Is(err, errNoName) {
+		t.Errorf("check behind a certificate without names: %v, want %v", err, errNoName)
 	}
 }
