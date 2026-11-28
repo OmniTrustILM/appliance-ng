@@ -18,7 +18,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/siderolabs/crypto v0.6.5
 	github.com/siderolabs/go-pointer v1.0.1
-	github.com/siderolabs/talos/pkg/machinery v1.14.5
+	github.com/siderolabs/talos/pkg/machinery v1.14.7
 	github.com/spf13/afero v1.15.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.63.0
