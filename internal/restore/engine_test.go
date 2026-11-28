@@ -214,10 +214,16 @@ func tlsData(value string) map[string]string {
 // backupSpec is the spec of the appliance the backup was taken on.
 func backupSpec() v1alpha1.ApplianceSpec {
 	return v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: oldHost, Address: "10.0.0.5/24", Gateway: "10.0.0.1"},
+		Cluster: v1alpha1.ClusterSpec{
+			Address: v1alpha1.ClusterAddress{Virtual: "10.0.0.100"},
+			Nodes: []v1alpha1.ClusterNode{
+				{HostName: oldHost, Address: "10.0.0.5/24", Gateway: "10.0.0.1", Role: v1alpha1.NodeRoleVoting, Tags: []string{"hsm"}},
+				{HostName: "node2.example.com", Address: "10.0.0.6/24", Gateway: "10.0.0.1", Role: v1alpha1.NodeRoleVoting},
+			},
+		},
 		DNS:      v1alpha1.DNSSpec{Servers: []string{"10.0.0.53"}},
 		NTP:      v1alpha1.NTPSpec{Servers: []string{"ntp.example.com"}},
-		Platform: &v1alpha1.PlatformSpec{HostName: "ilm-old.example.com", Components: []string{"software-cryptography-provider"}},
+		Platform: &v1alpha1.PlatformSpec{HostName: "ilm-old.example.com", Components: []v1alpha1.ComponentSpec{{Name: "software-cryptography-provider"}}},
 	}
 }
 
@@ -262,7 +268,7 @@ func editedBackup(t *testing.T, key *age.X25519Identity, spec v1alpha1.Appliance
 			t.Fatal(err)
 		}
 	}
-	m := backup.Manifest{Appliance: "1.0.0", ILM: "2.20.0", Operator: "v1.1.0", Components: spec.Platform.Components,
+	m := backup.Manifest{Appliance: "1.0.0", ILM: "2.20.0", Operator: "v1.1.0", Components: spec.Platform.ComponentNames(),
 		Database: "managed", DatabaseIncluded: true, HostName: oldHost, ILMHostName: spec.Platform.HostName, Time: time.Now().UTC()}
 	if err := w.Close(m); err != nil {
 		t.Fatal(err)
@@ -355,7 +361,9 @@ func newRestoreFixture(t *testing.T, inPlace bool) *restoreFixture {
 	f := &restoreFixture{key: key, dumper: &fakeDumper{}, backups: &fakeBackups{}, audit: &memAudit{}, logs: &bytes.Buffer{}, keycloak: newFakeKeycloak(t)}
 	f.file = buildBackup(t, key, backupSpec())
 
-	spec := v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: newHost, Address: "192.0.2.20/24", Gateway: "192.0.2.1"}}
+	spec := v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+		{HostName: newHost, Address: "192.0.2.20/24", Gateway: "192.0.2.1", Role: v1alpha1.NodeRoleVoting},
+	}}}
 	setup := v1alpha1.SetupRestore
 	if inPlace {
 		spec.Platform = &v1alpha1.PlatformSpec{HostName: "ilm-current.example.com"}
@@ -666,14 +674,14 @@ func TestFreshRestoreStopsWithoutTheBundlesImages(t *testing.T) {
 	}
 }
 
-func TestRestoreKeepsNodeSection(t *testing.T) {
+func TestRestoreKeepsLocalNode(t *testing.T) {
 	f := newRestoreFixture(t, false)
-	before := getAppliance(t).Spec.Node
+	before := getAppliance(t).Spec.Cluster
 	f.start(t, f.engine(testClient), Options{ILMHostName: newILMHost})
 	f.wantDone(t)
 	spec := getAppliance(t).Spec
-	if spec.Node != before {
-		t.Errorf("node = %+v, want %+v", spec.Node, before)
+	if !reflect.DeepEqual(spec.Cluster, before) {
+		t.Errorf("cluster = %+v, want this appliance's node alone %+v", spec.Cluster, before)
 	}
 	want := backupSpec()
 	if !slices.Equal(spec.DNS.Servers, want.DNS.Servers) || !slices.Equal(spec.NTP.Servers, want.NTP.Servers) {

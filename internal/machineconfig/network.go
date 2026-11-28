@@ -18,6 +18,9 @@ const (
 	HandoverService = "firstboot"
 	// HandoverPath is where the hand-over file is mounted in the firstboot service.
 	HandoverPath = "/var/lib/appliance/handover.json"
+	// JoinPath is where the join request is mounted in the firstboot service: the node joins a cluster that another
+	// node bootstrapped.
+	JoinPath = "/var/lib/appliance/join.json"
 )
 
 // checkNetwork checks that a static address comes with its link and a gateway in its network, and that the node

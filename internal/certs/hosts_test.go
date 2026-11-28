@@ -3,6 +3,7 @@ package certs
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"reflect"
 	"testing"
 
@@ -17,7 +18,7 @@ import (
 )
 
 func TestHosts(t *testing.T) {
-	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "ilm.example.com"}}}
+	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com"}}}}}
 	if got := Hosts(a); !reflect.DeepEqual(got, []string{"ilm.example.com"}) {
 		t.Errorf("hosts %v without a platform", got)
 	}
@@ -28,6 +29,19 @@ func TestHosts(t *testing.T) {
 	a.Spec.Platform.HostName = "pki.example.com"
 	if got := Hosts(a); !reflect.DeepEqual(got, []string{"ilm.example.com", "pki.example.com"}) {
 		t.Errorf("hosts %v, want both names", got)
+	}
+}
+
+func TestAddresses(t *testing.T) {
+	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+		{HostName: "a.example.com", Address: "192.0.2.20/24"},
+		{HostName: "b.example.com", Address: "192.0.2.10/24"},
+		{HostName: "c.example.com"},
+	}}}}
+	got := Addresses(a, netip.MustParseAddr("192.0.2.10"))
+	want := []netip.Addr{netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("192.0.2.20")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("addresses %v, want %v", got, want)
 	}
 }
 
@@ -51,29 +65,29 @@ func TestNodeAddress(t *testing.T) {
 		}},
 	}
 	c := fake.NewClientBuilder().WithObjects(node).Build()
-	a := &v1alpha1.Appliance{}
+	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{}}}}}
 	for _, tc := range []struct{ status, spec, want string }{
 		{"192.0.2.10", "192.0.2.20/24", "192.0.2.10"},
 		{"", "192.0.2.20/24", "192.0.2.20"},
 		{"", "", "192.0.2.30"},
 	} {
-		a.Status.NodeAddress, a.Spec.Node.Address = tc.status, tc.spec
+		a.Status.NodeAddress, a.Spec.FirstNode().Address = tc.status, tc.spec
 		got, ok, err := NodeAddress(ctx, c, a)
 		if err != nil || !ok || got.String() != tc.want {
 			t.Errorf("NodeAddress(status %q, spec %q) = %v, %v, %v; want %s", tc.status, tc.spec, got, ok, err, tc.want)
 		}
 	}
-	a.Status.NodeAddress, a.Spec.Node.Address = "", ""
+	a.Status.NodeAddress, a.Spec.FirstNode().Address = "", ""
 	if _, ok, err := NodeAddress(ctx, fake.NewClientBuilder().Build(), a); ok || err != nil {
 		t.Errorf("found an address without nodes: %v, %v", ok, err)
 	}
 	failing := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
 			return errors.New("boom")
 		},
 	}).Build()
 	if _, _, err := NodeAddress(ctx, failing, a); err == nil {
-		t.Error("a list error was not reported")
+		t.Error("a get error was not reported")
 	}
 }
 

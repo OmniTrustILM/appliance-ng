@@ -29,8 +29,8 @@ import (
 // Steps of a system update besides those it shares with a platform update, and the step of a failed health check
 // that rolled Talos back.
 const (
-	StepManager    = "manager"
-	StepTalos      = "talos"
+	StepManager    = v1alpha1.UpdateStepManager
+	StepTalos      = v1alpha1.UpdateStepTalos
 	StepHealth     = "health"
 	StepKubernetes = "kubernetes"
 	StepAddons     = v1alpha1.UpdateStepAddons
@@ -222,7 +222,7 @@ func (j *Jobs) managerStep(ctx context.Context, jb *job) error {
 	if j.deps.Version == jb.status.To {
 		return nil
 	}
-	if d := jb.status.Deadline; jb.status.PreviousManager != "" && d != nil && !j.deps.Now().Before(d.Time) {
+	if jb.status.HandOverOverdue(j.deps.Now()) {
 		return j.managerDidNotStart(ctx, jb)
 	}
 	md, dir, err := j.systemBundle(ctx, jb.status.To, StepManager)
@@ -286,12 +286,10 @@ func builtImage(md *bundle.Metadata, name string) (bundle.ImageRef, bool) {
 	return md.Images[i], true
 }
 
-// talosStep installs the bundle's installer, at the same Talos version too: the installer carries the release's
-// first-boot extension, which applies its manager on every boot. It names the installer in the unattended install
-// configuration and reboots the node with a power cycle into it. A failure before the boot ID is recorded hands the
-// update back, unless Talos is installed already or the Talos API is unavailable; once recorded, a failure is tried
-// again until the deadline, where the Talos the node runs decides. While the node keeps the recorded boot after the
-// install, the reboot is issued again every RebootRetry.
+// talosStep installs the bundle's installer, even at the same Talos version, as it carries the release's first-boot
+// extension, and power-cycles the node into it. A failure before the boot ID is recorded hands the update back, unless
+// Talos is installed already or its API is unavailable; after that it is retried until the deadline, where the Talos
+// the node runs decides. The reboot is reissued every RebootRetry while the node keeps the recorded boot.
 func (j *Jobs) talosStep(ctx context.Context, jb *job) error {
 	st := &jb.status
 	recorded := st.BootID != ""
@@ -699,10 +697,9 @@ func (j *Jobs) rollBackTalos(ctx context.Context, jb *job) error {
 	return j.rolledBackStep(ctx, jb)
 }
 
-// rolledBackStep fails the update the failed health check rolled back once the node booted again, ready, and runs
-// the old Talos; one that booted the new Talos again fails it as a rollback that did not take. It never rolls back
-// again, which would switch the boot entry back: past the recorded deadline the Talos the node runs decides. What
-// cannot be read is read again.
+// rolledBackStep hands an update whose health check rolled back to the previous manager once the node boots the old
+// Talos again; one that boots the new Talos fails as a rollback that did not take. It never rolls back twice, as that
+// would switch the boot entry back: past the deadline the Talos the node runs decides.
 func (j *Jobs) rolledBackStep(ctx context.Context, jb *job) error {
 	var limit time.Duration
 	if d := jb.status.Deadline; d != nil {
@@ -721,7 +718,7 @@ func (j *Jobs) rolledBackStep(ctx context.Context, jb *job) error {
 	case err != nil:
 		return err
 	}
-	return &Error{Reason: HealthCheckFailed, step: StepHealth}
+	return j.handBack(ctx, jb, HealthCheckFailed, errors.New("the node runs the old Talos again"))
 }
 
 // rolledBack tells whether the node booted since the boot boot, ready, into the old Talos; the new Talos is a rollback
@@ -746,8 +743,8 @@ func (j *Jobs) rolledBack(ctx context.Context, boot string, md *bundle.Metadata)
 }
 
 // decideRollback ends the wait for the rollback of Talos at its deadline on the Talos the node runs, as read now:
-// the old Talos fails the update as rolled back, the new one as a rollback that did not take. What cannot be read is
-// decided on a later try.
+// the old Talos hands the update back as rolled back, the new one fails it as a rollback that did not take. What
+// cannot be read is decided on a later try.
 func (j *Jobs) decideRollback(ctx context.Context, jb *job) error {
 	md, _, err := j.systemBundle(ctx, jb.status.To, StepRolledBack)
 	if err != nil {
@@ -765,7 +762,7 @@ func (j *Jobs) decideRollback(ctx context.Context, jb *job) error {
 	case isNew:
 		return &Error{Reason: TalosRollbackFailed, step: StepHealth, err: errors.New("the node runs the new Talos")}
 	}
-	return &Error{Reason: HealthCheckFailed, step: StepHealth}
+	return j.handBack(ctx, jb, HealthCheckFailed, errors.New("the node runs the old Talos again, not ready"))
 }
 
 // kubernetesStep moves Kubernetes to the bundle's version one component after the other, each unless it runs at that

@@ -21,10 +21,10 @@ import (
 const (
 	cmdReboot = "reboot"
 	// rebootTimeout bounds the power cycle of the node and the return of the node, zot and the manager.
-	rebootTimeout     = 20 * time.Minute
-	zotDeployment     = "zot"
-	managerDeployment = "appliance-manager"
-	managerContainer  = "manager"
+	rebootTimeout    = 20 * time.Minute
+	zotDeployment    = "zot"
+	managerDaemonSet = "appliance-manager"
+	managerContainer = "manager"
 )
 
 // rebootCluster reaches the node and the cluster with the kit's credentials.
@@ -34,7 +34,7 @@ type rebootCluster interface {
 	// powercycle reboots the node with a power cycle.
 	powercycle(ctx context.Context, talosconfig []byte) error
 	// back checks once that the node is Ready with a boot ID other than before, zot is available and the manager
-	// Deployment runs image.
+	// DaemonSet runs image.
 	back(ctx context.Context, kubeconfig []byte, before, image string) error
 }
 
@@ -157,17 +157,16 @@ func (f forwarded) back(ctx context.Context, kubeconfig []byte, before, image st
 	if err != nil {
 		return err
 	}
-	deployments := cs.AppsV1().Deployments(managerNamespace)
-	zot, err := deployments.Get(ctx, zotDeployment, metav1.GetOptions{})
+	zot, err := cs.AppsV1().Deployments(managerNamespace).Get(ctx, zotDeployment, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("read the zot Deployment: %w", err)
 	}
 	if !rolledOut(zot) {
 		return errors.New("zot is not available yet")
 	}
-	manager, err := deployments.Get(ctx, managerDeployment, metav1.GetOptions{})
+	manager, err := cs.AppsV1().DaemonSets(managerNamespace).Get(ctx, managerDaemonSet, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("read the manager Deployment: %w", err)
+		return fmt.Errorf("read the manager DaemonSet: %w", err)
 	}
 	if err := runsImage(manager, image); err != nil {
 		return err
@@ -200,8 +199,15 @@ func rolledOut(d *appsv1.Deployment) bool {
 		st.Replicas == want
 }
 
+// daemonSetRolledOut reports whether every node of d runs its latest template and is available.
+func daemonSetRolledOut(d *appsv1.DaemonSet) bool {
+	st := d.Status
+	return st.DesiredNumberScheduled > 0 && st.ObservedGeneration >= d.Generation &&
+		st.UpdatedNumberScheduled == st.DesiredNumberScheduled && st.NumberAvailable == st.DesiredNumberScheduled
+}
+
 // runsImage checks that the manager container of d is image, by tag or by digest, and that d rolled it out.
-func runsImage(d *appsv1.Deployment, image string) error {
+func runsImage(d *appsv1.DaemonSet, image string) error {
 	got := ""
 	for _, c := range d.Spec.Template.Spec.Containers {
 		if c.Name == managerContainer {
@@ -209,9 +215,9 @@ func runsImage(d *appsv1.Deployment, image string) error {
 		}
 	}
 	if got != image && !strings.HasPrefix(got, image+"@sha256:") {
-		return fmt.Errorf("the manager Deployment runs %q, want %s", got, image)
+		return fmt.Errorf("the manager DaemonSet runs %q, want %s", got, image)
 	}
-	if !rolledOut(d) {
+	if !daemonSetRolledOut(d) {
 		return errors.New("the manager is not rolled out yet")
 	}
 	return nil

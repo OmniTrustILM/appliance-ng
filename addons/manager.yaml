@@ -1,574 +1,3 @@
-# The Appliance Manager. make manifests writes addons/manager.yaml from this file and the Appliance CRD.
-# The first-boot service applies it after bootstrap and replaces the image placeholder (managerImage in
-# release.yaml) with the manager image built with the appliance.
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: appliance-system
-  labels:
-    pod-security.kubernetes.io/enforce: privileged
----
-# The platform namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ilm
----
-# The ILM operator's namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ilm-operator-system
----
-# The cert-manager namespace, so the manager's Role in it can be bound. The manager is applied first; the
-# cert-manager add-on later applies the same Namespace server-side and the two merge.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: cert-manager
----
-# The ServiceAccounts of the kubeconfigs the console issues and the record of the talosconfigs it issued.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: appliance-access
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: appliance-manager
-  namespace: appliance-system
----
-# Every kind the add-on manifests and the reconciler apply, read access for the readiness waits, and events.
-# The add-ons install ClusterRoles and bindings that grant permissions the manager does not hold itself, so it needs
-# escalate and bind on roles and clusterroles. With them this ServiceAccount is effectively cluster-admin, and with
-# the Talos os:admin role of its talosconfig it is effectively node-admin as well.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: appliance-manager
-rules:
-  - apiGroups: [appliance.otilm.com]
-    resources: [appliances]
-    verbs: [get, list, watch, create, update, patch]
-  # The reconciler's controller owner references set blockOwnerDeletion, which needs update on the owner's finalizers.
-  - apiGroups: [appliance.otilm.com]
-    resources: [appliances/finalizers]
-    verbs: [update]
-  - apiGroups: [appliance.otilm.com]
-    resources: [appliances/status]
-    verbs: [get, update, patch]
-  - apiGroups: [otilm.com]
-    resources: [platforms, connectors]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [otilm.com]
-    resources: [connectors]
-    verbs: [delete]
-  - apiGroups: [""]
-    resources: [namespaces, configmaps, services, serviceaccounts]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [apps]
-    resources: [deployments, daemonsets]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [apiextensions.k8s.io]
-    resources: [customresourcedefinitions]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [admissionregistration.k8s.io]
-    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterroles, clusterrolebindings, roles, rolebindings]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterroles, roles]
-    verbs: [escalate, bind]
-  - apiGroups: [storage.k8s.io]
-    resources: [storageclasses]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [networking.k8s.io]
-    resources: [ingressclasses]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [cert-manager.io]
-    resources: [certificates, issuers, clusterissuers]
-    verbs: [get, list, watch, create, update, patch]
-  # Retrying the ACME certificate after a settings change sets its Issuing condition. Leaving ACME deletes its Issuer
-  # and Certificate.
-  - apiGroups: [cert-manager.io]
-    resources: [certificates/status]
-    verbs: [update]
-  - apiGroups: [cert-manager.io]
-    resources: [certificates, issuers]
-    resourceNames: [appliance-acme, appliance-acme-tls]
-    verbs: [delete]
-  - apiGroups: [traefik.io]
-    resources: [middlewares, tlsoptions, ingressroutes]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [""]
-    resources: [nodes]
-    verbs: [get, list, watch]
-  - apiGroups: ["", events.k8s.io]
-    resources: [events]
-    verbs: [get, list, watch, create, patch]
-  # Revoking a kubeconfig the console issued deletes its binding.
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterrolebindings]
-    verbs: [delete]
-  # An NFS backup target is mounted from a static volume the manager creates and deletes around each operation, and
-  # lists to remove what an interrupted operation left.
-  - apiGroups: [""]
-    resources: [persistentvolumes]
-    verbs: [get, list, create, delete]
----
-# The role of the view kubeconfigs the console issues: what view grants, and read access to nodes, which view leaves
-# out.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: appliance-access-view
-aggregationRule:
-  clusterRoleSelectors:
-    - matchLabels:
-        rbac.authorization.k8s.io/aggregate-to-view: "true"
-    - matchLabels:
-        appliance.otilm.com/aggregate-to-access-view: "true"
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: appliance-access-view-nodes
-  labels:
-    appliance.otilm.com/aggregate-to-access-view: "true"
-rules:
-  - apiGroups: [""]
-    resources: [nodes]
-    verbs: [get, list, watch]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: appliance-manager
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
-# It keeps the console accounts, the SMTP credentials, the uploaded certificate and a signing request's key there,
-# replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
-# Failed pods, which pile up while the node shuts down. A backup of an external database runs pg_dump in a short-lived
-# pod it creates, execs into and deletes; an NFS backup target is written the same way, by a pod with a claim on the
-# target's volume. A system update applies the manager's own manifest, its Talos ServiceAccount included.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: appliance-manager
-  namespace: appliance-system
-rules:
-  - apiGroups: [talos.dev]
-    resources: [serviceaccounts]
-    resourceNames: [appliance-manager]
-    verbs: [get, patch]
-  - apiGroups: [talos.dev]
-    resources: [serviceaccounts]
-    verbs: [create]
-  - apiGroups: [""]
-    resources: [secrets]
-    verbs: [get, list, watch, create, update, delete]
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, create, delete, deletecollection]
-  - apiGroups: [""]
-    resources: [persistentvolumeclaims]
-    verbs: [get, list, create, delete]
-  - apiGroups: [""]
-    resources: [pods/exec]
-    verbs: [create]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: appliance-manager
-  namespace: appliance-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# A system update moves the control plane to a new Kubernetes version one component after the other and waits for each
-# static pod to run ready at its new image. Applying the manager's own manifest needs nothing beyond the ClusterRole.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: appliance-manager
-  namespace: kube-system
-rules:
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, list]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: appliance-manager
-  namespace: kube-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
-# the administrator certificate there and marks its Secret once handed out. It reads the Keycloak admin Secret and
-# updates the `admin-password` Secret when the console sets a new administrator password. The copies of the trust
-# bundle, the registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
-# dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods. A
-# restore waits for the managed Keycloak, stops it, waits for the ILM pods to go, deletes the CertificateRequests so that
-# cert-manager keeps the restored Secrets, writes those into the live Secrets and loads the dump the same way. The
-# manager issues its own ILM certificate from the administrator CA and registers it once over a port-forward to Core,
-# which answers its bootstrap endpoint only to localhost. For the ACME profile of ILM it admits cert-manager to Core's
-# HTTP port through its own network policy, removed when the profile is no longer used. The CBOM repository's store
-# keeps its data on a volume claim the manager creates once; turning the repository off deletes its Deployments,
-# Services, the copy of an external store's credentials and the repository's CA Secret. A Cilium network policy admits
-# only ILM's pods and the node to the repository and its store.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: appliance-manager
-  namespace: ilm
-rules:
-  - apiGroups: [""]
-    resources: [secrets]
-    verbs: [get, create, update, patch]
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [appliance-trust, appliance-registry-credentials, appliance-mail, appliance-database, appliance-database-ca,
-      appliance-messaging, appliance-messaging-ca, appliance-cbom-s3, trusted-certificates-cbom-repository]
-    verbs: [delete]
-  - apiGroups: [""]
-    resources: [persistentvolumeclaims]
-    verbs: [get, create]
-  # A rollback uninstalls the platform with the ILM operator stopped: it deletes the Platform, what the operators leave
-  # behind and the volume claims, and waits for them and the StatefulSets they own to be gone.
-  - apiGroups: [""]
-    resources: [persistentvolumeclaims]
-    verbs: [list, delete]
-  - apiGroups: [otilm.com]
-    resources: [platforms]
-    resourceNames: [ilm]
-    verbs: [delete]
-  - apiGroups: [k8s.keycloak.org]
-    resources: [keycloakrealmimports]
-    resourceNames: [ilm-keycloak-realm]
-    verbs: [get, delete]
-  - apiGroups: [k8s.keycloak.org]
-    resources: [keycloaks]
-    resourceNames: [ilm-keycloak]
-    verbs: [delete]
-  - apiGroups: [rabbitmq.com]
-    resources: [bindings, queues, exchanges, permissions, users, vhosts]
-    verbs: [list, deletecollection]
-  - apiGroups: [rabbitmq.com]
-    resources: [rabbitmqclusters]
-    resourceNames: [ilm-messaging]
-    verbs: [get, delete]
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [databases]
-    resourceNames: [ilm-db-app]
-    verbs: [get, delete]
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [poolers]
-    resourceNames: [ilm-db-pooler]
-    verbs: [get, delete]
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [clusters]
-    resourceNames: [ilm-db]
-    verbs: [delete]
-  - apiGroups: [apps]
-    resources: [statefulsets]
-    resourceNames: [ilm-keycloak, ilm-messaging-server]
-    verbs: [get]
-  - apiGroups: [apps]
-    resources: [deployments]
-    resourceNames: [cbom-s3, cbom-repository-deployment]
-    verbs: [delete]
-  - apiGroups: [""]
-    resources: [services]
-    resourceNames: [cbom-s3, cbom-repository-service]
-    verbs: [delete]
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [list]
-  - apiGroups: [""]
-    resources: [pods/exec, pods/portforward]
-    verbs: [create]
-  - apiGroups: [postgresql.cnpg.io]
-    resources: [clusters]
-    resourceNames: [ilm-db]
-    verbs: [get]
-  - apiGroups: [k8s.keycloak.org]
-    resources: [keycloaks]
-    resourceNames: [ilm-keycloak]
-    verbs: [get, patch]
-  - apiGroups: [cert-manager.io]
-    resources: [certificaterequests]
-    verbs: [list, delete]
-  - apiGroups: [networking.k8s.io]
-    resources: [networkpolicies]
-    verbs: [create]
-  - apiGroups: [networking.k8s.io]
-    resources: [networkpolicies]
-    resourceNames: [appliance-acme-to-core]
-    verbs: [patch, delete]
-  - apiGroups: [cilium.io]
-    resources: [ciliumnetworkpolicies]
-    verbs: [get, create]
-  - apiGroups: [cilium.io]
-    resources: [ciliumnetworkpolicies]
-    resourceNames: [cbom-repository-ingress]
-    verbs: [patch, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: appliance-manager
-  namespace: ilm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# A restore waits for the pod of the ILM operator to be gone after scaling it to zero.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: appliance-manager
-  namespace: ilm-operator-system
-rules:
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [list]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: appliance-manager
-  namespace: ilm-operator-system
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# A backup holds the root CA of the built-in certificate chain, which cert-manager keeps in its own namespace. A
-# fresh restore writes it back, after deleting its CertificateRequests so that cert-manager keeps it.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: appliance-manager
-  namespace: cert-manager
-rules:
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [appliance-root-ca]
-    verbs: [get, update]
-  - apiGroups: [""]
-    resources: [secrets]
-    verbs: [create]
-  - apiGroups: [cert-manager.io]
-    resources: [certificaterequests]
-    verbs: [list, delete]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: appliance-manager
-  namespace: cert-manager
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# The kubeconfigs the console issues: their tokens, as TokenRequests or the token Secrets of long-lived ones, and
-# deleting their ServiceAccounts on revoke and expiry; the garbage collector deletes the token Secrets.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: appliance-manager
-  namespace: appliance-access
-rules:
-  - apiGroups: [""]
-    resources: [serviceaccounts]
-    verbs: [delete]
-  - apiGroups: [""]
-    resources: [serviceaccounts/token]
-    verbs: [create]
-  - apiGroups: [""]
-    resources: [secrets]
-    verbs: [get, create]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: appliance-manager
-  namespace: appliance-access
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: appliance-manager
-subjects:
-  - kind: ServiceAccount
-    name: appliance-manager
-    namespace: appliance-system
----
-# Talos creates the Secret appliance-manager in appliance-system with a talosconfig for this role.
-apiVersion: talos.dev/v1alpha1
-kind: ServiceAccount
-metadata:
-  name: appliance-manager
-  namespace: appliance-system
-spec:
-  roles:
-    - os:admin
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: appliance-manager
-  namespace: appliance-system
-  labels:
-    app.kubernetes.io/name: appliance-manager
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: appliance-manager
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: appliance-manager
-    spec:
-      serviceAccountName: appliance-manager
-      hostNetwork: true
-      tolerations:
-        - key: node.kubernetes.io/not-ready
-          operator: Exists
-        - key: node.cilium.io/agent-not-ready
-          operator: Exists
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        seccompProfile:
-          type: RuntimeDefault
-      # The hostPath behind /data is created root-owned and hostPath ignores fsGroup, so a root init container
-      # hands it to the manager's user before the manager starts.
-      initContainers:
-        - name: data-owner
-          image: docker.io/library/busybox:latest
-          imagePullPolicy: IfNotPresent
-          command: [sh, -c, "chown 65532:65532 /data && chmod 0700 /data"]
-          securityContext:
-            runAsNonRoot: false
-            runAsUser: 0
-            runAsGroup: 0
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-              add: [CHOWN, FOWNER]
-          resources:
-            requests:
-              cpu: 10m
-              memory: 8Mi
-            limits:
-              memory: 32Mi
-          volumeMounts:
-            - name: data
-              mountPath: /data
-      containers:
-        - name: manager
-          image: appliance.invalid/manager:release
-          env:
-            - name: KUBERNETES_SERVICE_HOST
-              value: 127.0.0.1
-            - name: KUBERNETES_SERVICE_PORT
-              value: "7445"
-            - name: NODE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
-            # Below the memory limit, so that the garbage collector runs before the container is killed.
-            - name: GOMEMLIMIT
-              value: 448MiB
-          ports:
-            - name: https
-              containerPort: 8443
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8443
-              scheme: HTTPS
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8443
-              scheme: HTTPS
-            initialDelaySeconds: 10
-            periodSeconds: 20
-            failureThreshold: 3
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            # Room for the 256 MiB scrypt of one recovery kit at a time next to the manager's own use.
-            limits:
-              memory: 512Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-          volumeMounts:
-            - name: data
-              mountPath: /data
-            - name: talos-secrets
-              mountPath: /var/run/secrets/talos.dev
-              readOnly: true
-      volumes:
-        - name: data
-          hostPath:
-            path: /var/mnt/data/appliance
-            type: DirectoryOrCreate
-        - name: talos-secrets
-          secret:
-            secretName: appliance-manager
-            optional: true
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -747,6 +176,102 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                 type: object
+              cluster:
+                description: ClusterSpec describes the nodes of the appliance and
+                  the address the cluster is reached at.
+                properties:
+                  address:
+                    description: |-
+                      ClusterAddress is the address the cluster is reached at: a virtual IPv4 address the nodes share, or a DNS name
+                      that resolves to the nodes. Neither set is the address of the first node.
+                    properties:
+                      external:
+                        maxLength: 253
+                        pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+)?$
+                        type: string
+                      virtual:
+                        maxLength: 15
+                        type: string
+                        x-kubernetes-validations:
+                        - message: cluster.address.virtual must be an IPv4 address
+                          rule: self == '' || (isIP(self) && ip(self).family() ==
+                            4)
+                    type: object
+                    x-kubernetes-validations:
+                    - message: cluster.address takes virtual or external, not both
+                      rule: '!has(self.virtual) || size(self.virtual) == 0 || !has(self.external)
+                        || size(self.external) == 0'
+                  nodes:
+                    description: Nodes are the nodes of the cluster, the first node
+                      first.
+                    items:
+                      description: |-
+                        ClusterNode is the network identity, role and placement tags of one node. The host name names the entry; the
+                        address is fixed once set.
+                      properties:
+                        address:
+                          description: Address is the node address in CIDR notation;
+                            empty means DHCP.
+                          maxLength: 49
+                          type: string
+                          x-kubernetes-validations:
+                          - message: node address must be empty or an IPv4 CIDR
+                            rule: self == '' || (isCIDR(self) && cidr(self).ip().family()
+                              == 4)
+                        gateway:
+                          maxLength: 45
+                          type: string
+                          x-kubernetes-validations:
+                          - message: node gateway must be empty or an IPv4 address
+                            rule: self == '' || (isIP(self) && ip(self).family() ==
+                              4)
+                        hostName:
+                          description: |-
+                            HostName is the fully qualified host name of the node. Talos registers the node in Kubernetes under the
+                            first label of this name.
+                          maxLength: 253
+                          pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$
+                          type: string
+                        maintenance:
+                          description: Maintenance marks the node as taken out of
+                            service by the administrator.
+                          type: boolean
+                        role:
+                          description: Role is set by the manager when the node joins.
+                          enum:
+                          - voting
+                          - worker
+                          type: string
+                        tags:
+                          description: Tags are short names that place connectors
+                            on the node.
+                          items:
+                            pattern: ^[a-z0-9][a-z0-9-]{0,30}$
+                            type: string
+                          maxItems: 8
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - hostName
+                      type: object
+                      x-kubernetes-validations:
+                      - message: a node's address cannot be changed once set
+                        rule: '!has(oldSelf.address) || size(oldSelf.address) == 0
+                          || (has(self.address) && self.address == oldSelf.address)'
+                    maxItems: 7
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - hostName
+                    x-kubernetes-list-type: map
+                    x-kubernetes-validations:
+                    - message: node host names must differ in their first label, which
+                        is the Kubernetes node name
+                      rule: self.all(a, self.exists_one(b, b.hostName.split('.')[0]
+                        == a.hostName.split('.')[0]))
+                required:
+                - nodes
+                type: object
               dns:
                 description: DNSSpec lists the DNS servers.
                 properties:
@@ -788,41 +313,6 @@ spec:
                 - port
                 - security
                 type: object
-              node:
-                description: NodeSpec is the network identity of the node.
-                properties:
-                  address:
-                    description: Address is the node address in CIDR notation; empty
-                      means DHCP.
-                    maxLength: 49
-                    type: string
-                    x-kubernetes-validations:
-                    - message: node.address must be empty or an IPv4 CIDR
-                      rule: self == '' || (isCIDR(self) && cidr(self).ip().family()
-                        == 4)
-                  gateway:
-                    maxLength: 45
-                    type: string
-                    x-kubernetes-validations:
-                    - message: node.gateway must be empty or an IPv4 address
-                      rule: self == '' || (isIP(self) && ip(self).family() == 4)
-                  hostName:
-                    description: |-
-                      HostName is the fully qualified host name of the appliance. It is the Kubernetes node name, so it is fixed
-                      once set.
-                    maxLength: 253
-                    pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: node.hostName cannot be changed once set
-                      rule: self == oldSelf
-                required:
-                - hostName
-                type: object
-                x-kubernetes-validations:
-                - message: node.address cannot be changed once set
-                  rule: '!has(oldSelf.address) || size(oldSelf.address) == 0 || (has(self.address)
-                    && self.address == oldSelf.address)'
               ntp:
                 description: NTPSpec lists the NTP servers.
                 properties:
@@ -891,9 +381,23 @@ spec:
                         || size(self.credentialsRef) == 0)'
                   components:
                     items:
-                      type: string
+                      description: ComponentSpec is a platform component the administrator
+                        chose.
+                      properties:
+                        name:
+                          type: string
+                        nodeTag:
+                          description: NodeTag places a connector on the nodes with
+                            this tag; empty runs it on any node.
+                          pattern: ^[a-z0-9][a-z0-9-]{0,30}$
+                          type: string
+                      required:
+                      - name
+                      type: object
                     type: array
-                    x-kubernetes-list-type: set
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   database:
                     description: Database is the external database ILM uses; unset
                       is the managed one.
@@ -1194,7 +698,7 @@ spec:
                 - name
                 type: object
             required:
-            - node
+            - cluster
             type: object
           status:
             description: ApplianceStatus is the observed state of the appliance.
@@ -1297,6 +801,83 @@ spec:
                     type: array
                     x-kubernetes-list-map-keys:
                     - name
+                    x-kubernetes-list-type: map
+                type: object
+              cluster:
+                description: Cluster is the observed state of the nodes; unset until
+                  the manager first reads it.
+                properties:
+                  addressHolder:
+                    description: AddressHolder is the node that holds the virtual
+                      address.
+                    type: string
+                  databasePrimary:
+                    description: DatabasePrimary is the node that runs the PostgreSQL
+                      primary.
+                    type: string
+                  leader:
+                    description: Leader is the node that runs the leading manager.
+                    type: string
+                  nodes:
+                    items:
+                      description: NodeStatus is the observed state of one node.
+                      properties:
+                        address:
+                          type: string
+                        cpus:
+                          format: int32
+                          type: integer
+                        dataVolume:
+                          description: DataVolume is the size and free space of the
+                            node's data volume; unset while it cannot be read.
+                          properties:
+                            freeBytes:
+                              format: int64
+                              type: integer
+                            lowSpace:
+                              description: LowSpace is set while less than a fifth
+                                of the volume is free, judged on the exact free space.
+                              type: boolean
+                            sizeBytes:
+                              format: int64
+                              type: integer
+                          required:
+                          - freeBytes
+                          - sizeBytes
+                          type: object
+                        etcdHealthy:
+                          description: EtcdHealthy tells whether the node's etcd member
+                            is healthy; a worker has none.
+                          type: boolean
+                        hostName:
+                          type: string
+                        kubernetes:
+                          type: string
+                        memoryBytes:
+                          format: int64
+                          type: integer
+                        ready:
+                          description: Ready is the node's Kubernetes Ready condition.
+                          type: boolean
+                        role:
+                          description: NodeRole is the part a node plays in the cluster.
+                          enum:
+                          - voting
+                          - worker
+                          type: string
+                        tags:
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: set
+                        talos:
+                          type: string
+                      required:
+                      - hostName
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - hostName
                     x-kubernetes-list-type: map
                 type: object
               conditions:
@@ -1945,3 +1526,590 @@ spec:
     storage: true
     subresources:
       status: {}
+# The Appliance Manager. make manifests writes addons/manager.yaml from this file and the Appliance CRD.
+# The first-boot service applies it after bootstrap and replaces the image placeholder (managerImage in
+# release.yaml) with the manager image built with the appliance. The DaemonSet stays the last document: the
+# first-boot service applies the file only while the DaemonSet is missing.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: appliance-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+# The platform namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm
+---
+# The ILM operator's namespace, so the manager's Role in it can be bound before the ilm-operator step creates it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ilm-operator-system
+---
+# The cert-manager namespace, so the manager's Role in it can be bound. The manager is applied first; the
+# cert-manager add-on later applies the same Namespace server-side and the two merge.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+---
+# The ServiceAccounts of the kubeconfigs the console issues and the record of the talosconfigs it issued.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: appliance-access
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+---
+# Every kind the add-on manifests and the reconciler apply, read access for the readiness waits, and events.
+# The add-ons install ClusterRoles and bindings that grant permissions the manager does not hold itself, so it needs
+# escalate and bind on roles and clusterroles. With them this ServiceAccount is effectively cluster-admin, and with
+# the Talos os:admin role of its talosconfig it is effectively node-admin as well.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-manager
+rules:
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances]
+    verbs: [get, list, watch, create, update, patch]
+  # The reconciler's controller owner references set blockOwnerDeletion, which needs update on the owner's finalizers.
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances/finalizers]
+    verbs: [update]
+  - apiGroups: [appliance.otilm.com]
+    resources: [appliances/status]
+    verbs: [get, update, patch]
+  - apiGroups: [otilm.com]
+    resources: [platforms, connectors]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [otilm.com]
+    resources: [connectors]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [namespaces, configmaps, services, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations, validatingwebhookconfigurations]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, clusterrolebindings, roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles, roles]
+    verbs: [escalate, bind]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingressclasses]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers, clusterissuers]
+    verbs: [get, list, watch, create, update, patch]
+  # Retrying the ACME certificate after a settings change sets its Issuing condition. Leaving ACME deletes its Issuer
+  # and Certificate.
+  - apiGroups: [cert-manager.io]
+    resources: [certificates/status]
+    verbs: [update]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, issuers]
+    resourceNames: [appliance-acme, appliance-acme-tls]
+    verbs: [delete]
+  - apiGroups: [traefik.io]
+    resources: [middlewares, tlsoptions, ingressroutes]
+    verbs: [get, list, watch, create, update, patch]
+  # Draining a node cordons it and evicts its pods.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, patch]
+  # Revoking a kubeconfig the console issued deletes its binding.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [delete]
+  # An NFS backup target is mounted from a static volume the manager creates and deletes around each operation, and
+  # lists to remove what an interrupted operation left.
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, create, delete]
+---
+# The role of the view kubeconfigs the console issues: what view grants, and read access to nodes, which view leaves
+# out.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-access-view
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.k8s.io/aggregate-to-view: "true"
+    - matchLabels:
+        appliance.otilm.com/aggregate-to-access-view: "true"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appliance-access-view-nodes
+  labels:
+    appliance.otilm.com/aggregate-to-access-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: appliance-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# The Appliance references its Secrets in appliance-system; the manager reads no other Secrets through its cache.
+# It keeps the console accounts, the SMTP credentials, the uploaded certificate and a signing request's key there,
+# replaces and deletes them as they change, and deletes the hand-over Secret once it imported it. It deletes its own
+# Failed pods, which pile up while the node shuts down. A backup of an external database runs pg_dump in a short-lived
+# pod it creates, execs into and deletes; an NFS backup target is written the same way, by a pod with a claim on the
+# target's volume. A system update applies the manager's own manifest, its Talos ServiceAccount included. The managers
+# of the voting nodes elect their leader through a Lease.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [talos.dev]
+    resources: [serviceaccounts]
+    resourceNames: [appliance-manager]
+    verbs: [get, patch]
+  - apiGroups: [talos.dev]
+    resources: [serviceaccounts]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch, create, update, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, create, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, create, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A system update moves the control plane to a new Kubernetes version one component after the other and waits for each
+# static pod to run ready at its new image. Applying the manager's own manifest needs nothing beyond the ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: kube-system
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# Copies of the referenced Secrets and the connector key Secrets in the platform namespace. The console also reads
+# the administrator certificate there and marks its Secret once handed out. It reads the Keycloak admin Secret and
+# updates the `admin-password` Secret when the console sets a new administrator password. The copies of the trust
+# bundle, the registry credentials and the mail credentials are deleted once the Appliance no longer references them. A backup
+# dumps the database by exec into the CloudNativePG primary, which it finds through its Cluster and its pods. A
+# restore waits for the managed Keycloak, stops it, waits for the ILM pods to go, deletes the CertificateRequests so that
+# cert-manager keeps the restored Secrets, writes those into the live Secrets and loads the dump the same way. The
+# manager issues its own ILM certificate from the administrator CA and registers it once over a port-forward to Core,
+# which answers its bootstrap endpoint only to localhost. For the ACME profile of ILM it admits cert-manager to Core's
+# HTTP port through its own network policy, removed when the profile is no longer used. The CBOM repository's store
+# keeps its data on a volume claim the manager creates once; turning the repository off deletes its Deployments,
+# Services, the copy of an external store's credentials and the repository's CA Secret. A Cilium network policy admits
+# only ILM's pods and the node to the repository and its store.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: ilm
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-trust, appliance-registry-credentials, appliance-mail, appliance-database, appliance-database-ca,
+      appliance-messaging, appliance-messaging-ca, appliance-cbom-s3, trusted-certificates-cbom-repository]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, create]
+  # A rollback uninstalls the platform with the ILM operator stopped: it deletes the Platform, what the operators leave
+  # behind and the volume claims, and waits for them and the StatefulSets they own to be gone.
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [list, delete]
+  - apiGroups: [otilm.com]
+    resources: [platforms]
+    resourceNames: [ilm]
+    verbs: [delete]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloakrealmimports]
+    resourceNames: [ilm-keycloak-realm]
+    verbs: [get, delete]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloaks]
+    resourceNames: [ilm-keycloak]
+    verbs: [delete]
+  - apiGroups: [rabbitmq.com]
+    resources: [bindings, queues, exchanges, permissions, users, vhosts]
+    verbs: [list, deletecollection]
+  - apiGroups: [rabbitmq.com]
+    resources: [rabbitmqclusters]
+    resourceNames: [ilm-messaging]
+    verbs: [get, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [databases]
+    resourceNames: [ilm-db-app]
+    verbs: [get, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [poolers]
+    resourceNames: [ilm-db-pooler]
+    verbs: [get, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: [ilm-db]
+    verbs: [delete]
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    resourceNames: [ilm-keycloak, ilm-messaging-server]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [cbom-s3, cbom-repository-deployment]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [services]
+    resourceNames: [cbom-s3, cbom-repository-service]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/exec, pods/portforward]
+    verbs: [create]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    resourceNames: [ilm-db]
+    verbs: [get]
+  - apiGroups: [k8s.keycloak.org]
+    resources: [keycloaks]
+    resourceNames: [ilm-keycloak]
+    verbs: [get, patch]
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests]
+    verbs: [list, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    resourceNames: [appliance-acme-to-core]
+    verbs: [patch, delete]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    verbs: [get, create]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    resourceNames: [cbom-repository-ingress]
+    verbs: [patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: ilm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A restore waits for the pod of the ILM operator to be gone after scaling it to zero.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: ilm-operator-system
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: ilm-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# A backup holds the root CA of the built-in certificate chain, which cert-manager keeps in its own namespace. A
+# fresh restore writes it back, after deleting its CertificateRequests so that cert-manager keeps it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: cert-manager
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [appliance-root-ca]
+    verbs: [get, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [cert-manager.io]
+    resources: [certificaterequests]
+    verbs: [list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# The kubeconfigs the console issues: their tokens, as TokenRequests or the token Secrets of long-lived ones, and
+# deleting their ServiceAccounts on revoke and expiry; the garbage collector deletes the token Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appliance-manager
+  namespace: appliance-access
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [delete]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appliance-manager
+  namespace: appliance-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: appliance-manager
+subjects:
+  - kind: ServiceAccount
+    name: appliance-manager
+    namespace: appliance-system
+---
+# Talos creates the Secret appliance-manager in appliance-system with a talosconfig for this role.
+apiVersion: talos.dev/v1alpha1
+kind: ServiceAccount
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+spec:
+  roles:
+    - os:admin
+---
+# One manager on every voting node, replaced one node at a time.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: appliance-manager
+  namespace: appliance-system
+  labels:
+    app.kubernetes.io/name: appliance-manager
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: appliance-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: appliance-manager
+    spec:
+      serviceAccountName: appliance-manager
+      hostNetwork: true
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+        - key: node.cilium.io/agent-not-ready
+          operator: Exists
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # The hostPath behind /data is created root-owned and hostPath ignores fsGroup, so a root init container
+      # hands it to the manager's user before the manager starts.
+      initContainers:
+        - name: data-owner
+          image: docker.io/library/busybox:latest
+          imagePullPolicy: IfNotPresent
+          command: [sh, -c, "chown 65532:65532 /data && chmod 0700 /data"]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: manager
+          image: appliance.invalid/manager:release
+          env:
+            - name: KUBERNETES_SERVICE_HOST
+              value: 127.0.0.1
+            - name: KUBERNETES_SERVICE_PORT
+              value: "7445"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # Below the memory limit, so that the garbage collector runs before the container is killed.
+            - name: GOMEMLIMIT
+              value: 448MiB
+          ports:
+            - name: https
+              containerPort: 8443
+            # The other managers forward the console's API requests to the leader on this port of its node address.
+            - name: peer
+              containerPort: 8445
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            # Room for the 256 MiB scrypt of one recovery kit at a time next to the manager's own use.
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: talos-secrets
+              mountPath: /var/run/secrets/talos.dev
+              readOnly: true
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/mnt/data/appliance
+            type: DirectoryOrCreate
+        - name: talos-secrets
+          secret:
+            secretName: appliance-manager
+            optional: true

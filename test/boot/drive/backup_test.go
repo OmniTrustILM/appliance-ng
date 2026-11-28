@@ -41,7 +41,7 @@ type backupConsole struct {
 
 func (b *backupConsole) build(t *testing.T) {
 	t.Helper()
-	spec, err := yaml.Marshal(v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: b.hostName}}})
+	spec, err := yaml.Marshal(v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: b.hostName}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

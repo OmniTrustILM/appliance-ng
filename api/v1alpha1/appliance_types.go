@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -26,6 +28,17 @@ const (
 	// ConditionAdminCertificateRegistered reports whether ILM's administrator holds the certificate the console hands
 	// out; it is absent while there is none or ILM has no administrator to give it to.
 	ConditionAdminCertificateRegistered = "AdminCertificateRegistered"
+	// ConditionClusterHealthy reports whether every node of the cluster is up and in step.
+	ConditionClusterHealthy = "ClusterHealthy"
+)
+
+// Reasons of ClusterHealthy while it is false.
+const (
+	ReasonNodeDown       = "nodeDown"
+	ReasonTwoVotingNodes = "twoVotingNodes"
+	ReasonEtcdUnhealthy  = "etcdUnhealthy"
+	ReasonCopyBehind     = "copyBehind"
+	ReasonConfigPending  = "configPending"
 )
 
 // ReasonUpdateHeld is the reason of AddonsReady while a system update holds the add-on pass: the add-ons are
@@ -70,7 +83,7 @@ const (
 
 // ApplianceSpec is the desired configuration of the appliance.
 type ApplianceSpec struct {
-	Node NodeSpec `json:"node"`
+	Cluster ClusterSpec `json:"cluster"`
 	// +optional
 	DNS DNSSpec `json:"dns,omitempty"`
 	// +optional
@@ -92,24 +105,101 @@ type ApplianceSpec struct {
 	Backup *BackupSpec `json:"backup,omitempty"`
 }
 
-// NodeSpec is the network identity of the node.
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.address) || size(oldSelf.address) == 0 || (has(self.address) && self.address == oldSelf.address)",message="node.address cannot be changed once set"
-type NodeSpec struct {
-	// HostName is the fully qualified host name of the appliance. It is the Kubernetes node name, so it is fixed
-	// once set.
+// FirstNode returns the first node of the cluster, the appliance that was set up first, or nil when there is none.
+func (s *ApplianceSpec) FirstNode() *ClusterNode {
+	if len(s.Cluster.Nodes) == 0 {
+		return nil
+	}
+	return &s.Cluster.Nodes[0]
+}
+
+// NodeNamed returns the node of the cluster with the host name name, or nil when there is none.
+func (s *ApplianceSpec) NodeNamed(name string) *ClusterNode {
+	for i := range s.Cluster.Nodes {
+		if s.Cluster.Nodes[i].HostName == name {
+			return &s.Cluster.Nodes[i]
+		}
+	}
+	return nil
+}
+
+// HostName returns the host name of the first node, or "" when there is none.
+func (s *ApplianceSpec) HostName() string {
+	if n := s.FirstNode(); n != nil {
+		return n.HostName
+	}
+	return ""
+}
+
+// ClusterSpec describes the nodes of the appliance and the address the cluster is reached at.
+type ClusterSpec struct {
+	// +optional
+	Address ClusterAddress `json:"address,omitempty"`
+	// Nodes are the nodes of the cluster, the first node first.
+	// +listType=map
+	// +listMapKey=hostName
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=7
+	// +kubebuilder:validation:XValidation:rule="self.all(a, self.exists_one(b, b.hostName.split('.')[0] == a.hostName.split('.')[0]))",message="node host names must differ in their first label, which is the Kubernetes node name"
+	Nodes []ClusterNode `json:"nodes"`
+}
+
+// ClusterAddress is the address the cluster is reached at: a virtual IPv4 address the nodes share, or a DNS name
+// that resolves to the nodes. Neither set is the address of the first node.
+// +kubebuilder:validation:XValidation:rule="!has(self.virtual) || size(self.virtual) == 0 || !has(self.external) || size(self.external) == 0",message="cluster.address takes virtual or external, not both"
+type ClusterAddress struct {
+	// +optional
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:XValidation:rule="self == '' || (isIP(self) && ip(self).family() == 4)",message="cluster.address.virtual must be an IPv4 address"
+	Virtual string `json:"virtual,omitempty"`
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+)?$`
+	External string `json:"external,omitempty"`
+}
+
+// NodeRole is the part a node plays in the cluster.
+// +kubebuilder:validation:Enum=voting;worker
+type NodeRole string
+
+// Roles of ClusterNode.Role.
+const (
+	// NodeRoleVoting is a control-plane node with an etcd member that also runs workloads.
+	NodeRoleVoting NodeRole = "voting"
+	// NodeRoleWorker runs workloads only.
+	NodeRoleWorker NodeRole = "worker"
+)
+
+// ClusterNode is the network identity, role and placement tags of one node. The host name names the entry; the
+// address is fixed once set.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.address) || size(oldSelf.address) == 0 || (has(self.address) && self.address == oldSelf.address)",message="a node's address cannot be changed once set"
+type ClusterNode struct {
+	// HostName is the fully qualified host name of the node. Talos registers the node in Kubernetes under the
+	// first label of this name.
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)+$`
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="node.hostName cannot be changed once set"
 	HostName string `json:"hostName"`
 	// Address is the node address in CIDR notation; empty means DHCP.
 	// +optional
 	// +kubebuilder:validation:MaxLength=49
-	// +kubebuilder:validation:XValidation:rule="self == '' || (isCIDR(self) && cidr(self).ip().family() == 4)",message="node.address must be empty or an IPv4 CIDR"
+	// +kubebuilder:validation:XValidation:rule="self == '' || (isCIDR(self) && cidr(self).ip().family() == 4)",message="node address must be empty or an IPv4 CIDR"
 	Address string `json:"address,omitempty"`
 	// +optional
 	// +kubebuilder:validation:MaxLength=45
-	// +kubebuilder:validation:XValidation:rule="self == '' || (isIP(self) && ip(self).family() == 4)",message="node.gateway must be empty or an IPv4 address"
+	// +kubebuilder:validation:XValidation:rule="self == '' || (isIP(self) && ip(self).family() == 4)",message="node gateway must be empty or an IPv4 address"
 	Gateway string `json:"gateway,omitempty"`
+	// Role is set by the manager when the node joins.
+	// +optional
+	Role NodeRole `json:"role,omitempty"`
+	// Tags are short names that place connectors on the node.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9][a-z0-9-]{0,30}$`
+	Tags []string `json:"tags,omitempty"`
+	// Maintenance marks the node as taken out of service by the administrator.
+	// +optional
+	Maintenance bool `json:"maintenance,omitempty"`
 }
 
 // DNSSpec lists the DNS servers.
@@ -260,8 +350,9 @@ type PlatformSpec struct {
 	// +optional
 	HostName string `json:"hostName,omitempty"`
 	// +optional
-	// +listType=set
-	Components []string `json:"components,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	Components []ComponentSpec `json:"components,omitempty"`
 	// Database is the external database ILM uses; unset is the managed one.
 	// +optional
 	Database *ExternalDatabase `json:"database,omitempty"`
@@ -277,6 +368,24 @@ type PlatformSpec struct {
 	// CBOM installs the CBOM repository ILM keeps CBOMs in.
 	// +optional
 	CBOM *CBOMSpec `json:"cbom,omitempty"`
+}
+
+// ComponentSpec is a platform component the administrator chose.
+type ComponentSpec struct {
+	Name string `json:"name"`
+	// NodeTag places a connector on the nodes with this tag; empty runs it on any node.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-]{0,30}$`
+	NodeTag string `json:"nodeTag,omitempty"`
+}
+
+// ComponentNames returns the names of the chosen components, in order.
+func (p *PlatformSpec) ComponentNames() []string {
+	names := make([]string, len(p.Components))
+	for i, c := range p.Components {
+		names[i] = c.Name
+	}
+	return names
 }
 
 // Stores of CBOMSpec.Storage.
@@ -547,6 +656,56 @@ type ApplianceStatus struct {
 	// Update is the latest update or rollback; unset until one starts.
 	// +optional
 	Update *UpdateStatus `json:"update,omitempty"`
+	// Cluster is the observed state of the nodes; unset until the manager first reads it.
+	// +optional
+	Cluster *ClusterStatus `json:"cluster,omitempty"`
+}
+
+// ClusterStatus is the observed state of the cluster's nodes and of the nodes that hold its shared roles, each by host
+// name.
+type ClusterStatus struct {
+	// +listType=map
+	// +listMapKey=hostName
+	// +optional
+	Nodes []NodeStatus `json:"nodes,omitempty"`
+	// AddressHolder is the node that holds the virtual address.
+	// +optional
+	AddressHolder string `json:"addressHolder,omitempty"`
+	// Leader is the node that runs the leading manager.
+	// +optional
+	Leader string `json:"leader,omitempty"`
+	// DatabasePrimary is the node that runs the PostgreSQL primary.
+	// +optional
+	DatabasePrimary string `json:"databasePrimary,omitempty"`
+}
+
+// NodeStatus is the observed state of one node.
+type NodeStatus struct {
+	HostName string `json:"hostName"`
+	// +optional
+	Role NodeRole `json:"role,omitempty"`
+	// +optional
+	Address string `json:"address,omitempty"`
+	// Ready is the node's Kubernetes Ready condition.
+	// +optional
+	Ready bool `json:"ready,omitempty"`
+	// EtcdHealthy tells whether the node's etcd member is healthy; a worker has none.
+	// +optional
+	EtcdHealthy bool `json:"etcdHealthy,omitempty"`
+	// +optional
+	Talos string `json:"talos,omitempty"`
+	// +optional
+	Kubernetes string `json:"kubernetes,omitempty"`
+	// +optional
+	CPUs int32 `json:"cpus,omitempty"`
+	// +optional
+	MemoryBytes int64 `json:"memoryBytes,omitempty"`
+	// DataVolume is the size and free space of the node's data volume; unset while it cannot be read.
+	// +optional
+	DataVolume *VolumeStatus `json:"dataVolume,omitempty"`
+	// +optional
+	// +listType=set
+	Tags []string `json:"tags,omitempty"`
 }
 
 // UpdatesStatus is the state of the update bundles.
@@ -647,12 +806,15 @@ type UpdateStatus struct {
 }
 
 // The system and rollback kinds of UpdateStatus, a rollback's progress being that of its restore; the step of a
-// completed update; and the step at which a system update releases the add-on pass.
+// completed update; the step at which a system update releases the add-on pass; and the steps at which a system
+// update waits for the manager of the new release to take it over.
 const (
 	UpdateKindSystem   = "system"
 	UpdateKindRollback = "rollback"
 	UpdateStepDone     = "done"
 	UpdateStepAddons   = "addons"
+	UpdateStepManager  = "manager"
+	UpdateStepTalos    = "talos"
 )
 
 // Unfinished tells whether u is an update that neither completed nor failed; the progress of a rollback is that of its
@@ -665,6 +827,15 @@ func (u *UpdateStatus) Unfinished() bool {
 // step, so that nothing changes the add-ons from its backup on.
 func (u *UpdateStatus) HoldsAddons() bool {
 	return u.Unfinished() && u.Kind == UpdateKindSystem && u.Step != UpdateStepAddons
+}
+
+// HandOverOverdue tells whether u is a system update that, at now, is past the deadline by which the manager of the
+// new release had to take it over: unfinished at its manager step, or at its talos step before the boot was recorded,
+// not handed back, with the previous manager recorded. The previous manager fails such an update.
+func (u *UpdateStatus) HandOverOverdue(now time.Time) bool {
+	return u.Unfinished() && u.Kind == UpdateKindSystem && u.PreviousManager != "" && u.HandBack == "" &&
+		u.BootID == "" && (u.Step == UpdateStepManager || u.Step == UpdateStepTalos) && u.Deadline != nil &&
+		!now.Before(u.Deadline.Time)
 }
 
 // HoldsAddonsFor tells whether s holds the add-on pass of the manager of version: while a system update holds it,

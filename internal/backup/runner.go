@@ -503,7 +503,7 @@ func (r *Runner) admit(ctx context.Context, reason string, o runOptions) (*v1alp
 
 // execute takes the backup admit allowed.
 func (r *Runner) execute(ctx context.Context, a *v1alpha1.Appliance, recipient age.Recipient, reason string, targets []string, o runOptions) (v1alpha1.BackupRecord, error) {
-	start, err := r.startTime(ctx, a.Spec.Node.HostName)
+	start, err := r.startTime(ctx, a.Spec.HostName())
 	if err != nil {
 		return v1alpha1.BackupRecord{}, err
 	}
@@ -525,7 +525,7 @@ func (r *Runner) execute(ctx context.Context, a *v1alpha1.Appliance, recipient a
 			r.refreshLocal(st)
 			setHealthy(st, a.Generation, metav1.ConditionFalse, conditionLocalFailed, failure)
 		})
-		r.audit(o.user, reason, FileName(a.Spec.Node.HostName, start, r.deps.Version), "local: "+failure)
+		r.audit(o.user, reason, FileName(a.Spec.HostName(), start, r.deps.Version), "local: "+failure)
 		return v1alpha1.BackupRecord{}, fmt.Errorf("%w while writing the %s: %s", ErrFailed, stage, failure)
 	}
 	r.deps.Log.Info("backup written", "reason", reason, "name", rec.Name, "sizeBytes", rec.SizeBytes, "database", rec.Database)
@@ -658,7 +658,7 @@ func (r *Runner) recipient(ctx context.Context, st *v1alpha1.RecoveryKitStatus) 
 // writeLocal writes the backup as a partial file and renames it once it is complete and on disk, then keeps the
 // newest LocalCopies. On failure it removes the partial file and names the stage that failed.
 func (r *Runner) writeLocal(ctx context.Context, a *v1alpha1.Appliance, recipient age.Recipient, at time.Time, pin string) (v1alpha1.BackupRecord, string, error) {
-	rec := v1alpha1.BackupRecord{Name: FileName(a.Spec.Node.HostName, at, r.deps.Version), Time: metav1.NewTime(at)}
+	rec := v1alpha1.BackupRecord{Name: FileName(a.Spec.HostName(), at, r.deps.Version), Time: metav1.NewTime(at)}
 	if err := os.MkdirAll(r.deps.Dir, dirMode); err != nil {
 		return rec, "backup directory", err
 	}
@@ -785,12 +785,12 @@ func (r *Runner) writeArchive(ctx context.Context, w io.Writer, a *v1alpha1.Appl
 		Components:       []string{},
 		Database:         database,
 		DatabaseIncluded: included,
-		HostName:         a.Spec.Node.HostName,
+		HostName:         a.Spec.HostName(),
 		Time:             rec.Time.UTC(),
 	}
 	if a.Spec.Platform != nil {
 		m.ILMHostName = a.Spec.Platform.HostName
-		m.Components = append(m.Components, a.Spec.Platform.Components...)
+		m.Components = append(m.Components, a.Spec.Platform.ComponentNames()...)
 	}
 	if err := aw.Close(m); err != nil {
 		return "archive", err
@@ -857,7 +857,7 @@ func (r *Runner) copyToTargets(ctx context.Context, a *v1alpha1.Appliance, rec v
 		}
 		attempt := metav1.NewTime(r.now().UTC().Truncate(time.Second))
 		res := v1alpha1.TargetStatus{Name: name, LastAttempt: &attempt}
-		if err := r.copyTo(ctx, a.Spec.Backup.Targets[i], deps, a.Spec.Node.HostName, rec); err != nil {
+		if err := r.copyTo(ctx, a.Spec.Backup.Targets[i], deps, a.Spec.HostName(), rec); err != nil {
 			res.LastError = target.Reason(err)
 			r.deps.Log.Warn("backup copy failed", "target", name, "failure", res.LastError)
 		} else {

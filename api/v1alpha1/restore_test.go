@@ -3,6 +3,7 @@ package v1alpha1_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -49,7 +50,9 @@ func TestApplianceAcceptsRestoreStatus(t *testing.T) {
 	ctx := context.Background()
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
-		Spec:       v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "node.example.com"}},
+		Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{
+			Nodes: []v1alpha1.ClusterNode{{HostName: "node.example.com"}},
+		}},
 	}
 	if err := testClient.Create(ctx, a); err != nil {
 		t.Fatal(err)
@@ -66,5 +69,37 @@ func TestApplianceAcceptsRestoreStatus(t *testing.T) {
 	a.Status.Restore.Step = "elsewhere"
 	if err := testClient.Status().Update(ctx, a); err == nil {
 		t.Error("an unknown restore step was accepted")
+	}
+}
+
+func TestHandOverOverdue(t *testing.T) {
+	now := time.Now()
+	past, future := metav1.NewTime(now.Add(-time.Second)), metav1.NewTime(now.Add(time.Second))
+	waiting := func(change func(u *v1alpha1.UpdateStatus)) *v1alpha1.UpdateStatus {
+		u := &v1alpha1.UpdateStatus{
+			Kind: v1alpha1.UpdateKindSystem, Step: v1alpha1.UpdateStepTalos, PreviousManager: "manager:v0", Deadline: &past,
+		}
+		change(u)
+		return u
+	}
+	for name, tc := range map[string]struct {
+		u    *v1alpha1.UpdateStatus
+		want bool
+	}{
+		"talos step":          {waiting(func(*v1alpha1.UpdateStatus) {}), true},
+		"manager step":        {waiting(func(u *v1alpha1.UpdateStatus) { u.Step = v1alpha1.UpdateStepManager }), true},
+		"none":                {nil, false},
+		"before the deadline": {waiting(func(u *v1alpha1.UpdateStatus) { u.Deadline = &future }), false},
+		"no deadline":         {waiting(func(u *v1alpha1.UpdateStatus) { u.Deadline = nil }), false},
+		"boot recorded":       {waiting(func(u *v1alpha1.UpdateStatus) { u.BootID = "boot" }), false},
+		"handed back":         {waiting(func(u *v1alpha1.UpdateStatus) { u.HandBack = "reason" }), false},
+		"failed":              {waiting(func(u *v1alpha1.UpdateStatus) { u.Message = "reason" }), false},
+		"no previous manager": {waiting(func(u *v1alpha1.UpdateStatus) { u.PreviousManager = "" }), false},
+		"later step":          {waiting(func(u *v1alpha1.UpdateStatus) { u.Step = "health" }), false},
+		"platform update":     {waiting(func(u *v1alpha1.UpdateStatus) { u.Kind = "platform" }), false},
+	} {
+		if got := tc.u.HandOverOverdue(now); got != tc.want {
+			t.Errorf("%s: HandOverOverdue = %v, want %v", name, got, tc.want)
+		}
 	}
 }

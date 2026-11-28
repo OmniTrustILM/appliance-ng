@@ -125,6 +125,26 @@ func EnsureBuiltin(ctx context.Context, c client.Client, hosts []string, ips []n
 	return SecretName, nil
 }
 
+// EnsurePeer server-side-applies the Certificate name, in Namespace, of a node's manager: issued by the CA issuer
+// into the Secret name, with the common name commonName, for host and ip, for server and client authentication.
+func EnsurePeer(ctx context.Context, c client.Client, name, commonName, host string, ip netip.Addr) error {
+	u := object("Certificate", Namespace, name, map[string]any{
+		"secretName":  name,
+		"duration":    leafDuration,
+		"renewBefore": leafRenewBefore,
+		"commonName":  commonName,
+		"dnsNames":    []any{host},
+		"ipAddresses": []any{ip.String()},
+		"usages":      []any{"digital signature", "server auth", "client auth"},
+		"privateKey":  ecdsaP256(),
+		"issuerRef":   clusterIssuerRef(CAIssuerName),
+	})
+	if err := c.Apply(ctx, client.ApplyConfigurationFromUnstructured(u), client.FieldOwner(FieldManager), client.ForceOwnership); err != nil {
+		return fmt.Errorf("apply Certificate %s/%s: %w", Namespace, name, err)
+	}
+	return nil
+}
+
 // Ready reports whether cert-manager reports the leaf Certificate Ready for its current generation.
 func Ready(ctx context.Context, c client.Reader) (bool, error) {
 	u := &unstructured.Unstructured{}

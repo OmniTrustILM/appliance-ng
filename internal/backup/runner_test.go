@@ -132,9 +132,9 @@ func newHostFixture(t *testing.T, hostName string, targets ...v1alpha1.BackupTar
 	a := &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
 		Spec: v1alpha1.ApplianceSpec{
-			Node:     v1alpha1.NodeSpec{HostName: hostName},
+			Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: hostName, Role: v1alpha1.NodeRoleVoting}}},
 			Proxy:    &v1alpha1.ProxySpec{HTTPS: "http://proxy.example.com:3128"},
-			Platform: &v1alpha1.PlatformSpec{HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector"}},
+			Platform: &v1alpha1.PlatformSpec{HostName: "ilm.example.com", Components: []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}}},
 		},
 	}
 	if len(targets) > 0 {
@@ -246,6 +246,43 @@ func noLeak(t *testing.T, f *fixture) {
 				t.Errorf("%q leaked into %s", secret, where)
 			}
 		}
+	}
+}
+
+func TestBackupCarriesCluster(t *testing.T) {
+	f := newFixture(t)
+	a := getAppliance(t)
+	a.Spec.Cluster.Address = v1alpha1.ClusterAddress{Virtual: "192.0.2.100"}
+	a.Spec.FirstNode().Tags = []string{"hsm"}
+	a.Spec.Cluster.Nodes = append(a.Spec.Cluster.Nodes, v1alpha1.ClusterNode{
+		HostName: "node2.example.com", Address: "192.0.2.12/24", Gateway: "192.0.2.1", Role: v1alpha1.NodeRoleWorker,
+		Tags: []string{"site-b"}, Maintenance: true,
+	})
+	if err := testClient.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	rec := mustRun(t, f, RunManual, nil)
+	data, err := os.ReadFile(filepath.Join(f.dir, rec.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var member []byte
+	err = Extract(bytes.NewReader(data), f.key, func(name string, r io.Reader) error {
+		if name != memberAppliance {
+			return nil
+		}
+		member, err = io.ReadAll(r)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var backedUp v1alpha1.Appliance
+	if err := yaml.UnmarshalStrict(member, &backedUp); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(backedUp.Spec.Cluster, a.Spec.Cluster) {
+		t.Errorf("cluster in the backup %+v, want %+v", backedUp.Spec.Cluster, a.Spec.Cluster)
 	}
 }
 

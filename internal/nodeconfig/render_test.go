@@ -49,10 +49,10 @@ func appliance() *v1alpha1.Appliance {
 	return &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
 		Spec: v1alpha1.ApplianceSpec{
-			Node:  v1alpha1.NodeSpec{HostName: "ilm.example.com", Address: "192.0.2.10/24", Gateway: "192.0.2.1"},
-			DNS:   v1alpha1.DNSSpec{Servers: []string{"192.0.2.53", "2001:db8::53"}},
-			NTP:   v1alpha1.NTPSpec{Servers: []string{"ntp.example.com", "192.0.2.123"}},
-			Proxy: &v1alpha1.ProxySpec{HTTP: proxyURL, HTTPS: proxyURL, NoProxy: ".example.com"},
+			Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "ilm.example.com", Address: "192.0.2.10/24", Gateway: "192.0.2.1"}}},
+			DNS:     v1alpha1.DNSSpec{Servers: []string{"192.0.2.53", "2001:db8::53"}},
+			NTP:     v1alpha1.NTPSpec{Servers: []string{"ntp.example.com", "192.0.2.123"}},
+			Proxy:   &v1alpha1.ProxySpec{HTTP: proxyURL, HTTPS: proxyURL, NoProxy: ".example.com"},
 		},
 	}
 }
@@ -62,8 +62,12 @@ func runningLink() *network.LinkConfigV1Alpha1 {
 	return nodeconfig.LinkConfig(link, netip.MustParsePrefix("192.0.2.10/24"), netip.MustParseAddr("192.0.2.254"))
 }
 
+// render renders a for n, as the first node of a unless n names its entry.
 func render(t *testing.T, a *v1alpha1.Appliance, n nodeconfig.Node) []config.Document {
 	t.Helper()
+	if n.Entry == nil {
+		n.Entry = a.Spec.FirstNode()
+	}
 	docs, err := nodeconfig.Render(a, n, nodeconfig.Secrets{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
@@ -113,7 +117,7 @@ func withDocuments(t *testing.T, cfg coreconfig.Provider, docs []config.Document
 func TestRenderNodeDocuments(t *testing.T) {
 	a := appliance()
 	// The spec's address differs from the running one only to show that the address never comes from the spec.
-	a.Spec.Node.Address = "192.0.2.99/24"
+	a.Spec.FirstNode().Address = "192.0.2.99/24"
 	docs := render(t, a, nodeconfig.Node{IP: nodeIP, Link: runningLink()})
 
 	want := []string{network.HostnameKind, network.LinkKind, network.ResolverKind, network.TimeSyncKind, runtime.EnvironmentConfigKind}
@@ -169,8 +173,8 @@ func TestRenderMatchesFirstBoot(t *testing.T) {
 	a := appliance()
 	out, err := machineconfig.Generate(machineconfig.Input{
 		ClusterName: "appliance", NodeIP: nodeIP, InstallerImage: "factory.talos.dev/installer/abc:v1.14.5",
-		HostName: a.Spec.Node.HostName, Link: link, Address: netip.MustParsePrefix(a.Spec.Node.Address),
-		Gateway: netip.MustParseAddr(a.Spec.Node.Gateway),
+		HostName: a.Spec.FirstNode().HostName, Link: link, Address: netip.MustParsePrefix(a.Spec.FirstNode().Address),
+		Gateway: netip.MustParseAddr(a.Spec.FirstNode().Gateway),
 		DNS:     []netip.Addr{netip.MustParseAddr("192.0.2.53"), netip.MustParseAddr("2001:db8::53")},
 		NTP:     a.Spec.NTP.Servers,
 		Proxy:   &machineconfig.Proxy{HTTP: proxyURL, HTTPS: proxyURL, NoProxy: ".example.com"},
@@ -198,7 +202,7 @@ func TestRenderMatchesFirstBoot(t *testing.T) {
 
 func TestRenderWithDHCPAndNoProxy(t *testing.T) {
 	a := appliance()
-	a.Spec.Node.Address, a.Spec.Node.Gateway, a.Spec.Proxy, a.Spec.NTP.Servers = "", "", &v1alpha1.ProxySpec{}, nil
+	a.Spec.FirstNode().Address, a.Spec.FirstNode().Gateway, a.Spec.Proxy, a.Spec.NTP.Servers = "", "", &v1alpha1.ProxySpec{}, nil
 	docs := render(t, a, nodeconfig.Node{IP: nodeIP})
 	if got, want := kinds(docs), []string{network.HostnameKind, network.ResolverKind, network.TimeSyncKind}; !slices.Equal(got, want) {
 		t.Fatalf("kinds %v, want %v", got, want)
@@ -210,7 +214,7 @@ func TestRenderWithDHCPAndNoProxy(t *testing.T) {
 
 func TestRenderWithoutGatewayDropsTheRoute(t *testing.T) {
 	a := appliance()
-	a.Spec.Node.Gateway = ""
+	a.Spec.FirstNode().Gateway = ""
 	docs := render(t, a, nodeconfig.Node{IP: nodeIP, Link: runningLink()})
 	if l := docs[1].(*network.LinkConfigV1Alpha1); len(l.LinkRoutes) != 0 || len(l.LinkAddresses) != 1 {
 		t.Errorf("link routes %v addresses %v, want no route and the address kept", l.LinkRoutes, l.LinkAddresses)
@@ -219,16 +223,19 @@ func TestRenderWithoutGatewayDropsTheRoute(t *testing.T) {
 
 func TestRenderRefuses(t *testing.T) {
 	for name, edit := range map[string]func(*v1alpha1.Appliance){
-		"no host name":         func(a *v1alpha1.Appliance) { a.Spec.Node.HostName = "" },
-		"gateway without link": func(a *v1alpha1.Appliance) { a.Spec.Node.Address = "" },
-		"bad gateway":          func(a *v1alpha1.Appliance) { a.Spec.Node.Gateway = "gateway" },
+		"no host name":         func(a *v1alpha1.Appliance) { a.Spec.FirstNode().HostName = "" },
+		"gateway without link": func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Address = "" },
+		"bad gateway":          func(a *v1alpha1.Appliance) { a.Spec.FirstNode().Gateway = "gateway" },
 		"bad DNS server":       func(a *v1alpha1.Appliance) { a.Spec.DNS.Servers = []string{"dns.example.com"} },
 	} {
 		a := appliance()
 		edit(a)
-		if _, err := nodeconfig.Render(a, nodeconfig.Node{IP: nodeIP}, nodeconfig.Secrets{}); err == nil {
+		if _, err := nodeconfig.Render(a, nodeconfig.Node{Entry: a.Spec.FirstNode(), IP: nodeIP}, nodeconfig.Secrets{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	if _, err := nodeconfig.Render(appliance(), nodeconfig.Node{IP: nodeIP}, nodeconfig.Secrets{}); err == nil {
+		t.Error("no entry: accepted")
 	}
 }
 
@@ -241,7 +248,7 @@ func TestRenderTrustedRootsAndRegistryAuth(t *testing.T) {
 			{Host: "hub.example.com", Username: "puller", Password: "w0rd"},
 		},
 	}
-	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{IP: nodeIP, Link: runningLink()}, secrets)
+	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{Entry: appliance().Spec.FirstNode(), IP: nodeIP, Link: runningLink()}, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +283,7 @@ func TestRenderRegistryAuthOncePerHost(t *testing.T) {
 		{Host: "registry.example.com", Username: "robot", Password: "pa55"},
 		{Host: "registry.example.com", Username: "other", Password: "w0rd"},
 	}}
-	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{IP: nodeIP, Link: runningLink()}, secrets)
+	docs, err := nodeconfig.Render(appliance(), nodeconfig.Node{Entry: appliance().Spec.FirstNode(), IP: nodeIP, Link: runningLink()}, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -457,7 +457,7 @@ describe('RestorePage', () => {
   describe('setting up a new appliance instead', () => {
     const status = 'GET /appliance/api/v1/status';
     const wizardApi = {
-      'GET /appliance/api/v1/appliance': [200, { node: { hostName: 'node1.example.test' }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
+      'GET /appliance/api/v1/appliance': [200, { cluster: { nodes: [{ hostName: 'node1.example.test', tags: [], maintenance: false }] }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
       'GET /appliance/api/v1/catalogue': [200, { items: [{ name: 'ilm-core', title: 'ILM core', private: false }] }],
     } as const;
 

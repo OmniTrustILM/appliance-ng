@@ -15,8 +15,8 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/nodeconfig"
 )
 
-// PutNode replaces the gateway, the name and time servers and the proxy of the Appliance; the manager applies them
-// to the node. The node address and host name are fixed at setup.
+// PutNode replaces the gateway of the first node, the name and time servers and the proxy of the Appliance; the
+// manager applies them to the node. The node address and host name are fixed at setup.
 func (s *Server) PutNode(ctx context.Context, req PutNodeRequestObject) (PutNodeResponseObject, error) {
 	if req.Body == nil {
 		return PutNode400JSONResponse{BadRequestJSONResponse: BadRequestJSONResponse{Code: codeInvalid, Message: "Enter the node settings."}}, nil
@@ -28,7 +28,11 @@ func (s *Server) PutNode(ctx context.Context, req PutNodeRequestObject) (PutNode
 	if err != nil {
 		return nil, err
 	}
-	in, ferr := parseNodeUpdate(*req.Body, a.Spec.Node)
+	first := a.Spec.FirstNode()
+	if first == nil {
+		return PutNode409JSONResponse{ConflictJSONResponse: notSetUp()}, nil
+	}
+	in, ferr := parseNodeUpdate(*req.Body, *first)
 	if ferr != nil {
 		return PutNode400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
@@ -61,12 +65,14 @@ type nodeInput struct {
 }
 
 func (in nodeInput) applyTo(spec *v1alpha1.ApplianceSpec) {
-	spec.Node.Gateway = in.gateway
+	if first := spec.FirstNode(); first != nil {
+		first.Gateway = in.gateway
+	}
 	spec.DNS.Servers, spec.NTP.Servers, spec.Proxy = in.dns, in.ntp, in.proxy
 }
 
 // parseNodeUpdate validates body for node, whose address is empty with DHCP.
-func parseNodeUpdate(body NodeUpdate, node v1alpha1.NodeSpec) (nodeInput, *fieldError) {
+func parseNodeUpdate(body NodeUpdate, node v1alpha1.ClusterNode) (nodeInput, *fieldError) {
 	var in nodeInput
 	if body.Address != nil {
 		return in, &fieldError{"address", "The node address is fixed at setup and cannot be changed."}
@@ -125,7 +131,7 @@ func nodePaths(before, after *v1alpha1.ApplianceSpec) []string {
 		changed bool
 		path    string
 	}{
-		{before.Node.Gateway != after.Node.Gateway, "spec.node.gateway"},
+		{gatewayOf(before) != gatewayOf(after), "spec.cluster.nodes[0].gateway"},
 		{!slices.Equal(before.DNS.Servers, after.DNS.Servers), "spec.dns.servers"},
 		{!slices.Equal(before.NTP.Servers, after.NTP.Servers), "spec.ntp.servers"},
 		{!equality.Semantic.DeepEqual(before.Proxy, after.Proxy), "spec.proxy"},
@@ -135,6 +141,14 @@ func nodePaths(before, after *v1alpha1.ApplianceSpec) []string {
 		}
 	}
 	return paths
+}
+
+// gatewayOf returns the gateway of the first node of spec, "" without one.
+func gatewayOf(spec *v1alpha1.ApplianceSpec) string {
+	if first := spec.FirstNode(); first != nil {
+		return first.Gateway
+	}
+	return ""
 }
 
 func deref(s *string) string {

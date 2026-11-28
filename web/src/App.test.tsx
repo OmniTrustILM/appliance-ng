@@ -105,7 +105,7 @@ describe('App routing', () => {
     vi.stubGlobal('fetch', respond({
       ...signedIn,
       '/appliance/api/v1/status': [200, { setup: 'part2', conditions: [], versions: {}, rebootRequired: false }],
-      '/appliance/api/v1/appliance': [200, { node: { hostName: 'node1.example.test' }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
+      '/appliance/api/v1/appliance': [200, { cluster: { nodes: [{ hostName: 'node1.example.test', tags: [], maintenance: false }] }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
       '/appliance/api/v1/catalogue': [200, { items: [] }],
     }));
     renderAt('/wizard/');
@@ -123,7 +123,7 @@ describe('App routing', () => {
   it('shows the done page of the wizard to a signed-in user', async () => {
     vi.stubGlobal('fetch', respond({
       ...signedIn,
-      '/appliance/api/v1/appliance': [200, { node: { hostName: 'n' }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
+      '/appliance/api/v1/appliance': [200, { cluster: { nodes: [{ hostName: 'n', tags: [], maintenance: false }] }, dns: [], ntp: [], tlsSource: 'builtin', trustSet: false, registries: [] }],
     }));
     renderAt('/wizard/done');
     expect(await screen.findByRole('heading', { name: 'The ILM is ready' })).toBeInTheDocument();

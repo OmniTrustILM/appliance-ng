@@ -22,6 +22,8 @@ var Kinds = []string{
 
 // Node is what the running node adds to the Appliance for its documents.
 type Node struct {
+	// Entry is the node's entry of the Appliance's cluster nodes, which holds its host name and gateway.
+	Entry *v1alpha1.ClusterNode
 	// IP is the node address, which the no-proxy list holds.
 	IP string
 	// Link is the running link configuration with the static address; nil with DHCP.
@@ -53,19 +55,20 @@ type RegistryAuth struct {
 	Username, Password string
 }
 
-// Render returns the documents of the node settings of a for node: the host name, the default route of the static
-// link, the name servers, the time servers, with a proxy the proxy environment, and from secrets the trusted CA
-// certificates and the registry credentials, those of the first entry of a host, and once zot is ready the mirrors
-// that send every pull to it first. The address is never rendered: it is fixed at setup, so the static link keeps
-// the address it runs with and only its route follows the gateway.
+// Render returns the documents of the node settings of a for node: the host name of node's entry, the default route
+// of the static link through the gateway of that entry, the name servers, the time servers, with a proxy the proxy
+// environment, and from secrets the trusted CA certificates and the registry credentials, those of the first entry of
+// a host, and once zot is ready the mirrors that send every pull to it first. The address is never rendered: it is
+// fixed at setup, so the static link keeps the address it runs with and only its route follows the gateway.
 func Render(a *v1alpha1.Appliance, node Node, secrets Secrets) ([]config.Document, error) {
 	spec := a.Spec
-	if spec.Node.HostName == "" {
-		return nil, errors.New("the Appliance has no host name")
+	entry := node.Entry
+	if entry == nil || entry.HostName == "" {
+		return nil, errors.New("the node has no host name")
 	}
-	docs := []config.Document{HostnameConfig(spec.Node.HostName)}
+	docs := []config.Document{HostnameConfig(entry.HostName)}
 
-	link, err := gatewayLink(spec.Node.Gateway, node.Link)
+	link, err := gatewayLink(entry.Gateway, node.Link)
 	if err != nil {
 		return nil, err
 	}

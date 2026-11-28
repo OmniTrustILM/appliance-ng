@@ -82,6 +82,13 @@ type fakeMachine struct {
 	shutdowns    int
 	clientReq    *machineapi.GenerateClientConfigurationRequest
 	clientConfig []byte
+	// rebootTargets and resetTargets are the nodes each reboot and reset was addressed to.
+	rebootTargets []string
+	resetTargets  []string
+	// etcdStatus answers EtcdStatus by the node the call is addressed to.
+	etcdStatus map[string]*machineapi.EtcdMemberStatus
+	removed    []uint64
+	removeErr  error
 }
 
 // authorize admits a caller with a verified client certificate, as apid does, or with the admin role metadata that
@@ -121,6 +128,7 @@ func (f *fakeMachine) Reboot(ctx context.Context, req *machineapi.RebootRequest)
 	}
 	f.reboots++
 	f.rebootMode = req.GetMode()
+	f.rebootTargets = append(f.rebootTargets, target(ctx))
 	return &machineapi.RebootResponse{}, nil
 }
 
@@ -233,6 +241,7 @@ func (f *fakeMachine) Reset(ctx context.Context, req *machineapi.ResetRequest) (
 		return nil, err
 	}
 	f.resets = append(f.resets, req)
+	f.resetTargets = append(f.resetTargets, target(ctx))
 	return &machineapi.ResetResponse{}, f.resetErr
 }
 

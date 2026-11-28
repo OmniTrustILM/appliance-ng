@@ -269,14 +269,9 @@ func (e *Engine) mergeAccounts(ctx context.Context, j *job, secrets []corev1.Sec
 	case users < 0 || key < 0:
 		return nil, fmt.Errorf("the backup holds only one of %s and %s", auth.UsersSecret, auth.UsersKeySecret)
 	}
-	current, err := e.liveSecret(ctx, kube.SystemNamespace, auth.UsersSecret)
+	current, err := e.currentAccounts(ctx, j)
 	if err != nil {
 		return nil, err
-	}
-	if current != nil && j.status.InPlace {
-		if current, err = auth.OnlyUsers(current, j.status.StartedBy); err != nil {
-			return nil, fmt.Errorf("read the console accounts: %w", err)
-		}
 	}
 	currentKey, err := e.liveSecret(ctx, kube.SystemNamespace, auth.UsersKeySecret)
 	if err != nil {
@@ -291,6 +286,20 @@ func (e *Engine) mergeAccounts(ctx context.Context, j *job, secrets []corev1.Sec
 		secrets = slices.Delete(secrets, key, key+1)
 	}
 	return secrets, nil
+}
+
+// currentAccounts returns the current accounts Secret, for a restore in place with only the account that started it,
+// or nil when there is none.
+func (e *Engine) currentAccounts(ctx context.Context, j *job) (*corev1.Secret, error) {
+	current, err := e.liveSecret(ctx, kube.SystemNamespace, auth.UsersSecret)
+	if err != nil || current == nil || !j.status.InPlace {
+		return current, err
+	}
+	only, err := auth.OnlyUsers(current, j.status.StartedBy)
+	if err != nil {
+		return nil, fmt.Errorf("read the console accounts: %w", err)
+	}
+	return only, nil
 }
 
 // liveSecret returns the Secret in the cluster, or nil when it does not exist.
@@ -386,9 +395,9 @@ func (e *Engine) deleteRequests(ctx context.Context, namespace, certificate stri
 	return nil
 }
 
-// restoreAppliance replaces the spec with the backup's, except the node section, which belongs to this appliance,
-// and with the ILM host name chosen for the restore. A restore in place keeps the current dependencies; a fresh one
-// takes those it chooses anew.
+// restoreAppliance replaces the spec with the backup's, except the cluster section, which this appliance keeps as its
+// own, and the ILM host name, which is the one chosen for the restore. A restore in place keeps the current
+// dependencies, and a fresh one takes those it chooses anew.
 func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 	members, err := readMembers(ctx, j, func(name string) bool { return name == applianceMember })
 	if err != nil {
@@ -409,7 +418,7 @@ func (e *Engine) restoreAppliance(ctx context.Context, j *job) error {
 			return err
 		}
 		spec := *restored.DeepCopy()
-		spec.Node = a.Spec.Node
+		spec.Cluster = a.Spec.Cluster
 		if spec.Platform == nil {
 			spec.Platform = &v1alpha1.PlatformSpec{}
 		}
@@ -656,7 +665,7 @@ func (e *Engine) ensureBuiltin(ctx context.Context, a *v1alpha1.Appliance, hosts
 		return err
 	}
 	if found {
-		ips = append(ips, ip)
+		ips = certs.Addresses(a, ip)
 	}
 	_, err = certs.EnsureBuiltin(ctx, e.deps.Client, hosts, ips)
 	return err

@@ -47,6 +47,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 	"github.com/OmniTrustILM/appliance-ng/internal/manager"
+	"github.com/OmniTrustILM/appliance-ng/internal/peer"
 	"github.com/OmniTrustILM/appliance-ng/internal/registry"
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 	"github.com/OmniTrustILM/appliance-ng/internal/restore"
@@ -58,7 +59,8 @@ import (
 var version = "dev"
 
 const (
-	// certificateRefresh is how often the console checks its TLS Secret for a renewed or replaced certificate.
+	// certificateRefresh is how often the console checks its TLS Secret, and the peer listener its peer Secret, for a
+	// renewed or replaced certificate.
 	certificateRefresh = 30 * time.Second
 	// failedPodSweep is how often the manager deletes its own Failed pods.
 	failedPodSweep = 10 * time.Minute
@@ -76,6 +78,7 @@ const (
 
 func main() {
 	listen := flag.String("listen", ":8443", "HTTPS address of the console")
+	peerListen := flag.String("peer-listen", ":"+strconv.Itoa(peer.Port), "HTTPS address the other managers forward the console's API requests to")
 	data := flag.String("data", "/data", "directory for the manager's persistent data: the audit log and the local backups")
 	talosEndpoint := flag.String("talos-endpoint", "127.0.0.1:50000", "Talos API endpoint")
 	updateRepository := flag.String("update-repository", update.DefaultRepository,
@@ -87,9 +90,10 @@ func main() {
 	slog.SetDefault(log)
 	ctrl.SetLogger(logr.FromSlogHandler(handler))
 
-	log.Info("appliance manager starting", "version", version, "listen", *listen, "data", *data, "talosEndpoint", *talosEndpoint,
-		"updateRepository", *updateRepository)
-	if err := run(ctrl.SetupSignalHandler(), log, *listen, *data, *talosEndpoint, *updateRepository); err != nil {
+	log.Info("appliance manager starting", "version", version, "listen", *listen, "peerListen", *peerListen, "data", *data,
+		"talosEndpoint", *talosEndpoint, "updateRepository", *updateRepository)
+	addrs := listeners{console: *listen, peer: *peerListen}
+	if err := run(ctrl.SetupSignalHandler(), log, addrs, *data, *talosEndpoint, *updateRepository); err != nil {
 		log.Error("appliance manager failed", "error", err)
 		os.Exit(1)
 	}
@@ -123,24 +127,48 @@ func embedded() (*runtime.Scheme, *release.Manifest, []kube.Step, error) {
 	return scheme, rel, steps, nil
 }
 
-func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, updateRepository string) error {
+// listeners are the addresses of the console and of the peer listener.
+type listeners struct {
+	console, peer string
+}
+
+// fencedConfig loads the Kubernetes configuration and this node's leader election Lease. Every Kubernetes write
+// through the returned configuration goes through the Lease's fence: only the leader writes.
+func fencedConfig(log *slog.Logger) (*rest.Config, *manager.Lease, error) {
+	// KUBERNETES_SERVICE_HOST and _PORT point the in-cluster configuration at KubePrism.
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return nil, nil, fmt.Errorf("load the Kubernetes configuration: %w", err)
+	}
+	lease, err := manager.NewLease(cfg, os.Getenv(kube.NodeNameEnv), func() {
+		log.Error("this manager no longer leads; it stops and starts again as a follower")
+		os.Exit(1)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return lease.Fence(cfg), lease, nil
+}
+
+func run(ctx context.Context, log *slog.Logger, addrs listeners, data, talosEndpoint, updateRepository string) error {
+	listen := addrs.console
 	scheme, rel, steps, err := embedded()
 	if err != nil {
 		return err
 	}
 
-	// KUBERNETES_SERVICE_HOST and _PORT point the in-cluster configuration at KubePrism.
-	cfg, err := ctrl.GetConfig()
+	cfg, lease, err := fencedConfig(log)
 	if err != nil {
-		return fmt.Errorf("load the Kubernetes configuration: %w", err)
+		return err
 	}
 	cluster, err := kube.NewConfigCluster(cfg, kube.ManagerFieldManager)
 	if err != nil {
 		return err
 	}
-	// One replica: no leader election. Metrics are off; the console listener serves the health check. The issued
-	// cluster access is read past the cache, so that no informer watches every ServiceAccount and ConfigMap.
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+	// The managers of the voting nodes elect a leader, which alone runs the controllers, jobs and schedules. Metrics
+	// are off; the console listener serves the health check. The issued cluster access is read past the cache, so
+	// that no informer watches every ServiceAccount and ConfigMap.
+	mgr, err := ctrl.NewManager(cfg, manager.ElectionOptions(ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: "0",
@@ -148,15 +176,19 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 		Client: client.Options{Cache: &client.CacheOptions{
 			DisableFor: []client.Object{&corev1.ServiceAccount{}, &corev1.ConfigMap{}, &rbacv1.ClusterRoleBinding{}},
 		}},
-	})
+	}, lease))
 	if err != nil {
 		return fmt.Errorf("create the controller manager: %w", err)
 	}
-	auditLog, err := audit.Open(data)
+	if err := mgr.Add(manager.OnLeader(lease.Watch)); err != nil {
+		return fmt.Errorf("add the watch of the lease: %w", err)
+	}
+	opened, err := audit.Open(data)
 	if err != nil {
 		return fmt.Errorf("open the audit log: %w", err)
 	}
-	defer func() { _ = auditLog.Close() }()
+	defer func() { _ = opened.Close() }()
+	auditLog := manager.FencedAudit{Log: opened, Lease: lease}
 	reconciler := &manager.ApplianceReconciler{
 		Client:     mgr.GetClient(),
 		APIReader:  mgr.GetAPIReader(),
@@ -182,8 +214,8 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 	}
 	users := auth.NewSecretUserStore(direct, manager.SystemNamespace)
 	// One Talos client for the controllers and the API.
-	talosAccess := manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
-		talosEndpoint, talos.DialAPI)
+	talosAccess := lease.Talos(manager.TalosAccess(filepath.Join(constants.ServiceAccountMountPath, constants.TalosconfigFilename),
+		talosEndpoint, talos.DialAPI))
 	upstreams := manager.MirrorUpstreams(ctx, mgr.GetAPIReader(), rel, log)
 	if err := setupNodeControllers(mgr, users, talosAccess, reconciler, upstreams); err != nil {
 		return err
@@ -206,7 +238,7 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 		mgr: mgr, direct: direct, audit: auditLog, log: log, upstreams: upstreams, external: backup.ExternalDumpers(direct, cfg, postgres),
 		talos: talosAccess, console: consoleCheck(direct, cert, listen),
 	}
-	ops, err := newOperations(ctx, s, rel, reconciler, data, updateRepository)
+	ops, err := newOperations(s, rel, reconciler, data, updateRepository)
 	if err != nil {
 		return err
 	}
@@ -239,15 +271,32 @@ func run(ctx context.Context, log *slog.Logger, listen, data, talosEndpoint, upd
 		UpdatesDir: filepath.Join(data, updatesDir),
 		Platform:   ops.jobs,
 	})
-	if err := addConsole(mgr, log, listen, api.Handler(), cert); err != nil {
+	if err := addConsole(mgr, log, addrs, api.Handler(), cert, lease); err != nil {
 		return err
 	}
 	return mgr.Start(ctx)
 }
 
-// addConsole adds the console on listen, serving the API's handler, with the refresh of its certificate cert to mgr.
-func addConsole(mgr crmanager.Manager, log *slog.Logger, listen string, handler http.Handler, cert *console.Certificate) error {
-	return addRunnables(mgr, log, cert, console.NewServer(log, listen, console.Routes(handler), cert))
+// addConsole adds to mgr the console on the console address, serving the API's handler on the leader and forwarding
+// it to the leader elsewhere, the peer listener, which serves it to the other managers while this one leads, and the
+// refresh of their certificates.
+func addConsole(mgr crmanager.Manager, log *slog.Logger, addrs listeners, handler http.Handler, cert *console.Certificate, lease *manager.Lease) error {
+	node, reader := os.Getenv(kube.NodeNameEnv), mgr.GetAPIReader()
+	id := peer.NewIdentity(log, reader, node)
+	router := &peer.Router{
+		API: handler, Leading: lease.Leading, Leader: peer.LeaderAddress(reader, node), Forward: peer.NewForwarder(log, id).Forward,
+		Recheck: manager.RetryPeriod, Log: log,
+	}
+	peerServer := console.NewPeerServer(log, addrs.peer, peer.Accept(handler, lease.Leading), id.ServerConfig(peer.VotingAddresses(reader)))
+	for name, run := range map[string]func(context.Context) error{
+		"the peer certificate": func(ctx context.Context) error { return id.Run(ctx, certificateRefresh) },
+		"the peer listener":    func(ctx context.Context) error { return console.Serve(ctx, log, peerServer) },
+	} {
+		if err := mgr.Add(manager.OnEveryNode(run)); err != nil {
+			return fmt.Errorf("add %s: %w", name, err)
+		}
+	}
+	return addRunnables(mgr, log, cert, console.NewServer(log, addrs.console, console.Routes(router), cert))
 }
 
 // setupILMController sets up the controller of ILM's settings with mgr and returns its identity, kept through direct
@@ -269,7 +318,7 @@ type services struct {
 	mgr crmanager.Manager
 	// direct reads and writes past the cache.
 	direct client.Client
-	audit  *audit.Log
+	audit  manager.FencedAudit
 	log    *slog.Logger
 	// upstreams are the registries the registry mirror serves.
 	upstreams []string
@@ -290,8 +339,8 @@ type operations struct {
 
 // newOperations returns the backup runner with its schedule, the restore engine, the bundle loader and finder of the
 // bundles in repository, and the update jobs.
-func newOperations(ctx context.Context, s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data, repository string) (operations, error) {
-	backups, restorer, err := newBackupAndRestore(ctx, s, rel, reconciler, data)
+func newOperations(s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data, repository string) (operations, error) {
+	backups, restorer, err := newBackupAndRestore(s, rel, reconciler, data)
 	if err != nil {
 		return operations{}, err
 	}
@@ -334,7 +383,7 @@ func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer
 		AddonSteps: steps,
 		AddonLock:  reconciler.OperatorLock,
 	})
-	if err := s.mgr.Add(crmanager.RunnableFunc(jobs.KeepResuming)); err != nil {
+	if err := s.mgr.Add(manager.OnLeader(jobs.KeepResuming)); err != nil {
 		return nil, fmt.Errorf("add the resumption of an interrupted update: %w", err)
 	}
 	return jobs, nil
@@ -342,15 +391,19 @@ func newJobs(s services, rel *release.Manifest, backups *backup.Runner, restorer
 
 // newBackupAndRestore returns the backup runner on the data directory data, with its schedule, and the restore
 // engine.
-func newBackupAndRestore(ctx context.Context, s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data string) (*backup.Runner, *restore.Engine, error) {
-	backups, err := newBackupRunner(ctx, s, rel, filepath.Join(data, backupDir))
+func newBackupAndRestore(s services, rel *release.Manifest, reconciler *manager.ApplianceReconciler, data string) (*backup.Runner, *restore.Engine, error) {
+	backups, err := newBackupRunner(s, rel, filepath.Join(data, backupDir))
 	if err != nil {
 		return nil, nil, err
 	}
 	if err := addBackupSchedule(s.mgr, reconciler, backups); err != nil {
 		return nil, nil, err
 	}
-	return backups, newRestoreEngine(ctx, s, backups, reconciler.OperatorLock, data), nil
+	engine, err := newRestoreEngine(s, backups, reconciler.OperatorLock, data)
+	if err != nil {
+		return nil, nil, err
+	}
+	return backups, engine, nil
 }
 
 // newUpdates returns the bundle loader and the finder of the bundles in repository, which checks daily with mgr. The
@@ -383,7 +436,7 @@ func newUpdates(s services, rel *release.Manifest, backups *backup.Runner, data,
 	finder := update.NewFinder(update.FinderDeps{
 		Client: s.direct, Online: online, Release: rel, Dir: filepath.Join(data, bundlesDir), Uploads: uploads, Log: s.log,
 	})
-	if err := s.mgr.Add(crmanager.RunnableFunc(finder.Start)); err != nil {
+	if err := s.mgr.Add(manager.OnLeader(finder.Start)); err != nil {
 		return nil, nil, fmt.Errorf("add the daily check for updates: %w", err)
 	}
 	return loader, finder, nil
@@ -454,15 +507,15 @@ func setupNodeControllers(mgr crmanager.Manager, users auth.UserStore, talosAcce
 func addBackupSchedule(mgr crmanager.Manager, reconciler *manager.ApplianceReconciler, backups *backup.Runner) error {
 	schedule := backup.NewScheduler(backups, time.Now)
 	reconciler.Schedule = schedule
-	if err := mgr.Add(crmanager.RunnableFunc(schedule.Start)); err != nil {
+	if err := mgr.Add(manager.OnLeader(schedule.Start)); err != nil {
 		return fmt.Errorf("add the backup schedule: %w", err)
 	}
 	return nil
 }
 
 // newBackupRunner returns the backup runner on dir, after deleting the partial files a backup cut off by a crash or
-// a restart left there and clearing the backup the status still shows running.
-func newBackupRunner(ctx context.Context, s services, rel *release.Manifest, dir string) (*backup.Runner, error) {
+// a restart left there. Once this manager leads, it clears the backup the status still shows running.
+func newBackupRunner(s services, rel *release.Manifest, dir string) (*backup.Runner, error) {
 	mgr, log := s.mgr, s.log
 	if err := backup.RemoveStale(dir); err != nil {
 		return nil, fmt.Errorf("remove the partial backups: %w", err)
@@ -484,16 +537,22 @@ func newBackupRunner(ctx context.Context, s services, rel *release.Manifest, dir
 		Targets:         target.Deps{Client: s.direct, Config: cfg, Image: busybox, Namespace: kube.SystemNamespace},
 		Log:             log,
 	})
-	if err := runner.ResetRunning(ctx); err != nil {
-		log.Warn("could not clear the backup a restart cut off from the status", "failure", backup.Describe(err))
+	err = mgr.Add(manager.OnLeader(func(ctx context.Context) error {
+		if err := runner.ResetRunning(ctx); err != nil {
+			log.Warn("could not clear the backup a restart cut off from the status", "failure", backup.Describe(err))
+		}
+		return nil
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("add the reset of a backup cut off: %w", err)
 	}
 	return runner, nil
 }
 
-// newRestoreEngine returns the restore engine and, in the background, marks a restore that a restart cut off as
+// newRestoreEngine returns the restore engine. Once this manager leads, it marks a restore that a restart cut off as
 // waiting for its recovery kit: the backup key it held lived only in memory. A fresh restore from a platform bundle
 // loaded under data tags its images in zot.
-func newRestoreEngine(ctx context.Context, s services, backups *backup.Runner, operatorLock sync.Locker, data string) *restore.Engine {
+func newRestoreEngine(s services, backups *backup.Runner, operatorLock sync.Locker, data string) (*restore.Engine, error) {
 	reader := s.mgr.GetAPIReader()
 	engine := restore.New(restore.Deps{
 		Client:       s.direct,
@@ -511,8 +570,14 @@ func newRestoreEngine(ctx context.Context, s services, backups *backup.Runner, o
 			return update.TagPlatform(ctx, reg, filepath.Join(data, bundlesDir), version, goruntime.GOARCH)
 		},
 	})
-	go engine.KeepRecovering(ctx)
-	return engine
+	err := s.mgr.Add(manager.OnLeader(func(ctx context.Context) error {
+		engine.KeepRecovering(ctx)
+		return nil
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("add the recovery of a restore cut off: %w", err)
+	}
+	return engine, nil
 }
 
 // keyedConnectors names the catalogue's connectors that keep a key Secret.
@@ -526,15 +591,16 @@ func keyedConnectors(rel *release.Manifest) []string {
 	return names
 }
 
-// addRunnables adds the console certificate refresh, the console server and the failed pod sweep to mgr.
+// addRunnables adds the console certificate refresh and the console server, on every manager, and the failed pod
+// sweep, on the leader, to mgr.
 func addRunnables(mgr crmanager.Manager, log *slog.Logger, cert *console.Certificate, srv *http.Server) error {
-	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error { return cert.Run(ctx, certificateRefresh) })); err != nil {
+	if err := mgr.Add(manager.OnEveryNode(func(ctx context.Context) error { return cert.Run(ctx, certificateRefresh) })); err != nil {
 		return fmt.Errorf("add the console certificate: %w", err)
 	}
-	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error { return console.Serve(ctx, log, srv) })); err != nil {
+	if err := mgr.Add(manager.OnEveryNode(func(ctx context.Context) error { return console.Serve(ctx, log, srv) })); err != nil {
 		return fmt.Errorf("add the console server: %w", err)
 	}
-	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error {
+	if err := mgr.Add(manager.OnLeader(func(ctx context.Context) error {
 		return manager.RemoveFailedPods(ctx, mgr.GetAPIReader(), mgr.GetClient(), failedPodSweep)
 	})); err != nil {
 		return fmt.Errorf("add the failed pod sweep: %w", err)

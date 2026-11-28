@@ -15,10 +15,10 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/release"
 )
 
-// The manager's Deployment and its container.
+// The manager's DaemonSet and its container.
 const (
-	managerDeployment = "appliance-manager"
-	managerContainer  = "manager"
+	managerDaemonSet = "appliance-manager"
+	managerContainer = "manager"
 )
 
 // Reasons a system update fails before the node booted the new Talos. Talos and Kubernetes are as they were, and
@@ -89,12 +89,12 @@ func (j *Jobs) oldManagerStep(ctx context.Context, jb *job) error {
 }
 
 // awaitHandOver waits, in the manager of the running release, for the manager of the new release to take the update
-// over at the talos step. A reboot of the old Talos runs the old manager again, so before the recorded deadline it
-// applies the new manager again; past it the update fails, with the old manager kept.
+// over at the talos step. A manager of the running release that runs again here, as after a restart, applies the new
+// manager again before the recorded deadline; past it the update fails, with the old manager kept.
 func (j *Jobs) awaitHandOver(ctx context.Context, jb *job) error {
 	st := jb.status
 	j.deps.Log.Info("the update waits for the manager of the new release", "to", st.To, "deadline", st.Deadline)
-	if st.Deadline == nil || !j.deps.Now().Before(st.Deadline.Time) {
+	if st.Deadline == nil || st.HandOverOverdue(j.deps.Now()) {
 		return j.managerDidNotStart(ctx, jb)
 	}
 	if err := j.ensureNewManager(ctx, st.To); err != nil {
@@ -133,7 +133,7 @@ func (j *Jobs) managerDidNotStart(ctx context.Context, jb *job) error {
 	return &Error{Reason: ManagerDidNotStart, step: StepTalos}
 }
 
-// ensureNewManager applies the manager's manifest of the system bundle to again unless the manager's Deployment runs
+// ensureNewManager applies the manager's manifest of the system bundle to again unless the manager's DaemonSet runs
 // the bundle's manager.
 func (j *Jobs) ensureNewManager(ctx context.Context, to string) error {
 	md, dir, err := j.systemBundle(ctx, to, StepTalos)
@@ -155,11 +155,12 @@ func (j *Jobs) ensureNewManager(ctx context.Context, to string) error {
 	return j.applyManager(ctx, dir, md, StepTalos)
 }
 
-// handBack hands the update back to the previous manager once it failed for reason before the node booted the new
-// Talos: it records reason, which the previous manager records as the failure, and runs the previous manager again.
-// The add-on pass stays held until then, so that the add-ons are never those of the new release on the old Talos.
+// handBack hands the update back to the previous manager once it failed for reason with the node on the old Talos,
+// before it booted the new one or after Talos was rolled back: it records reason, which the previous manager records
+// as the failure, and runs the previous manager again. The add-on pass stays held until then, so that the add-ons are
+// never those of the new release on the old Talos.
 func (j *Jobs) handBack(ctx context.Context, jb *job, reason string, cause error) error {
-	j.deps.Log.Warn("the update failed before the node booted the new Talos; handing it back to the previous manager",
+	j.deps.Log.Warn("the update failed with the node on the old Talos; handing it back to the previous manager",
 		"to", jb.status.To, "reason", reason, "error", cause)
 	if jb.status.PreviousManager == "" {
 		return &Error{Reason: reason, step: jb.status.Step, err: cause}
@@ -187,8 +188,8 @@ func (j *Jobs) handedBack(ctx context.Context, jb *job) error {
 }
 
 func (j *Jobs) managerImage(ctx context.Context) (string, error) {
-	d := &appsv1.Deployment{}
-	if err := j.read(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: managerDeployment}, d); err != nil {
+	d := &appsv1.DaemonSet{}
+	if err := j.read(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: managerDaemonSet}, d); err != nil {
 		return "", err
 	}
 	for _, c := range d.Spec.Template.Spec.Containers {
@@ -196,13 +197,13 @@ func (j *Jobs) managerImage(ctx context.Context) (string, error) {
 			return c.Image, nil
 		}
 	}
-	return "", errors.New("the manager's Deployment has no manager container")
+	return "", errors.New("the manager's DaemonSet has no manager container")
 }
 
 func (j *Jobs) setManagerImage(ctx context.Context, image string) error {
 	return j.retry(ctx, func() error {
-		d := &appsv1.Deployment{}
-		if err := j.deps.Client.Get(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: managerDeployment}, d); err != nil {
+		d := &appsv1.DaemonSet{}
+		if err := j.deps.Client.Get(ctx, client.ObjectKey{Namespace: kube.SystemNamespace, Name: managerDaemonSet}, d); err != nil {
 			return err
 		}
 		patch := client.MergeFrom(d.DeepCopy())

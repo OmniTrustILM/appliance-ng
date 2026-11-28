@@ -2892,18 +2892,10 @@ components:
           type: boolean
     ApplianceSettings:
       type: object
-      required: [node, dns, ntp, tlsSource, trustSet, registries]
+      required: [cluster, dns, ntp, tlsSource, trustSet, registries]
       properties:
-        node:
-          type: object
-          required: [hostName]
-          properties:
-            hostName:
-              type: string
-            address:
-              type: string
-            gateway:
-              type: string
+        cluster:
+          $ref: '#/components/schemas/ClusterSettings'
         dns:
           type: array
           items:
@@ -2938,6 +2930,47 @@ components:
               type: array
               items:
                 type: string
+    ClusterSettings:
+      type: object
+      required: [nodes]
+      properties:
+        address:
+          $ref: '#/components/schemas/ClusterAddress'
+        nodes:
+          type: array
+          description: The nodes of the cluster, the first node first.
+          items:
+            $ref: '#/components/schemas/ClusterNode'
+    ClusterAddress:
+      type: object
+      description: The address the cluster is reached at; neither set is the address of the first node.
+      properties:
+        virtual:
+          type: string
+          description: A virtual IPv4 address the nodes share.
+        external:
+          type: string
+          description: A DNS name that resolves to the nodes.
+    ClusterNode:
+      type: object
+      required: [hostName, tags, maintenance]
+      properties:
+        hostName:
+          type: string
+        address:
+          type: string
+          description: The node address in CIDR notation; unset with DHCP.
+        gateway:
+          type: string
+        role:
+          type: string
+          enum: [voting, worker]
+        tags:
+          type: array
+          items:
+            type: string
+        maintenance:
+          type: boolean
     CatalogueItem:
       type: object
       required: [name, title, private]

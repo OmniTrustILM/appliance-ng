@@ -36,7 +36,7 @@ func fakeClient(objs ...client.Object) client.WithWatch {
 func appliance(tlsSpec v1alpha1.TLSSpec) *v1alpha1.Appliance {
 	return &v1alpha1.Appliance{
 		ObjectMeta: metav1.ObjectMeta{Name: v1alpha1.ApplianceName},
-		Spec:       v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "appliance.example.com"}, TLS: tlsSpec},
+		Spec:       v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com"}}}, TLS: tlsSpec},
 	}
 }
 

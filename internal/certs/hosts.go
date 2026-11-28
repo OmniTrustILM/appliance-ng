@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net/netip"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,11 +17,25 @@ import (
 // Hosts returns the host names the appliance's certificate covers: the node host name and the ILM host name,
 // which defaults to it.
 func Hosts(a *v1alpha1.Appliance) []string {
-	hosts := []string{a.Spec.Node.HostName}
-	if p := a.Spec.Platform; p != nil && p.HostName != "" && p.HostName != a.Spec.Node.HostName {
+	hosts := []string{a.Spec.HostName()}
+	if p := a.Spec.Platform; p != nil && p.HostName != "" && p.HostName != hosts[0] {
 		hosts = append(hosts, p.HostName)
 	}
 	return hosts
+}
+
+// Addresses returns the IP addresses the appliance's certificate covers: ip and the address of every node entry,
+// without duplicates, in ascending order. Console access works by the address of any node, and the node address
+// in the status is that of the leader, which changes.
+func Addresses(a *v1alpha1.Appliance, ip netip.Addr) []netip.Addr {
+	addrs := []netip.Addr{ip}
+	for _, n := range a.Spec.Cluster.Nodes {
+		if addr, ok := ParseAddress(n.Address); ok {
+			addrs = append(addrs, addr)
+		}
+	}
+	slices.SortFunc(addrs, netip.Addr.Compare)
+	return slices.Compact(addrs)
 }
 
 // UncoveredHost returns the first of hosts that the first certificate of certPEM does not cover, or "" when it
@@ -45,7 +60,11 @@ func UncoveredHost(certPEM []byte, hosts []string) string {
 // NodeAddress returns the node address from the status, the spec, or with DHCP the internal address of the
 // manager's node; the certificate covers it as an IP address.
 func NodeAddress(ctx context.Context, c client.Reader, a *v1alpha1.Appliance) (netip.Addr, bool, error) {
-	for _, s := range []string{a.Status.NodeAddress, a.Spec.Node.Address} {
+	candidates := []string{a.Status.NodeAddress}
+	if first := a.Spec.FirstNode(); first != nil {
+		candidates = append(candidates, first.Address)
+	}
+	for _, s := range candidates {
 		if addr, ok := ParseAddress(s); ok {
 			return addr, true, nil
 		}

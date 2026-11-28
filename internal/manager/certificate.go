@@ -15,6 +15,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/addons"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/kube"
+	"github.com/OmniTrustILM/appliance-ng/internal/peer"
 )
 
 // certManagerStep is the add-on step after which cert-manager issues certificates.
@@ -59,6 +60,7 @@ func (r *ApplianceReconciler) reconcileCertificate(ctx context.Context, a *v1alp
 		return addonsRequeue
 	}
 	ready, err := r.ensureCertificate(ctx, a, ip)
+	r.ensurePeerCertificates(ctx, a)
 	if a.Spec.TLS.Source == v1alpha1.TLSSourceACME {
 		if err != nil {
 			log.FromContext(ctx).Error(err, "request the built-in certificate, the fallback of the ACME one")
@@ -122,10 +124,26 @@ func (r *ApplianceReconciler) reconcileACME(ctx context.Context, a *v1alpha1.App
 }
 
 func (r *ApplianceReconciler) ensureCertificate(ctx context.Context, a *v1alpha1.Appliance, ip netip.Addr) (bool, error) {
-	if _, err := certs.EnsureBuiltin(ctx, r.Client, certs.Hosts(a), []netip.Addr{ip}); err != nil {
+	if _, err := certs.EnsureBuiltin(ctx, r.Client, certs.Hosts(a), certs.Addresses(a, ip)); err != nil {
 		return false, err
 	}
 	return certs.Ready(ctx, r.Client)
+}
+
+// ensurePeerCertificates requests the peer certificate of every voting node that has a Kubernetes node and an
+// address, keyed by the Kubernetes node name, which each manager knows itself by; a failure is
+// logged and holds up nothing else, and the next pass tries again.
+func (r *ApplianceReconciler) ensurePeerCertificates(ctx context.Context, a *v1alpha1.Appliance) {
+	nodes, err := peer.VotingNodes(ctx, r.Client, a)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "find the voting nodes for their peer certificates")
+		return
+	}
+	for _, n := range nodes {
+		if err := certs.EnsurePeer(ctx, r.Client, peer.SecretName(n.NodeName), peer.CommonName, n.HostName, n.Address); err != nil {
+			log.FromContext(ctx).Error(err, "request the peer certificate", "node", n.NodeName)
+		}
+	}
 }
 
 // stepPassed reports whether the pass that reported progress got beyond the named step.

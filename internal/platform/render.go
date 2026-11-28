@@ -173,7 +173,7 @@ func Render(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, nod
 	}
 	var components []string
 	if ps := a.Spec.Platform; ps != nil {
-		components = ps.Components
+		components = ps.ComponentNames()
 	}
 	connectors := make([]otilm.Connector, 0, len(components))
 	for _, name := range components {
@@ -201,7 +201,7 @@ func outboundProxy(p *v1alpha1.ProxySpec, nodeIP string) *v1alpha1.ProxySpec {
 }
 
 func renderPlatform(a *v1alpha1.Appliance, m *release.Manifest, secrets SecretNames, proxy *v1alpha1.ProxySpec, db database) (*otilm.Platform, error) {
-	version, hostName := m.Platform.ILMVersion, firstSet(a.Spec.Node.HostName, m.Platform.HostName)
+	version, hostName := m.Platform.ILMVersion, firstSet(a.Spec.HostName(), m.Platform.HostName)
 	if ps := a.Spec.Platform; ps != nil {
 		version = firstSet(ps.ILMVersion, version)
 		hostName = firstSet(ps.HostName, hostName)

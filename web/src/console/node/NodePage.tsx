@@ -45,7 +45,7 @@ export function NodePage() {
   if (settings !== seen) {
     setSeen(settings);
     if (settings) {
-      setGateway(settings.node.gateway ?? '');
+      setGateway(settings.cluster.nodes[0]?.gateway ?? '');
       setNetwork(networkValues(settings));
       setSavedProxy(settings.proxy);
     }
@@ -95,7 +95,8 @@ export function NodePage() {
     );
   }
 
-  const address = settings.node.address;
+  const node = settings.cluster.nodes[0];
+  const address = node?.address;
 
   return (
     <PageWidth>
@@ -105,7 +106,7 @@ export function NodePage() {
           <Field
             label="Host name"
             name="hostName"
-            value={settings.node.hostName}
+            value={node?.hostName ?? ''}
             readOnly
             hint={
               <>

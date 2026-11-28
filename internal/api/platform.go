@@ -36,7 +36,7 @@ func (s *Server) GetPlatform(ctx context.Context, _ GetPlatformRequestObject) (G
 	out := PlatformState{IlmVersion: installedVersion(a.Spec.Platform, s.deps.Release), SetupComplete: a.Status.Setup == v1alpha1.SetupComplete}
 	var chosen []string
 	if p := a.Spec.Platform; p != nil {
-		out.HostName, chosen, out.Utils = p.HostName, p.Components, p.Utils
+		out.HostName, chosen, out.Utils = p.HostName, p.ComponentNames(), p.Utils
 	}
 	if out.Dependencies, err = s.dependenciesOf(ctx, a.Spec.Platform); err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func (s *Server) PutPlatform(ctx context.Context, req PutPlatformRequestObject) 
 		return PutPlatform400JSONResponse{BadRequestJSONResponse: badRequestField(ferr.field, ferr.message)}, nil
 	}
 	recordPaths(ctx, paths)
-	s.deps.Log.Info("platform settings saved", "hostName", spec.HostName, "components", spec.Components, "paths", paths)
+	s.deps.Log.Info("platform settings saved", "hostName", spec.HostName, "components", spec.ComponentNames(), "paths", paths)
 	return PutPlatform202Response{}, nil
 }
 
@@ -176,7 +176,7 @@ func (s *Server) platformRefusal(a *v1alpha1.Appliance, platform *v1alpha1.Platf
 	if version != nil && *version != platform.ILMVersion {
 		return &fieldError{"ilmVersion", fmt.Sprintf("The ILM version is %s and cannot be changed.", platform.ILMVersion)}
 	}
-	if ferr := s.componentsNeed(platform.Components, a.Spec.Registries, a.Spec.Mail != nil); ferr != nil {
+	if ferr := s.componentsNeed(platform.ComponentNames(), a.Spec.Registries, a.Spec.Mail != nil); ferr != nil {
 		return ferr
 	}
 	if a.Status.Setup == v1alpha1.SetupComplete {
@@ -193,9 +193,10 @@ func uncoveredHostRefusal(host string) *fieldError {
 	return uncoveredHostError(host)
 }
 
-// mergePlatform completes platform with what before keeps: the dependencies deps leaves out, utils unless it is
-// set, and the CBOM repository.
+// mergePlatform completes platform with what before keeps: the settings of the components that stay chosen, such as
+// their node tags, the dependencies deps leaves out, utils unless it is set, and the CBOM repository.
 func mergePlatform(platform, before *v1alpha1.PlatformSpec, deps *dependenciesInput, utils *bool) {
+	keepComponents(platform, before)
 	deps.apply(platform, before)
 	platform.Utils = before != nil && before.Utils
 	if utils != nil {
@@ -204,6 +205,19 @@ func mergePlatform(platform, before *v1alpha1.PlatformSpec, deps *dependenciesIn
 	platform.CBOM = nil
 	if before != nil {
 		platform.CBOM = before.CBOM
+	}
+}
+
+// keepComponents replaces each component of platform that before already chose with before's, which keeps its
+// settings; a new component keeps its bare entry and a dropped one is gone.
+func keepComponents(platform, before *v1alpha1.PlatformSpec) {
+	if before == nil {
+		return
+	}
+	for i, c := range platform.Components {
+		if j := slices.IndexFunc(before.Components, func(b v1alpha1.ComponentSpec) bool { return b.Name == c.Name }); j >= 0 {
+			platform.Components[i] = before.Components[j]
+		}
 	}
 }
 
@@ -298,7 +312,7 @@ func (s *Server) chosenComponent(p *v1alpha1.PlatformSpec, match func(release.Co
 	if p == nil {
 		return ""
 	}
-	for _, name := range p.Components {
+	for _, name := range p.ComponentNames() {
 		if c, ok := catalogueEntry(s.deps.Release, name); ok && match(c) {
 			return c.DisplayName
 		}

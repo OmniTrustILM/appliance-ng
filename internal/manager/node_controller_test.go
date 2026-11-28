@@ -111,8 +111,8 @@ func (f *fakeNodeConfig) document(t *testing.T, id string) configdoc.Document {
 // firstBootDocuments are the node documents first boot generates for spec, with its static address on testLink.
 func firstBootDocuments(t *testing.T, spec v1alpha1.ApplianceSpec) []configdoc.Document {
 	t.Helper()
-	link := nodeconfig.LinkConfig(testLink, netip.MustParsePrefix(spec.Node.Address), netip.MustParseAddr(spec.Node.Gateway))
-	docs, err := nodeconfig.Render(&v1alpha1.Appliance{Spec: spec}, nodeconfig.Node{IP: "192.0.2.10", Link: link}, nodeconfig.Secrets{})
+	link := nodeconfig.LinkConfig(testLink, netip.MustParsePrefix(spec.FirstNode().Address), netip.MustParseAddr(spec.FirstNode().Gateway))
+	docs, err := nodeconfig.Render(&v1alpha1.Appliance{Spec: spec}, nodeconfig.Node{Entry: spec.FirstNode(), IP: "192.0.2.10", Link: link}, nodeconfig.Secrets{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestNodeReconcilerPatchesOnlyChanged(t *testing.T) {
 	}
 	wantNodeConfigured(t, metav1.ConditionTrue, reasonApplied, false)
 
-	editSpec(t, func(s *v1alpha1.ApplianceSpec) { s.Node.Gateway = "192.0.2.254" })
+	editSpec(t, func(s *v1alpha1.ApplianceSpec) { s.FirstNode().Gateway = "192.0.2.254" })
 	mustReconcileNode(t, r)
 	if replaced, _ := node.lastCall(); !slices.Equal(replaced, []string{network.LinkKind + "/" + testLink}) {
 		t.Fatalf("replaced %v, want only the link", replaced)
@@ -390,17 +390,71 @@ func TestNodeReconcilerIgnoresAMissingAppliance(t *testing.T) {
 	}
 }
 
+// TestNodeReconcilerRendersItsOwnEntry: a manager on the second voting node applies the host name and gateway of that
+// node's entry, not those of the first node.
+func TestNodeReconcilerRendersItsOwnEntry(t *testing.T) {
+	spec := importedSpec()
+	own := spec.Cluster.Nodes[0]
+	own.Gateway = "192.0.2.254"
+	spec.Cluster.Nodes = []v1alpha1.ClusterNode{
+		{HostName: "other.example.com", Address: "192.0.2.20/24", Gateway: "192.0.2.1", Role: v1alpha1.NodeRoleVoting},
+		own,
+	}
+	createAppliance(t, spec)
+	createNode(t, testBootID)
+	node := &fakeNodeConfig{docs: firstBootDocuments(t, importedSpec())}
+
+	mustReconcileNode(t, newNodeReconciler(node))
+	if replaced, _ := node.lastCall(); !slices.Equal(replaced, []string{network.LinkKind + "/" + testLink}) {
+		t.Fatalf("replaced %v, want only the link", replaced)
+	}
+	link := node.document(t, network.LinkKind+"/"+testLink).(*network.LinkConfigV1Alpha1)
+	if link.LinkRoutes[0].RouteGateway.String() != "192.0.2.254" {
+		t.Errorf("link routes %v, want the gateway of the node's own entry", link.LinkRoutes)
+	}
+	for _, doc := range node.docs {
+		if h, ok := doc.(*network.HostnameConfigV1Alpha1); ok && h.ConfigHostname != own.HostName {
+			t.Errorf("host name %q, want %q", h.ConfigHostname, own.HostName)
+		}
+	}
+	wantNodeConfigured(t, metav1.ConditionTrue, reasonApplied, false)
+}
+
+// TestNodeReconcilerSkipsANodeWithoutEntry: a node that no entry of the cluster nodes matches gets no node documents,
+// and the status says why.
+func TestNodeReconcilerSkipsANodeWithoutEntry(t *testing.T) {
+	spec := importedSpec()
+	spec.Cluster.Nodes = []v1alpha1.ClusterNode{
+		{HostName: "other.example.com", Address: "192.0.2.20/24", Gateway: "192.0.2.1", Role: v1alpha1.NodeRoleVoting},
+	}
+	createAppliance(t, spec)
+	createNode(t, testBootID)
+	node := &fakeNodeConfig{docs: firstBootDocuments(t, importedSpec())}
+
+	res, err := reconcileNode(t, newNodeReconciler(node))
+	if err != nil || res.RequeueAfter != resync {
+		t.Fatalf("reconcile = %+v, %v; want no retry before the Appliance changes", res, err)
+	}
+	if node.calls() != 0 {
+		t.Errorf("a node without an entry got %v", node.replaced)
+	}
+	wantNodeConfigured(t, metav1.ConditionFalse, reasonNodeNotInSpec, false)
+}
+
 func TestNodeIPPrefersTheStaticAddress(t *testing.T) {
 	node := &corev1.Node{Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "198.51.100.7"}}}}
-	a := &v1alpha1.Appliance{Spec: importedSpec()}
-	if got := nodeIP(a, node); got != "192.0.2.10" {
+	entry := importedSpec().Cluster.Nodes[0]
+	if got := nodeIP(&entry, node); got != "192.0.2.10" {
 		t.Errorf("nodeIP = %q, want the static address", got)
 	}
-	a.Spec.Node.Address = ""
-	if got := nodeIP(a, node); got != "198.51.100.7" {
+	entry.Address = ""
+	if got := nodeIP(&entry, node); got != "198.51.100.7" {
 		t.Errorf("nodeIP = %q, want the internal address with DHCP", got)
 	}
-	if got := nodeIP(a, &corev1.Node{}); got != "" {
+	if got := nodeIP(nil, node); got != "198.51.100.7" {
+		t.Errorf("nodeIP = %q, want the internal address without an entry", got)
+	}
+	if got := nodeIP(&entry, &corev1.Node{}); got != "" {
 		t.Errorf("nodeIP = %q, want none", got)
 	}
 }

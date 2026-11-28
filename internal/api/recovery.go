@@ -278,7 +278,7 @@ func (s *Server) issueKit(ctx context.Context, key *age.X25519Identity, passphra
 		return issuedKit{}, nil, err
 	}
 	kit := recovery.Kit{BackupKey: key, Kubeconfig: kubeconfig, Talosconfig: talosconfig, Identity: recovery.Identity{
-		HostName: a.Spec.Node.HostName, Address: address, ApplianceVersion: a.Status.Versions.Appliance,
+		HostName: a.Spec.HostName(), Address: address, ApplianceVersion: a.Status.Versions.Appliance,
 	}}
 	if a.Spec.Platform != nil {
 		kit.Identity.ILMHostName = a.Spec.Platform.HostName

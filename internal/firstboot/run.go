@@ -11,6 +11,8 @@ import (
 	"net/netip"
 	"time"
 
+	configdoc "github.com/siderolabs/talos/pkg/machinery/config/config"
+	k8sconfig "github.com/siderolabs/talos/pkg/machinery/config/types/k8s"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -453,12 +455,21 @@ func (r *runner) logDataDisk(disks []talos.Disk, in *machineconfig.Input) {
 }
 
 // bootstrap bootstraps etcd unless the node says it already is. A failed check is not trusted: Bootstrap
-// reports an existing etcd as ErrAlreadyBootstrapped, so calling it is always safe.
+// reports an existing etcd as ErrAlreadyBootstrapped, so calling it is always safe. A node that joins a cluster is
+// never bootstrapped, which would start a second etcd cluster: it waits until its etcd joined.
 func (r *runner) bootstrap(ctx context.Context) (bool, error) {
 	r.set(StateBootstrapping, "", "checking etcd")
 	ok, err := r.d.Node.IsBootstrapped(ctx)
 	if err == nil && ok {
 		return true, nil
+	}
+	joins, jerr := r.joins(ctx)
+	switch {
+	case jerr != nil:
+		return false, jerr
+	case joins:
+		r.set(StateBootstrapping, "", "waiting for etcd to join the cluster")
+		return false, nil
 	}
 	if err != nil {
 		r.d.Log.Debug("etcd check failed, bootstrapping anyway", "error", err)
@@ -472,6 +483,31 @@ func (r *runner) bootstrap(ctx context.Context) (bool, error) {
 		r.d.Log.Info("etcd bootstrapped")
 	}
 	return true, nil
+}
+
+// joins reports whether the node joins a cluster that another node bootstrapped: it carries the join request, or
+// its cluster endpoint is not its own address, as a joining configuration always names the cluster's endpoint. A
+// node whose address is not known yet counts as joining until it is.
+func (r *runner) joins(ctx context.Context) (bool, error) {
+	request, err := r.d.Node.ExtensionConfigFile(ctx, machineconfig.HandoverService, machineconfig.JoinPath)
+	if err != nil {
+		return false, redacted("read the join request", err)
+	}
+	if request != nil {
+		return true, nil
+	}
+	docs, err := r.d.Node.Documents(ctx, k8sconfig.KubeClusterConfig)
+	if err != nil {
+		return false, redacted("read the cluster endpoint", err)
+	}
+	for _, doc := range docs {
+		c, ok := doc.(configdoc.K8sClusterConfig)
+		if !ok || c.ClusterEndpoint() == nil || c.ClusterEndpoint().Hostname() == "" {
+			continue
+		}
+		return c.ClusterEndpoint().Hostname() != r.nodeIP, nil
+	}
+	return false, errors.New("the machine configuration names no cluster endpoint")
 }
 
 func (r *runner) connect(ctx context.Context) (Cluster, error) {

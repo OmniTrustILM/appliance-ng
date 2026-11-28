@@ -193,7 +193,7 @@ func ilmAppliance(t *testing.T, idp *httptest.Server, identity *v1alpha1.Externa
 		}
 	}
 	createAppliance(t, v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "node.example.com", Address: "192.0.2.10/24"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "node.example.com", Address: "192.0.2.10/24"}}},
 		Trust:    &v1alpha1.SecretKeyRef{Name: "trust", Key: "ca.crt"},
 		Platform: &v1alpha1.PlatformSpec{HostName: "ilm.example.com", Identity: identity},
 	})
@@ -548,7 +548,7 @@ func TestEdgeRootsNeedACertificate(t *testing.T) {
 	if _, err := edgeRoots(ctx, testClient); err == nil {
 		t.Fatal("a Secret without a certificate gave roots")
 	}
-	if got := ilmHostName(&v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "node.example.com"}}}); got != "node.example.com" {
+	if got := ilmHostName(&v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "node.example.com"}}}}}); got != "node.example.com" {
 		t.Fatalf("ILM host %q, want the node's", got)
 	}
 }

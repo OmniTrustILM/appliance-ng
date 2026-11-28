@@ -145,7 +145,7 @@ func v1Fixture(t *testing.T, edge *fakeConnectorsEdge, components ...string) (*A
 	identity := &connectorsIdentity{edge: edge}
 	r := &ApplianceReconciler{Client: testClient, APIReader: testClient, Release: testRelease, ILM: identity}
 	a := &v1alpha1.Appliance{Spec: v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "node.example.com", Address: "192.0.2.10/24"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "node.example.com", Address: "192.0.2.10/24"}}},
 		Platform: platformSpec(components...),
 	}}
 	createAppliance(t, a.Spec)

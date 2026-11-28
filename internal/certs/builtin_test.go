@@ -25,6 +25,8 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
+
+	"github.com/OmniTrustILM/appliance-ng/internal/kube"
 )
 
 var testClient client.Client
@@ -34,6 +36,8 @@ func TestMain(m *testing.M) {
 }
 
 func run(m *testing.M) int {
+	// The node the manager runs on, as the Downward API names it.
+	_ = os.Setenv(kube.NodeNameEnv, "node")
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		println("KUBEBUILDER_ASSETS is not set; run the tests with make test")
 		return 1
@@ -197,6 +201,26 @@ func TestEnsureBuiltinReportsApplyErrors(t *testing.T) {
 	cancel()
 	if _, err := EnsureBuiltin(ctx, testClient, []string{"a.example.com"}, nil); err == nil {
 		t.Error("EnsureBuiltin with a cancelled context succeeded")
+	}
+}
+
+func TestEnsurePeer(t *testing.T) {
+	ctx := context.Background()
+	if err := EnsurePeer(ctx, testClient, "peer-a", "peer", "a.example.com", netip.MustParseAddr("192.0.2.10")); err != nil {
+		t.Fatal(err)
+	}
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(gvk("Certificate"))
+	if err := testClient.Get(ctx, client.ObjectKey{Namespace: Namespace, Name: "peer-a"}, u); err != nil {
+		t.Fatal(err)
+	}
+	if secret, _, _ := unstructured.NestedString(u.Object, "spec", "secretName"); secret != "peer-a" {
+		t.Errorf("secret %q", secret)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := EnsurePeer(cancelled, testClient, "peer-a", "peer", "a.example.com", netip.MustParseAddr("192.0.2.10")); err == nil {
+		t.Error("EnsurePeer with a cancelled context succeeded")
 	}
 }
 

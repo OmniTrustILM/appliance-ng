@@ -354,7 +354,7 @@ func (e *systemEnv) storeSystemBundle(without ...string) {
 	files := map[string][]byte{
 		bundle.MetadataFile: data,
 		"release.yaml":      []byte("version: " + systemTo + "\nfutureField: kept\nmanagerImage: " + managerHolder + "\n"),
-		"manager.yaml":      []byte("kind: Deployment\nspec:\n  image: " + managerHolder + "\n"),
+		"manager.yaml":      []byte("kind: DaemonSet\nspec:\n  image: " + managerHolder + "\n"),
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		e.t.Fatal(err)
@@ -380,13 +380,13 @@ func (e *systemEnv) resetNode() {
 	if err := e.c.Create(ctx, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}); err != nil {
 		e.t.Fatal(err)
 	}
-	if err := e.c.DeleteAllOf(ctx, &appsv1.Deployment{}, client.InNamespace(kube.SystemNamespace)); err != nil {
+	if err := e.c.DeleteAllOf(ctx, &appsv1.DaemonSet{}, client.InNamespace(kube.SystemNamespace)); err != nil {
 		e.t.Fatal(err)
 	}
 	labels := map[string]string{"app": managerName}
-	manager := &appsv1.Deployment{
+	manager := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Namespace: kube.SystemNamespace, Name: managerName},
-		Spec: appsv1.DeploymentSpec{
+		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
@@ -418,10 +418,10 @@ func (e *systemEnv) resetNode() {
 	}
 }
 
-// runManager sets the image of the manager's Deployment, as an apply or a first boot does.
+// runManager sets the image of the manager's DaemonSet, as an apply or a first boot does.
 func (e *systemEnv) runManager(image string) {
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		d := &appsv1.Deployment{}
+		d := &appsv1.DaemonSet{}
 		if err := e.c.Get(context.Background(), client.ObjectKey{Namespace: kube.SystemNamespace, Name: managerName}, d); err != nil {
 			return err
 		}
@@ -435,7 +435,7 @@ func (e *systemEnv) runManager(image string) {
 
 func (e *systemEnv) managerImage() string {
 	e.t.Helper()
-	d := &appsv1.Deployment{}
+	d := &appsv1.DaemonSet{}
 	if err := e.c.Get(context.Background(), client.ObjectKey{Namespace: kube.SystemNamespace, Name: managerName}, d); err != nil {
 		e.t.Fatal(err)
 	}
@@ -578,14 +578,29 @@ func (e *systemEnv) update() *v1alpha1.UpdateStatus {
 	return e.takeOver()
 }
 
-// takeOver resumes the update in the new manager, waits for its end and for the old manager to stop.
+// takeOver resumes the update in the new manager, waits for its end and for the old manager to stop. An update the
+// new manager handed back ends in the previous manager, which its hand-back runs again.
 func (e *systemEnv) takeOver() *v1alpha1.UpdateStatus {
 	e.t.Helper()
 	jobs := e.newManager()
 	if err := jobs.Resume(e.t.Context()); err != nil {
 		e.t.Fatal(err)
 	}
-	u := e.waitEnded(jobs)
+	u := e.waitFor("its end or hand-back", func(u *v1alpha1.UpdateStatus) bool {
+		return u.Step == update.StepDone || u.Message != "" || u.HandBack != ""
+	})
+	if u.HandBack != "" && u.Message == "" {
+		e.waitStopped(jobs)
+		if got := e.managerImage(); got != previousManager {
+			e.t.Errorf("manager image %s after the hand-back, want the previous one", got)
+		}
+		old := e.oldManager()
+		if err := old.Resume(e.t.Context()); err != nil {
+			e.t.Fatal(err)
+		}
+		u = e.waitEnded(old)
+	}
+	e.waitStopped(jobs)
 	if e.old != nil {
 		e.waitStopped(e.old)
 	}
@@ -685,6 +700,26 @@ func TestSystemUpdateRunsEveryStep(t *testing.T) {
 		}
 	}
 	e.wantHoldFree()
+}
+
+// TestSystemUpdateAppliesManagerDaemonSet records the image the manager's DaemonSet runs before it applies the
+// bundle's manager manifest, which defines that DaemonSet with the bundle's manager image.
+func TestSystemUpdateAppliesManagerDaemonSet(t *testing.T) {
+	e := newSystemEnv(t)
+	u := e.update()
+	if u.Step != update.StepDone || u.PreviousManager != previousManager {
+		t.Errorf("update %+v, want done with the previous manager %s", u, previousManager)
+	}
+	if e.manifests.count() != 1 {
+		t.Fatalf("%d applies of the manager's manifest, want 1", e.manifests.count())
+	}
+	if applied := string(e.manifests.applied[0]); !strings.HasPrefix(applied, "kind: DaemonSet\n") ||
+		!strings.Contains(applied, "image: "+managerRef+"\n") {
+		t.Errorf("applied manifest %q, want the bundle's DaemonSet with its manager image", applied)
+	}
+	if got := e.managerImage(); got != managerRef {
+		t.Errorf("the manager's DaemonSet runs %s, want %s", got, managerRef)
+	}
 }
 
 // crashedAtSystem leaves the status as a manager stopped at the i-th step of a system update leaves it.
@@ -818,7 +853,7 @@ func TestOldManagerDoesNotContinue(t *testing.T) {
 	if err := e.newJobsWith(&processBackups{fakeBackups: e.backups}).StartPlatform(t.Context(), toBundle, "admin"); update.Reason(err) != update.UpdateRunning {
 		t.Errorf("platform update while the system update waits: %v", err)
 	}
-	// A failed health check rolled Talos back, whose first-boot extension put the old manager back: it ends the update.
+	// A failed health check rolled Talos back and the old manager runs again: it ends the update.
 	e.updateStatus(func(st *v1alpha1.ApplianceStatus) {
 		st.Update.Step, st.Update.BootID = update.StepRolledBack, bootID(5)
 	})
@@ -924,7 +959,7 @@ func TestHandBackBeforeTheNewTalos(t *testing.T) {
 		}
 		e.handedBack(jobs, update.TalosUpgradeRefused)
 	})
-	// The node rebooted into the old Talos, whose first-boot extension ran the old manager before any hand-back.
+	// The node rebooted into the old Talos and the old manager runs there before any hand-back.
 	t.Run("old manager after a reboot into the old Talos", func(t *testing.T) {
 		e := newSystemEnv(t)
 		e.crashedAtSystem(update.StepTalos, 3)
@@ -962,6 +997,25 @@ func TestHandBackBeforeTheNewTalos(t *testing.T) {
 	})
 }
 
+// TestHandBackRestoresDaemonSetImage runs the previous manager again in the manager's DaemonSet once the bundle's
+// manager hands a failed update back.
+func TestHandBackRestoresDaemonSetImage(t *testing.T) {
+	e := newSystemEnv(t)
+	e.crashedAtSystem(update.StepTalos, 3)
+	e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Update.HandBack = update.TalosUpgradeRefused })
+	if got := e.managerImage(); got != managerRef {
+		t.Fatalf("the manager's DaemonSet runs %s, want the bundle's", got)
+	}
+	jobs := e.newManager()
+	if err := jobs.Resume(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStopped(jobs)
+	if got := e.managerImage(); got != previousManager {
+		t.Errorf("the manager's DaemonSet runs %s after the hand-back, want %s", got, previousManager)
+	}
+}
+
 func TestHealthGateFailureRollsBackTalos(t *testing.T) {
 	t.Run("console down", func(t *testing.T) {
 		e := newSystemEnv(t)
@@ -975,7 +1029,7 @@ func TestHealthGateFailureRollsBackTalos(t *testing.T) {
 		if u.HoldsAddons() {
 			t.Error("the failed update still holds the add-on pass")
 		}
-		if got := e.auditActions(); got[len(got)-1] != update.AuditSystemUpdate+":failure:"+update.StepHealth+":"+update.HealthCheckFailed {
+		if got := e.auditActions(); got[len(got)-1] != update.AuditSystemUpdate+":failure:"+update.StepRolledBack+":"+update.HealthCheckFailed {
 			t.Errorf("audit %v", got)
 		}
 		e.wantHoldFree()
@@ -1036,9 +1090,9 @@ func (e *systemEnv) stopReconciler() {
 }
 
 // TestRolledBackResumesAfterTheReboot restarts the manager after it recorded the Talos rollback. After the reboot into
-// the old Talos, whose first-boot extension puts the old manager back, either manager fails the update. Before it,
-// the manager never rolls back twice, which would switch the boot entry back: it waits for the reboot until the
-// recorded deadline.
+// the old Talos, the previous manager, run again by the hand-back, fails the update (the bundle's manager hands it
+// back, see TestRolledBackHandsBackToThePreviousManager). Before it, the manager never rolls back twice, which would
+// switch the boot entry back: it waits for the reboot until the recorded deadline.
 func TestRolledBackResumesAfterTheReboot(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1049,8 +1103,6 @@ func TestRolledBackResumesAfterTheReboot(t *testing.T) {
 		reason   string
 	}{
 		{"old manager after the reboot", fromBundle, true, false, update.HealthCheckFailed},
-		{"new manager after the reboot", systemTo, true, false, update.HealthCheckFailed},
-		{"old Talos not ready past the deadline", systemTo, true, true, update.HealthCheckFailed},
 		{"no reboot", systemTo, false, false, update.TalosRollbackFailed},
 	}
 	for _, tc := range cases {
@@ -1082,6 +1134,38 @@ func TestRolledBackResumesAfterTheReboot(t *testing.T) {
 			}
 			e.wantCalls()
 			e.wantHoldFree()
+		})
+	}
+}
+
+// TestRolledBackHandsBackToThePreviousManager hands an update whose health check failed back to the previous manager
+// once the node booted the old Talos again: a first boot leaves the manager's DaemonSet alone, so the bundle's
+// manager would run on the old Talos otherwise.
+func TestRolledBackHandsBackToThePreviousManager(t *testing.T) {
+	for name, notReady := range map[string]bool{"old Talos ready": false, "old Talos not ready past the deadline": true} {
+		t.Run(name, func(t *testing.T) {
+			e := newSystemEnv(t)
+			e.crashedAtSystem(update.StepRolledBack, 4)
+			e.updateStatus(func(st *v1alpha1.ApplianceStatus) {
+				deadline := metav1.NewTime(time.Now().Add(300 * time.Millisecond))
+				st.Update.BootID, st.Update.Deadline = bootID(1), &deadline
+			})
+			e.setNode(func(n *corev1.Node) {
+				n.Status.NodeInfo.BootID = bootID(2)
+				if notReady {
+					n.Status.Conditions[0].Status = corev1.ConditionFalse
+				}
+			})
+			e.node.runs(oldTalos, fromBundle)
+			jobs := e.newManager()
+			if err := jobs.Resume(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			e.handedBack(jobs, update.HealthCheckFailed)
+			if u := e.appliance().Status.Update; u.Step != update.StepRolledBack {
+				t.Errorf("update %+v, want failed at the rolled back step", u)
+			}
+			e.wantCalls()
 		})
 	}
 }
@@ -1508,8 +1592,8 @@ func (e *systemEnv) pastDeadline() {
 	e.updateStatus(func(st *v1alpha1.ApplianceStatus) { st.Update.Deadline = &past })
 }
 
-// wantRolledBack waits for the rollback of Talos, never handed back. The step is recorded before the rollback is
-// called, so the call is waited for too.
+// wantRolledBack waits for the rollback of Talos, never handed back before it. The step is recorded before the
+// rollback is called, so the call is waited for too.
 func (e *systemEnv) wantRolledBack() {
 	e.t.Helper()
 	e.waitFor("the rollback", func(u *v1alpha1.UpdateStatus) bool {
@@ -1518,7 +1602,7 @@ func (e *systemEnv) wantRolledBack() {
 	if e.node.count("rollback") != 1 {
 		e.t.Errorf("Talos calls %q, want a rollback", e.node.called())
 	}
-	if u := e.appliance().Status.Update; u.HandBack != "" {
+	if u := e.appliance().Status.Update; u.HandBack != "" && u.HandBack != update.HealthCheckFailed {
 		e.t.Errorf("update %+v handed back on the new Talos", u)
 	}
 }
@@ -1533,11 +1617,11 @@ func TestUnreadableTalosIsDecidedLater(t *testing.T) {
 			e.pastDeadline()
 			if unreadable == "node" {
 				e.jobClient = interceptor.NewClient(e.c, interceptor.Funcs{
-					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-						if _, ok := list.(*corev1.NodeList); ok {
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if _, ok := obj.(*corev1.Node); ok {
 							return errors.New("the API server does not answer")
 						}
-						return c.List(ctx, list, opts...)
+						return c.Get(ctx, key, obj, opts...)
 					},
 				})
 			} else {

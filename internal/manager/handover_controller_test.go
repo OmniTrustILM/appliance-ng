@@ -61,11 +61,24 @@ func handoverAnswers() wizard.HandoverFile {
 // importedSpec is the Appliance the answers of handoverAnswers describe.
 func importedSpec() v1alpha1.ApplianceSpec {
 	return v1alpha1.ApplianceSpec{
-		Node:  v1alpha1.NodeSpec{HostName: "pki.example.com", Address: "192.0.2.10/24", Gateway: "192.0.2.1"},
+		Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+			{HostName: "pki.example.com", Address: "192.0.2.10/24", Gateway: "192.0.2.1", Role: v1alpha1.NodeRoleVoting},
+		}},
 		DNS:   v1alpha1.DNSSpec{Servers: []string{"192.0.2.53"}},
 		NTP:   v1alpha1.NTPSpec{Servers: []string{"ntp.example.com"}},
 		Proxy: &v1alpha1.ProxySpec{HTTP: "http://proxy.example.com:3128", NoProxy: ".example.com"},
 		TLS:   v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
+	}
+}
+
+func TestHandoverCreatesFirstNode(t *testing.T) {
+	f := handoverAnswers()
+	got := importedAppliance(&f.Node).Spec.Cluster
+	want := v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+		{HostName: "pki.example.com", Address: "192.0.2.10/24", Gateway: "192.0.2.1", Role: v1alpha1.NodeRoleVoting},
+	}}
+	if !equality.Semantic.DeepEqual(got, want) {
+		t.Errorf("cluster = %+v, want %+v", got, want)
 	}
 }
 
@@ -325,7 +338,7 @@ func TestImportResumesAtEveryStep(t *testing.T) {
 func TestImportKeepsExistingAppliance(t *testing.T) {
 	cleanupHandover(t)
 	existing := v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "existing.example.com"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "existing.example.com"}}},
 		TLS:      v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceBuiltin},
 		Platform: &v1alpha1.PlatformSpec{ILMVersion: "2.17.0"},
 	}

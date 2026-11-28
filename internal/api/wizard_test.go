@@ -34,7 +34,7 @@ func TestWizardWritesThePlatform(t *testing.T) {
 	wantStatus(t, rec, http.StatusAccepted)
 
 	a := getAppliance(t)
-	want := &v1alpha1.PlatformSpec{ILMVersion: "2.20.0", HostName: "ilm.example.com", Components: []string{"ejbca-ng-connector", "common-credential-provider"}}
+	want := &v1alpha1.PlatformSpec{ILMVersion: "2.20.0", HostName: "ilm.example.com", Components: []v1alpha1.ComponentSpec{{Name: "ejbca-ng-connector"}, {Name: "common-credential-provider"}}}
 	if p := a.Spec.Platform; p == nil || p.ILMVersion != want.ILMVersion || p.HostName != want.HostName || !slices.Equal(p.Components, want.Components) {
 		t.Errorf("platform = %+v, want %+v", a.Spec.Platform, want)
 	}

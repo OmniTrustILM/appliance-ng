@@ -8,7 +8,7 @@ import { NodePage } from './NodePage';
 afterEach(() => vi.unstubAllGlobals());
 
 const appliance = {
-  node: { hostName: 'node1.example.com', address: '10.0.0.5/24', gateway: '10.0.0.1' },
+  cluster: { nodes: [{ hostName: 'node1.example.com', address: '10.0.0.5/24', gateway: '10.0.0.1', tags: [], maintenance: false }] },
   dns: ['10.0.0.2'],
   ntp: ['time.example.com'],
   proxy: { http: 'http://proxy.example.com:3128' },
@@ -41,7 +41,7 @@ describe('console NodePage', () => {
   });
 
   it('names the DHCP address when the spec has none and offers no gateway', async () => {
-    await loaded({}, { ...appliance, node: { hostName: 'node1.example.com' } });
+    await loaded({}, { ...appliance, cluster: { nodes: [{ hostName: 'node1.example.com', tags: [], maintenance: false }] } });
     expect(screen.getByLabelText('Address')).toHaveValue('Assigned by DHCP');
     expect(screen.getByLabelText('Gateway')).toBeDisabled();
   });

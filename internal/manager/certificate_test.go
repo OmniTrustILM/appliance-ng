@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"github.com/OmniTrustILM/appliance-ng/internal/addons"
 	"github.com/OmniTrustILM/appliance-ng/internal/certs"
 	"github.com/OmniTrustILM/appliance-ng/internal/ilmclient"
+	"github.com/OmniTrustILM/appliance-ng/internal/peer"
 	"github.com/OmniTrustILM/appliance-ng/internal/platform"
 )
 
@@ -94,7 +96,7 @@ func issue(t *testing.T) {
 func TestReconcileIssuesTheBuiltinCertificate(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}},
 		Platform: &v1alpha1.PlatformSpec{HostName: "pki.example.com"},
 	})
 	r, _ := newReconciler(testClient, &fakeCluster{})
@@ -130,9 +132,57 @@ func TestReconcileIssuesTheBuiltinCertificate(t *testing.T) {
 	}
 }
 
+func TestReconcileIssuesPeerCertificates(t *testing.T) {
+	cleanCertificates(t)
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{
+		{HostName: "ilm.example.com", Address: "192.0.2.10/24", Role: v1alpha1.NodeRoleVoting},
+		{HostName: "ilm2.example.com", Address: "192.0.2.11/24", Role: v1alpha1.NodeRoleVoting},
+		{HostName: "worker.example.com", Address: "192.0.2.12/24", Role: v1alpha1.NodeRoleWorker},
+		{HostName: "joining.example.com", Role: v1alpha1.NodeRoleVoting},
+	}}})
+	// Kubernetes registers the nodes under their short host names.
+	ctx := context.Background()
+	for name, ip := range map[string]string{"ilm": "192.0.2.10", "ilm2": "192.0.2.11", "worker": "192.0.2.12"} {
+		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		if err := testClient.Create(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(ctx, node) })
+		node.Status.Addresses = []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: ip}}
+		if err := testClient.Status().Update(ctx, node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, _ := newReconciler(testClient, &fakeCluster{})
+	runReconcile(t, r)
+
+	for node, want := range map[string][2]string{"ilm": {"ilm.example.com", "192.0.2.10"}, "ilm2": {"ilm2.example.com", "192.0.2.11"}} {
+		host, ip := want[0], want[1]
+		u := certManagerObject("Certificate")
+		if err := testClient.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: peer.SecretName(node)}, u); err != nil {
+			t.Fatalf("peer certificate of %s: %v", node, err)
+		}
+		spec, _, _ := unstructured.NestedMap(u.Object, "spec")
+		if spec["secretName"] != peer.SecretName(node) || spec["commonName"] != peer.CommonName ||
+			!reflect.DeepEqual(spec["dnsNames"], []any{host}) || !reflect.DeepEqual(spec["ipAddresses"], []any{ip}) ||
+			!reflect.DeepEqual(spec["usages"], []any{"digital signature", "server auth", "client auth"}) {
+			t.Errorf("peer certificate of %s: %v", host, spec)
+		}
+		if issuer, _, _ := unstructured.NestedString(u.Object, "spec", "issuerRef", "name"); issuer != certs.CAIssuerName {
+			t.Errorf("peer certificate of %s issued by %q", host, issuer)
+		}
+	}
+	for _, name := range []string{"worker", "joining", "ilm.example.com"} {
+		err := testClient.Get(ctx, client.ObjectKey{Namespace: certs.Namespace, Name: peer.SecretName(name)}, certManagerObject("Certificate"))
+		if !apierrors.IsNotFound(err) {
+			t.Errorf("peer certificate of %s: %v", name, err)
+		}
+	}
+}
+
 func TestReconcileCertificateWaitsForCertManager(t *testing.T) {
 	cleanCertificates(t)
-	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"}})
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}}})
 	r, _ := newReconciler(testClient, &fakeCluster{unready: "cert-manager"})
 	runReconcile(t, r)
 
@@ -146,7 +196,7 @@ func TestReconcileCertificateWaitsForCertManager(t *testing.T) {
 
 func TestReconcileCertificateWaitsForTheNodeAddress(t *testing.T) {
 	cleanCertificates(t)
-	createAppliance(t, v1alpha1.ApplianceSpec{Node: v1alpha1.NodeSpec{HostName: "appliance.example.com"}})
+	createAppliance(t, v1alpha1.ApplianceSpec{Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com"}}}})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	if res := runReconcile(t, r); res.RequeueAfter != addonsRequeue {
 		t.Errorf("requeue after %v, want %v: Nodes are not watched, so the address is looked for again", res.RequeueAfter, addonsRequeue)
@@ -191,8 +241,8 @@ func TestReconcileCertificateWaitsForTheNodeAddress(t *testing.T) {
 func TestReconcileSecretSourceKeepsTheBuiltinChain(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
-		Node: v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
-		TLS:  v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceSecret, SecretRef: "ilm-tls"},
+		Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}},
+		TLS:     v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceSecret, SecretRef: "ilm-tls"},
 	})
 	r, _ := newReconciler(testClient, &fakeCluster{})
 	runReconcile(t, r)
@@ -250,6 +300,10 @@ func TestCertificateRunsWithTheManagerRBAC(t *testing.T) {
 	}
 	if _, err := certs.RootCA(ctx, c); !errors.Is(err, certs.ErrNotIssued) {
 		t.Errorf("read the root CA as the manager: %v", err)
+	}
+	host := "appliance.example.com"
+	if err := certs.EnsurePeer(ctx, c, peer.SecretName(host), peer.CommonName, host, netip.MustParseAddr("192.0.2.10")); err != nil {
+		t.Errorf("request a peer certificate as the manager: %v", err)
 	}
 	dns01 := v1alpha1.ACMESpec{DirectoryURL: "https://acme.example.com/directory", Solver: v1alpha1.ACMESolver{
 		Type: v1alpha1.ACMESolverDNS01, DNS01: &v1alpha1.DNS01Solver{Provider: "cloudflare",
@@ -336,7 +390,7 @@ func writeACMESecret(t *testing.T) []byte {
 func TestReconcileACMEServesTheBuiltinCertificateUntilIssued(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}},
 		Platform: &v1alpha1.PlatformSpec{HostName: "pki.example.com"},
 		TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{
 			DirectoryURL: acmeDirectory, Solver: v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverHTTP01},
@@ -398,7 +452,7 @@ func TestReconcileACMEServesTheBuiltinCertificateUntilIssued(t *testing.T) {
 func TestReconcileACMEIsNotReadyWhileTheBuiltinCertificateIsServed(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}},
 		Platform: &v1alpha1.PlatformSpec{HostName: "pki.example.com"},
 		TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{
 			DirectoryURL: acmeDirectory, Solver: v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverHTTP01},
@@ -420,7 +474,7 @@ func TestReconcileACMEIsNotReadyWhileTheBuiltinCertificateIsServed(t *testing.T)
 func TestReconcileACMEWaitsForILM(t *testing.T) {
 	cleanCertificates(t)
 	createAppliance(t, v1alpha1.ApplianceSpec{
-		Node: v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
+		Cluster: v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}},
 		TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{
 			ILMProfile: &v1alpha1.ILMACMEProfile{RAProfileUUID: "ra", VaultUUID: "v", VaultProfileUUID: "vp"},
 		}},
@@ -576,7 +630,7 @@ func presetFixture(t *testing.T, ilm *fakeACMEILM) (*ApplianceReconciler, *edgeI
 	cleanCertificates(t)
 	ctx := context.Background()
 	spec := v1alpha1.ApplianceSpec{
-		Node:     v1alpha1.NodeSpec{HostName: "appliance.example.com", Address: "192.0.2.10/24"},
+		Cluster:  v1alpha1.ClusterSpec{Nodes: []v1alpha1.ClusterNode{{HostName: "appliance.example.com", Address: "192.0.2.10/24"}}},
 		Platform: &v1alpha1.PlatformSpec{HostName: "pki.example.com"},
 		TLS: v1alpha1.TLSSpec{Source: v1alpha1.TLSSourceACME, ACME: &v1alpha1.ACMESpec{
 			Solver: v1alpha1.ACMESolver{Type: v1alpha1.ACMESolverHTTP01},
@@ -804,7 +858,7 @@ func TestILMPresetSetsUpILMOnce(t *testing.T) {
 	}
 
 	// A new node address and host name update the profile's identifiers, with the same key.
-	a.Spec.Node.Address = "192.0.2.11/24"
+	a.Spec.FirstNode().Address = "192.0.2.11/24"
 	a.Spec.Platform.HostName = "ilm.example.com"
 	r.reconcileCertificate(ctx, a, addons.Progress{Done: true})
 	if got := ilm.writes(); len(got) != 5 || got[4] != "PUT /api/v1/acmeProfiles/a1" {

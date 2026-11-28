@@ -1827,11 +1827,7 @@ export interface components {
             credentialsSet: boolean;
         };
         ApplianceSettings: {
-            node: {
-                hostName: string;
-                address?: string;
-                gateway?: string;
-            };
+            cluster: components["schemas"]["ClusterSettings"];
             dns: string[];
             ntp: string[];
             proxy?: components["schemas"]["Proxy"];
@@ -1846,6 +1842,28 @@ export interface components {
                 hostName?: string;
                 components: string[];
             };
+        };
+        ClusterSettings: {
+            address?: components["schemas"]["ClusterAddress"];
+            /** @description The nodes of the cluster, the first node first. */
+            nodes: components["schemas"]["ClusterNode"][];
+        };
+        /** @description The address the cluster is reached at; neither set is the address of the first node. */
+        ClusterAddress: {
+            /** @description A virtual IPv4 address the nodes share. */
+            virtual?: string;
+            /** @description A DNS name that resolves to the nodes. */
+            external?: string;
+        };
+        ClusterNode: {
+            hostName: string;
+            /** @description The node address in CIDR notation; unset with DHCP. */
+            address?: string;
+            gateway?: string;
+            /** @enum {string} */
+            role?: "voting" | "worker";
+            tags: string[];
+            maintenance: boolean;
         };
         CatalogueItem: {
             name: string;
