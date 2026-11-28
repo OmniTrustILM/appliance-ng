@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: failure-logs-${{ matrix.arch }}
           path: |
@@ -237,7 +237,7 @@ jobs:
       # The digests the build pushed, so that a release bundles exactly these images even when the tags move on.
       - name: Upload the pushed digests
         if: inputs.publish
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-${{ matrix.arch }}
           path: |
@@ -248,7 +248,7 @@ jobs:
 
       - name: Upload images
         if: inputs.publish || inputs.keep-images
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: images-${{ matrix.arch }}${{ inputs.ilm-version != '' && '-old-ilm' || '' }}
           path: |
@@ -260,7 +260,7 @@ jobs:
 
       - name: Upload the boot test's platform bundle
         if: inputs.bundle-test-key && inputs.ilm-version == ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bundle-test-${{ matrix.arch }}
           path: out/${{ matrix.arch }}/platform-test.tar
@@ -269,7 +269,7 @@ jobs:
 
       - name: Upload the system update test's appliance and bundle
         if: inputs.bundle-test-key && inputs.system-update-from != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: system-update-${{ matrix.arch }}
           path: |
@@ -280,7 +280,7 @@ jobs:
 
       - name: Upload the platform update test's bundle
         if: inputs.bundle-test-key && inputs.ilm-version != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: platform-update-${{ matrix.arch }}
           path: out/${{ matrix.arch }}/platform-update.tar
