@@ -1,9 +1,9 @@
 version: 0.1.0
 compatibility: { operator: ">=1.1.0 <2.0.0", minAppliance: "0.1.0" }
 talos:
-  version: v1.14.5
+  version: v1.14.7
   kubernetes: v1.37.1
-  imager: ghcr.io/siderolabs/imager:v1.14.5@sha256:ef33373986bb0765132f0558ea43c9f8fee2c3839f1d1a4232693b77092d7350
+  imager: ghcr.io/siderolabs/imager:v1.14.7@sha256:e95c8bdb8e581fd56fb78284dc44f0bf477329980626ac444d12eb43bedc7bc7
 platform:
   ilmVersion: 2.20.0
   hostName: ilm.appliance.internal
